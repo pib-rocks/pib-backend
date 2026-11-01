@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -11,7 +12,7 @@ from config import Config
 
 _MESH_NAME = re.compile(r"^[A-Za-z0-9._-]+\.glb$")
 
-_manifest_cache: dict[tuple[float, float], dict[str, Any]] = {}
+_manifest_cache: dict[tuple[float, float, float], dict[str, Any]] = {}
 
 
 def robot_model_dir() -> str:
@@ -59,7 +60,11 @@ def load_manifest(base: str | None = None) -> dict[str, Any] | None:
         return None
 
     version_path, model_path, mapping_path, meshes_dir = _required_paths(root)
-    cache_key = (os.path.getmtime(version_path), os.path.getmtime(model_path))
+    cache_key = (
+        os.path.getmtime(version_path),
+        os.path.getmtime(model_path),
+        os.path.getmtime(mapping_path),
+    )
     cached = _manifest_cache.get(cache_key)
     if cached is not None:
         return cached
@@ -80,11 +85,18 @@ def load_manifest(base: str | None = None) -> dict[str, Any] | None:
         stats = model_doc.get("stats") or {}
         link_count = int(stats.get("links", 0))
 
-    joints = mapping_doc.get("joints")
-    if isinstance(joints, list):
-        joint_count = len(joints)
-    else:
-        joint_count = len(model_doc.get("joints") or [])
+    joint_entries = mapping_doc.get("joints")
+    if not isinstance(joint_entries, list):
+        joint_entries = model_doc.get("joints") or []
+    joint_count = len(joint_entries)
+    joint_names = [
+        str(e.get("urdfJoint", "")) for e in joint_entries if e.get("urdfJoint")
+    ]
+    motor_names = sorted(
+        str(e["motor"])
+        for e in joint_entries
+        if e.get("class") == "driven" and e.get("motor")
+    )
 
     mesh_entries = []
     for name in sorted(os.listdir(meshes_dir)):
@@ -106,6 +118,12 @@ def load_manifest(base: str | None = None) -> dict[str, Any] | None:
         "modelBuild": model_build,
         "links": link_count,
         "joints": joint_count,
+        # The sets, not just the counts: a viewer must be able to see whether the model it
+        # loaded describes the robot in front of it (PR-2151).
+        "jointNames": joint_names,
+        "motors": motor_names,
+        "mappingSha256": (version_doc.get("sha256") or {}).get("mapping.json"),
+        "integrity": _integrity(version_doc, model_path, mapping_path),
         "files": {
             "model": "/robot-model/model.json",
             "mapping": "/robot-model/mapping.json",
@@ -115,6 +133,32 @@ def load_manifest(base: str | None = None) -> dict[str, Any] | None:
     _manifest_cache.clear()
     _manifest_cache[cache_key] = manifest
     return manifest
+
+
+def _sha256(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _integrity(version_doc: dict[str, Any], model_path: str, mapping_path: str) -> str:
+    """Compare the files against the hashes recorded at install time.
+
+    A half-updated directory (old model, new mapping) would otherwise be served happily and the
+    viewer would show a robot that does not exist.
+    """
+    expected = version_doc.get("sha256") or {}
+    checks = (
+        ("model.json", model_path),
+        ("mapping.json", mapping_path),
+    )
+    for name, path in checks:
+        want = expected.get(name)
+        if want and _sha256(path) != want:
+            return "mismatch"
+    return "ok"
 
 
 def file_path(relative: str, base: str | None = None) -> str | None:
