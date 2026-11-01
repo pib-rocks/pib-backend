@@ -251,8 +251,8 @@ def reopen_port(address: str) -> bool:
     except Exception as error:  # noqa: BLE001 - a dead handle may fail to close
         logging.warning("could not close %s cleanly: %s", device, error)
     logging.error(
-        "[PERF_TRACE] PORT_REOPEN device=%s - the handle was closed, the next transaction "
-        "opens a fresh one",
+        "[PERF_TRACE] PORT_REOPEN device=%s stage=REOPEN - the handle was closed, the next "
+        "transaction opens a fresh one",
         device,
     )
     return True

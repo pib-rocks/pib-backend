@@ -22,7 +22,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from pib_motors.port_probe import forget_dead_ports, port_answers
-from pib_motors.port_recovery import note_failure, note_success
+from pib_motors.port_recovery import RecoveryAction, note_failure, note_success
+from pib_motors.port_usb_reset import reset_cdc_acm_adapter
 from pib_motors.feetech_actuator import (
     FeetechStSerialActuator,
     resolve_serial_device,
@@ -108,11 +109,16 @@ def _port_answers(group: list[tuple[str, FeetechStSerialActuator]]) -> bool:
 
 
 def _note_and_maybe_reopen(device: str) -> None:
-    """Feed the failure into the policy and reopen the port once it has had enough."""
+    """Feed the failure into the policy and run reopen or USB reset when it says so."""
     from pib_motors.feetech_actuator import reopen_port
 
-    if note_failure(device):
+    action = note_failure(device)
+    if action == RecoveryAction.REOPEN:
         reopen_port(device)
+    elif action == RecoveryAction.USB_RESET:
+        reopen_port(device)
+        reset_cdc_acm_adapter(device)
+        forget_dead_ports()
 
 
 def _sweep_port(
@@ -141,7 +147,11 @@ def _sweep_port(
             _LOG.error("joint state sweep: port %s sweep failed: %s", port_key, error)
             _note_and_maybe_reopen(device)
             return {}, ""
-        note_success(device)
+        if positions:
+            note_success(device)
+        # No success without data: this call cleared the failure counter on every tick, which is
+        # why the retry loop attempted once and then went silent even though the caller reported
+        # the empty sweep as a failure (793 times in one minute on the robot).
         return positions or {}, MODE_SINGLE
     except Exception as error:  # noqa: BLE001 - a dead port must not break the sweep
         _LOG.error("joint state sweep: port %s failed entirely: %s", port_key, error)
@@ -205,6 +215,23 @@ def sweep_feetech_joint_positions(motors: list[Any]) -> JointStateSweepResult:
         if port_positions:
             ports_succeeded += 1
             all_positions.update(port_positions)
+        elif mode == MODE_SINGLE:
+            # The port was read without an error and delivered nothing. Treating that as a
+            # success reset the failure counter on every tick, so the threshold was never
+            # reached again - measured on the robot as exactly one PORT_REOPEN, then a silent
+            # log with ports_ok stuck at 3/4 for the rest of the observation.
+            _LOG.warning(
+                "joint state sweep: port %s answered without positions", port_key
+            )
+            try:
+                _note_and_maybe_reopen(serial_for_port(group[0][1]))
+            except Exception as error:  # noqa: BLE001 - never break the sweep
+                _LOG.error(
+                    "joint state sweep: port %s recovery failed: %s",
+                    port_key,
+                    error,
+                    exc_info=True,
+                )
 
     if not all_positions and ports_unreachable:
         now = time.monotonic()
