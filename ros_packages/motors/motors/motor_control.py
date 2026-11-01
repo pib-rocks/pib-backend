@@ -417,6 +417,9 @@ class MotorControl(Node):
             outcomes = legacy_zip_outcomes(joint_names)
             response.successful = False
             response.results = motor_outcomes_to_ros(outcomes)
+            self.get_logger().warning(
+                f"apply_joint_trajectory rejected legacy zip shape for {len(joint_names)} joints"
+            )
             return response
 
         validation_errors, validation_outcomes = validate_radians_trajectory(
@@ -425,6 +428,9 @@ class MotorControl(Node):
         if validation_errors is not None:
             response.successful = False
             response.results = motor_outcomes_to_ros(validation_outcomes)
+            self.get_logger().warning(
+                f"apply_joint_trajectory rejected invalid trajectory: {validation_errors}"
+            )
             return response
 
         if is_software_trajectory(raw):
@@ -436,6 +442,9 @@ class MotorControl(Node):
                         (name, False, "invalid_schedule", schedule_error)
                         for name in joint_names
                     ]
+                )
+                self.get_logger().warning(
+                    f"apply_joint_trajectory rejected invalid schedule: {schedule_error}"
                 )
                 return response
 
