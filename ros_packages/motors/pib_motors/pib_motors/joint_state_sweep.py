@@ -116,8 +116,8 @@ def _note_and_maybe_reopen(device: str) -> None:
     if action == RecoveryAction.REOPEN:
         reopen_port(device)
     elif action == RecoveryAction.USB_RESET:
-        reopen_port(device)
         reset_cdc_acm_adapter(device)
+        reopen_port(device)
         forget_dead_ports()
 
 

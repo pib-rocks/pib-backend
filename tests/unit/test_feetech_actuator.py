@@ -43,6 +43,7 @@ class FakeStsPacketHandler:
         self.speed: int = 0
         self.current: int = 15
         self.temperature: int = 34
+        self.voltage_raw: int = 118
         self.comm_result: int = 0  # COMM_SUCCESS
         self.writes: list[tuple[int, int, int, int]] = []
         self.byte_writes: list[tuple[int, int, int]] = []
@@ -518,3 +519,92 @@ def test_tty_flags_are_idempotent() -> None:
 
     once = feetech_actuator.desired_cflag(termios.CLOCAL)
     assert feetech_actuator.desired_cflag(once) == once
+
+
+def test_reopen_port_keeps_existing_actuator_and_bus_writer_handles_alive(
+    monkeypatch,
+) -> None:
+    """PR-2159: reopen_port() must reopen the cached PortHandler in place instead of
+    popping it and leaving BusWriter._ph / actuator._ph closed forever.
+    """
+    ft_mod, act_mod = _load_modules()
+
+    class StrictPortHandler(FakePortHandler):
+        def __init__(self, port_name: str, can_open: bool = True) -> None:
+            super().__init__(port_name, can_open=can_open)
+            self.open_count = 0
+            self.close_count = 0
+
+        def openPort(self) -> bool:
+            self.open_count += 1
+            return super().openPort()
+
+        def closePort(self) -> None:
+            self.close_count += 1
+            super().closePort()
+
+    class StrictPacketHandler(FakeStsPacketHandler):
+        def ReadPosSpeed(self, servo_id: int):
+            if not self.ph.is_open:
+                raise RuntimeError("serial port is closed")
+            return super().ReadPosSpeed(servo_id)
+
+        def WritePosEx(self, servo_id: int, position: int, speed: int, acc: int):
+            if not self.ph.is_open:
+                raise RuntimeError("serial port is closed")
+            return super().WritePosEx(servo_id, position, speed, acc)
+
+    monkeypatch.setattr(ft_mod, "PortHandler", StrictPortHandler)
+    monkeypatch.setattr(ft_mod, "sts", lambda ph: StrictPacketHandler(ph))
+    ft_mod._port_cache.clear()
+
+    actuator = act_mod.create_actuator("feetech_st_serial", 51, "5B91030562", "max")
+    ph_before = actuator._ph
+    assert ph_before.is_open is True
+    assert actuator.set_position(1000) is True
+
+    # Trigger reopen_port: the SAME PortHandler instance must be closed and reopened in place
+    assert ft_mod.reopen_port("5B91030562") is True
+    assert actuator._ph is ph_before
+    assert ph_before.close_count == 1
+    assert ph_before.open_count == 2
+    assert ph_before.is_open is True
+
+    # Existing actuator and BusWriter continue working without recreating anything
+    assert actuator.set_position(4500) is True
+    assert actuator.get_position() == 4500
+
+
+def test_get_temperature_and_get_voltage_route_through_bus_writer(
+    monkeypatch,
+) -> None:
+    """PR-2159: get_temperature() and get_voltage() must serialize through BusWriter.run_service."""
+    ft_mod, act_mod = _load_modules()
+
+    def fake_sts(ph):
+        pk = FakeStsPacketHandler(ph)
+        pk.temperature = 41
+        pk.voltage_raw = 123
+        return pk
+
+    monkeypatch.setattr(ft_mod, "PortHandler", FakePortHandler)
+    monkeypatch.setattr(ft_mod, "sts", fake_sts)
+    ft_mod._port_cache.clear()
+
+    actuator = act_mod.create_actuator("feetech_st_serial", 51, "WS-HEAD", "max")
+    writer = actuator._writer()
+    labels: list[str] = []
+    orig_run_service = writer.run_service
+
+    def spy_run_service(execute, *, deadline=None, wait_timeout=None, label=""):
+        labels.append(label)
+        return orig_run_service(
+            execute, deadline=deadline, wait_timeout=wait_timeout, label=label
+        )
+
+    monkeypatch.setattr(writer, "run_service", spy_run_service)
+
+    assert actuator.get_temperature() == 41
+    assert actuator.get_voltage() == 12.3
+    assert "pin51:get_temperature" in labels
+    assert "pin51:get_voltage" in labels
