@@ -268,7 +268,9 @@ def reopen_port(address: str) -> bool:
                 )
                 return False
             _configure_tty(ph)
-        except Exception as error:  # noqa: BLE001 - hardware may still be re-enumerating
+        except (
+            Exception
+        ) as error:  # noqa: BLE001 - hardware may still be re-enumerating
             logging.error(
                 "[PERF_TRACE] PORT_REOPEN device=%s stage=REOPEN_FAILED error=%s",
                 device,
