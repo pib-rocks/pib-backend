@@ -87,6 +87,19 @@ MOTOR_MAPPING = {
 #: The other joints were confirmed correct in the same audit: shoulder_vertical (both),
 #: shoulder_horizontal_left, upper_arm_rotation (both), lower_arm_rotation (both) and
 #: wrist_right.
+#: pib4/pib5 advanced drive the fingers with cables, so their servos travel +/-180 degrees
+#: where every other motor (and every finger on the edu variants) travels +/-90. This is a
+#: pib5advanced-only overlay: FINGER_MOTOR_PARAMETERS is shared with the edu profiles.
+CABLE_FINGER_MOTOR_PARAMETERS = {
+    **FINGER_MOTOR_PARAMETERS,
+    "rotation_range_min": -18000,
+    "rotation_range_max": 18000,
+}
+INVERTED_CABLE_FINGER_MOTOR_PARAMETERS = {
+    **CABLE_FINGER_MOTOR_PARAMETERS,
+    "upper_endpoint": "min",
+}
+
 MOTOR_PARAMETER_DEVIATIONS = {
     "tilt_forward_motor": {
         "rotation_range_min": -2000,
@@ -114,18 +127,18 @@ MOTOR_PARAMETER_DEVIATIONS = {
     "shoulder_horizontal_right": {"velocity": 10000, "upper_endpoint": "max"},
     "wrist_left": {"velocity": 10000, "visible": False, "upper_endpoint": "min"},
     "wrist_right": {"velocity": 10000},
-    "thumb_right_opposition": FINGER_MOTOR_PARAMETERS,
-    "thumb_right_stretch": INVERTED_FINGER_MOTOR_PARAMETERS,
-    "index_right_stretch": FINGER_MOTOR_PARAMETERS,
-    "middle_right_stretch": INVERTED_FINGER_MOTOR_PARAMETERS,
-    "ring_right_stretch": INVERTED_FINGER_MOTOR_PARAMETERS,
-    "pinky_right_stretch": FINGER_MOTOR_PARAMETERS,
-    "thumb_left_opposition": INVERTED_FINGER_MOTOR_PARAMETERS,
-    "thumb_left_stretch": FINGER_MOTOR_PARAMETERS,
-    "index_left_stretch": FINGER_MOTOR_PARAMETERS,
-    "middle_left_stretch": INVERTED_FINGER_MOTOR_PARAMETERS,
-    "ring_left_stretch": FINGER_MOTOR_PARAMETERS,
-    "pinky_left_stretch": FINGER_MOTOR_PARAMETERS,
+    "thumb_right_opposition": CABLE_FINGER_MOTOR_PARAMETERS,
+    "thumb_right_stretch": INVERTED_CABLE_FINGER_MOTOR_PARAMETERS,
+    "index_right_stretch": CABLE_FINGER_MOTOR_PARAMETERS,
+    "middle_right_stretch": INVERTED_CABLE_FINGER_MOTOR_PARAMETERS,
+    "ring_right_stretch": INVERTED_CABLE_FINGER_MOTOR_PARAMETERS,
+    "pinky_right_stretch": CABLE_FINGER_MOTOR_PARAMETERS,
+    "thumb_left_opposition": INVERTED_CABLE_FINGER_MOTOR_PARAMETERS,
+    "thumb_left_stretch": CABLE_FINGER_MOTOR_PARAMETERS,
+    "index_left_stretch": CABLE_FINGER_MOTOR_PARAMETERS,
+    "middle_left_stretch": INVERTED_CABLE_FINGER_MOTOR_PARAMETERS,
+    "ring_left_stretch": CABLE_FINGER_MOTOR_PARAMETERS,
+    "pinky_left_stretch": CABLE_FINGER_MOTOR_PARAMETERS,
 }
 
 PROFILE = HardwareProfile(

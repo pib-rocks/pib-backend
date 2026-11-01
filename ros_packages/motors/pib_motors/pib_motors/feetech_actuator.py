@@ -359,6 +359,12 @@ class FeetechStSerialActuator:
         self.uid: str = uid
         self.upper_endpoint: str = upper_endpoint
         self.direction_sign: int = -1 if upper_endpoint == "min" else 1
+        # The cable-driven fingers of pib4advanced/pib5advanced travel +/-180 degrees, every
+        # other joint +/-90. The bound comes from the motor's DB settings, so it has to be
+        # carried here: centideg_to_ticks() otherwise enforces its +/-9000 default on every
+        # motor and silently caps the fingers.
+        self.rotation_range_min: int = _DEFAULT_ROTATION_RANGE_MIN
+        self.rotation_range_max: int = _DEFAULT_ROTATION_RANGE_MAX
         self._baudrate: int = DEFAULT_BAUDRATE
         self._connected: bool | None = None
         self._target_position: int | None = None
@@ -490,6 +496,16 @@ class FeetechStSerialActuator:
             if key in settings_dto:
                 self._settings[key] = settings_dto[key]
 
+        range_min = settings_dto.get("rotationRangeMin", settings_dto.get("rotation_range_min"))
+        range_max = settings_dto.get("rotationRangeMax", settings_dto.get("rotation_range_max"))
+        if range_min is not None and range_max is not None:
+            if range_min >= range_max:
+                raise ValueError(
+                    f"rotation range [{range_min}, {range_max}] is empty or inverted"
+                )
+            self.rotation_range_min = int(range_min)
+            self.rotation_range_max = int(range_max)
+
         if not self.is_connected() or self._pk is None or self._lock is None:
             return False
 
@@ -547,7 +563,9 @@ class FeetechStSerialActuator:
 
         position = int(round(position))
         centideg = position * self.direction_sign
-        ticks = centideg_to_ticks(float(centideg))
+        ticks = centideg_to_ticks(
+            float(centideg), self.rotation_range_min, self.rotation_range_max
+        )
         if speed is None or acc is None:
             default_speed, default_acc = self._resolve_speed_and_acc()
             speed = default_speed if speed is None else int(speed)

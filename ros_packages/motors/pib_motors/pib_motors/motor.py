@@ -16,15 +16,24 @@ class Motor:
 
     NO_CURRENT: int = ServoBrickletActuator.NO_CURRENT
 
-    def __init__(self, name: str, actuators: list[Actuator], upper_endpoint: str):
+    def __init__(
+        self,
+        name: str,
+        actuators: list[Actuator],
+        upper_endpoint: str,
+        rotation_range_min: int = MIN_ROTATION,
+        rotation_range_max: int = MAX_ROTATION,
+    ):
         self.name: str = name
         self.visible: bool = True
         self.actuators: list[Actuator] = actuators
         self.upper_endpoint: str = upper_endpoint
         for actuator in self.actuators:
             _sync_upper_endpoint(actuator, upper_endpoint)
-        self.rotation_range_min: int = Motor.MIN_ROTATION
-        self.rotation_range_max: int = Motor.MAX_ROTATION
+        # Comes from the motor's DB settings: +/-90 for every joint except the cable-driven
+        # fingers of pib4advanced/pib5advanced, which travel +/-180.
+        self.rotation_range_min: int = int(rotation_range_min)
+        self.rotation_range_max: int = int(rotation_range_max)
 
     @property
     def bricklet_pins(self) -> list[Actuator]:
@@ -164,7 +173,15 @@ for motor_dto in response["motors"]:
                 f"motor '{motor_dto['name']}' uses controller kind '{kind}', which is "
                 f"not supported in this build - motor stays without actuator: {error}"
             )
-    motors.append(Motor(motor_dto["name"], actuators, upper_endpoint))
+    motors.append(
+        Motor(
+            motor_dto["name"],
+            actuators,
+            upper_endpoint,
+            motor_dto.get("rotationRangeMin", Motor.MIN_ROTATION),
+            motor_dto.get("rotationRangeMax", Motor.MAX_ROTATION),
+        )
+    )
 
 # maps the name of a (multi-)motor to its associated motor objects
 name_to_motors: dict[str, Motor] = {motor.name: [motor] for motor in motors}
