@@ -496,8 +496,12 @@ class FeetechStSerialActuator:
             if key in settings_dto:
                 self._settings[key] = settings_dto[key]
 
-        range_min = settings_dto.get("rotationRangeMin", settings_dto.get("rotation_range_min"))
-        range_max = settings_dto.get("rotationRangeMax", settings_dto.get("rotation_range_max"))
+        range_min = settings_dto.get(
+            "rotationRangeMin", settings_dto.get("rotation_range_min")
+        )
+        range_max = settings_dto.get(
+            "rotationRangeMax", settings_dto.get("rotation_range_max")
+        )
         if range_min is not None and range_max is not None:
             if range_min >= range_max:
                 raise ValueError(
