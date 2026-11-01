@@ -22,11 +22,13 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from pib_motors.port_probe import forget_dead_ports, port_answers
+from pib_motors.port_recovery import note_failure, note_success
 from pib_motors.feetech_actuator import (
     FeetechStSerialActuator,
-    _BusAccess,
+    resolve_serial_device,
     ticks_to_centideg,
 )
+from pib_motors.bus_writer import get_bus_writer
 from pib_motors.stservo_sdk.stservo_def import COMM_SUCCESS
 from pib_motors.units import centideg_to_rad
 
@@ -95,9 +97,22 @@ def _read_single(
     return positions
 
 
+def serial_for_port(actuator: Any) -> str:
+    """The device path this actuator lives on, resolved the same way the writer does."""
+    return resolve_serial_device(str(getattr(actuator, "uid", "") or ""))
+
+
 def _port_answers(group: list[tuple[str, FeetechStSerialActuator]]) -> bool:
     """One probe per port instead of one per servo (see ``port_probe``)."""
     return port_answers(group[0][1])
+
+
+def _note_and_maybe_reopen(device: str) -> None:
+    """Feed the failure into the policy and reopen the port once it has had enough."""
+    from pib_motors.feetech_actuator import reopen_port
+
+    if note_failure(device):
+        reopen_port(device)
 
 
 def _sweep_port(
@@ -113,11 +128,34 @@ def _sweep_port(
 
     port_key = str(getattr(sample, "uid", "") or "")
     try:
-        with _BusAccess(ph, lock):
-            positions = _read_single(pk, group)
-            return positions, MODE_SINGLE
+        device = resolve_serial_device(sample.uid)
+        writer = get_bus_writer(device, ph, pk, lock)
+
+        def _execute(bus_pk: Any) -> dict[str, int]:
+            return _read_single(bus_pk, group)
+
+        positions, error = writer.run_sweep(
+            _execute, label=f"sweep:{len(group)} servos"
+        )
+        if error:
+            _LOG.error("joint state sweep: port %s sweep failed: %s", port_key, error)
+            _note_and_maybe_reopen(device)
+            return {}, ""
+        note_success(device)
+        return positions or {}, MODE_SINGLE
     except Exception as error:  # noqa: BLE001 - a dead port must not break the sweep
-        _LOG.warning("joint state sweep: port %s failed entirely: %s", port_key, error)
+        _LOG.error("joint state sweep: port %s failed entirely: %s", port_key, error)
+        try:
+            _note_and_maybe_reopen(resolve_serial_device(sample.uid))
+        except (
+            Exception
+        ) as error:  # noqa: BLE001 - never let the recovery break the sweep
+            _LOG.error(
+                "joint state sweep: port %s recovery failed: %s",
+                port_key,
+                error,
+                exc_info=True,
+            )
         return {}, ""
 
 
@@ -140,6 +178,23 @@ def sweep_feetech_joint_positions(motors: list[Any]) -> JointStateSweepResult:
         if not _port_answers(group):
             ports_unreachable += 1
             mode_by_port[port_key] = MODE_UNREACHABLE
+            # A port the probe cannot reach counts as a failure too. Without this the recovery
+            # gave up after a single reopen: the probe skipped the port, so no further failure
+            # was ever counted and the retry budget was never spent - measured on the robot,
+            # ports_ok stayed at 3/4 for a minute with only one PORT_REOPEN in the log.
+            try:
+                _note_and_maybe_reopen(serial_for_port(group[0][1]))
+            except (
+                Exception
+            ) as error:  # noqa: BLE001 - recovery must never break the sweep
+                # Loud on purpose: swallowing this hid why the retry loop never ran on the
+                # robot (one PORT_REOPEN in the log, then silence, ports_ok stuck at 3/4).
+                _LOG.error(
+                    "joint state sweep: port %s recovery failed: %s",
+                    port_key,
+                    error,
+                    exc_info=True,
+                )
             continue
         ports_attempted += 1
         started = time.monotonic()

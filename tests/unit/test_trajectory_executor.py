@@ -8,8 +8,11 @@ trajectory messages and a fake Motor. If the module cannot be imported
 from __future__ import annotations
 
 import sys
+import threading
+import time
 from pathlib import Path
 from typing import Any
+from queue import SimpleQueue
 
 import pytest
 
@@ -20,13 +23,18 @@ if str(PIB_MOTORS_ROOT) not in sys.path:
 
 try:
     from pib_motors.trajectory_executor import (
-        DEFAULT_SHARP_ACCELERATION,
-        DEFAULT_SHARP_DECELERATION,
-        DEFAULT_SHARP_VELOCITY,
+        MAX_SOFTWARE_TRAJECTORY_DURATION_SEC,
+        PATH_SPEED_TRACKING_MARGIN,
+        STS_VELOCITY_MAX,
+        STS_VELOCITY_MIN,
         TrajectoryExecutor,
+        active_trajectory_leg_index,
+        derive_sts_velocity_setting,
         interpolate_joint,
+        interpolate_joint_velocity_centideg_per_sec,
         interpolate_positions,
         is_software_trajectory,
+        validate_software_trajectory_schedule,
     )
 except ImportError as exc:  # pragma: no cover - unexpected missing module
     pytest.skip(
@@ -60,6 +68,7 @@ class FakeMotor:
         self.name = name
         self.positions: list[int] = []
         self.settings_calls: list[dict[str, Any]] = []
+        self.write_settings: list[dict[str, Any]] = []
         self._settings = {
             "name": name,
             "visible": True,
@@ -78,8 +87,11 @@ class FakeMotor:
             self._settings.update(settings)
         self._position = 0
 
-    def set_position(self, position: int) -> bool:
+    def set_position(self, position: int, **kwargs: Any) -> bool:
         self.positions.append(int(position))
+        self.write_settings.append(
+            {"speed": kwargs.get("speed"), "acc": kwargs.get("acc")}
+        )
         self._position = int(position)
         return True
 
@@ -112,7 +124,8 @@ class FakeClock:
 
 
 def _executor(
-    motors: dict[str, list[FakeMotor]], clock: FakeClock | None = None
+    motors: dict[str, list[FakeMotor]],
+    clock: FakeClock | None = None,
 ) -> TrajectoryExecutor:
     clock = clock or FakeClock()
     return TrajectoryExecutor(
@@ -190,9 +203,13 @@ def test_multi_point_interpolation_calls_set_position_in_order() -> None:
     assert motor.positions == sorted(motor.positions)
 
 
-def test_motion_config_is_sharpened_then_restored() -> None:
+def test_a_trajectory_never_writes_the_motor_settings() -> None:
+    """The speed travels with each position write, so nothing is sharpened or restored.
+
+    This removes the class of bug where a cancel left a motor sharpened: there is no window in
+    which the stored motion configuration differs from the configured one.
+    """
     motor = FakeMotor("elbow")
-    original_velocity = motor.get_settings()["velocity"]
     executor = _executor({"elbow": [motor]})
     jt = FakeJointTrajectory(
         ["elbow"],
@@ -200,15 +217,59 @@ def test_motion_config_is_sharpened_then_restored() -> None:
     )
 
     assert executor.execute(jt) is True
-    assert len(motor.settings_calls) >= 2
-    sharp, restored = motor.settings_calls[0], motor.settings_calls[-1]
-    assert sharp["velocity"] == DEFAULT_SHARP_VELOCITY
-    assert sharp["acceleration"] == DEFAULT_SHARP_ACCELERATION
-    assert sharp["deceleration"] == DEFAULT_SHARP_DECELERATION
-    assert restored["velocity"] == original_velocity
-    assert restored["acceleration"] == 3000
-    assert restored["deceleration"] == 3000
-    assert motor.get_settings()["velocity"] == original_velocity
+    assert motor.settings_calls == [], motor.settings_calls
+    assert motor.positions, "the motor was never commanded"
+
+
+def test_the_speed_is_derived_per_tick_not_per_leg() -> None:
+    """Inside one PCHIP segment the slope changes, so the commanded speed must change too.
+
+    A two-point trajectory has a constant slope, so the check uses three via points with
+    different spacings: the settings commanded at the beginning and at the end of the same
+    segment differ.
+    """
+    motor = FakeMotor("elbow")
+    executor = _executor({"elbow": [motor]})
+    jt = FakeJointTrajectory(
+        ["elbow"],
+        [
+            FakePoint([0], 0.0),
+            FakePoint([1500], 1.0),
+            FakePoint([3000], 3.0),
+        ],
+    )
+
+    assert executor.execute(jt) is True
+    speeds = [entry["speed"] for entry in motor.write_settings if entry["speed"]]
+    assert speeds, motor.write_settings
+    assert max(speeds) > min(speeds), f"speed never changed: {sorted(set(speeds))}"
+
+
+def test_the_acceleration_is_coupled_to_the_speed_change() -> None:
+    """A jump in the required speed must not be commanded with a soft ramp."""
+    motor = FakeMotor("elbow")
+    fresh = _executor({"elbow": [motor]})
+    calm = fresh._acceleration_for(motor, 100, 0.01)  # first call: no history
+    assert calm is None, "the first tick has nothing to compare against"
+
+    changing = fresh._acceleration_for(motor, 400, 0.01)  # 30000 per second
+    assert changing is not None
+    assert changing <= 3000, "must never exceed the motor's own acceleration"
+
+    steady = fresh._acceleration_for(motor, 400, 0.01)  # no change
+    assert steady == 1, steady
+
+
+def test_acceleration_coupling_can_be_switched_off() -> None:
+    motor = FakeMotor("elbow")
+    executor = TrajectoryExecutor(
+        node=None,
+        motor_lookup={"elbow": [motor]},
+        rate_hz=10.0,
+        path_coupled_acceleration=False,
+    )
+    assert executor._acceleration_for(motor, 100, 0.01) is None
+    assert executor._acceleration_for(motor, 900, 0.01) is None
 
 
 def test_single_point_is_one_set_position_without_sharp_restore() -> None:
@@ -257,3 +318,196 @@ def test_via_point_blend_does_not_dwell_at_via_point() -> None:
     tail = motor.positions[first_via + 1 :]
     assert tail, "trajectory ended at the via-point instead of blending through"
     assert any(p != 100 for p in tail)
+
+
+def test_validate_rejects_zero_second_leg() -> None:
+    jt = FakeJointTrajectory(
+        ["elbow"],
+        [FakePoint([0], 0.0), FakePoint([50], 1.0), FakePoint([100], 1.0)],
+    )
+    message = validate_software_trajectory_schedule(jt)
+    assert message is not None
+    assert "not allowed" in message
+
+
+def test_validate_rejects_duplicate_waypoint_times() -> None:
+    jt = FakeJointTrajectory(
+        ["elbow"],
+        [FakePoint([0], 0.0), FakePoint([50], 2.0), FakePoint([100], 2.0)],
+    )
+    message = validate_software_trajectory_schedule(jt)
+    assert message is not None
+    assert "duplicate" in message
+
+
+def test_validate_rejects_duration_above_maximum() -> None:
+    over = MAX_SOFTWARE_TRAJECTORY_DURATION_SEC + 1.0
+    jt = FakeJointTrajectory(
+        ["elbow"],
+        [FakePoint([0], 0.0), FakePoint([10], over)],
+    )
+    message = validate_software_trajectory_schedule(jt)
+    assert message is not None
+    assert "maximum" in message
+
+
+def test_invalid_schedule_execute_does_not_move_motor() -> None:
+    motor = FakeMotor("elbow")
+    executor = _executor({"elbow": [motor]})
+    jt = FakeJointTrajectory(
+        ["elbow"],
+        [FakePoint([0], 0.0), FakePoint([100], 0.0)],
+    )
+    assert executor.execute(jt) is False
+    assert motor.positions == []
+    assert motor.settings_calls == []
+
+
+def test_cancel_stops_interpolation_without_touching_the_settings() -> None:
+    """Cancel stops the motion; there is no motion configuration left to restore."""
+    motor = FakeMotor("elbow")
+    clock = FakeClock()
+    executor = _executor({"elbow": [motor]}, clock)
+    jt = FakeJointTrajectory(["elbow"], [FakePoint([0], 0.0), FakePoint([100], 5.0)])
+
+    started, error = executor.start_async(jt, SimpleQueue())
+    assert started is True, error
+    assert executor.cancel(timeout=2.0) is True
+    assert executor.join(timeout=2.0) is True
+    assert motor.settings_calls == []
+    written = len(motor.positions)
+    clock.sleep(1.0)
+    assert (
+        len(motor.positions) == written
+    ), "the motor kept being commanded after a cancel"
+
+
+def test_start_async_returns_long_before_the_trajectory_duration_has_elapsed() -> None:
+    """Load-bearing: the caller gets control back immediately, not after the motion.
+
+    The sibling test only asserts is_running()/join(). A synchronous implementation
+    satisfies both, so this one measures WALL time on a real clock: the loop really
+    sleeps for about 0.4 s, and the call must still return in a fraction of that.
+    """
+    motor = FakeMotor("elbow")
+    executor = TrajectoryExecutor(
+        None,
+        {"elbow": [motor]},
+        rate_hz=20.0,
+        sleep_fn=time.sleep,
+        clock_fn=time.monotonic,
+    )
+    jt = FakeJointTrajectory(
+        ["elbow"],
+        [FakePoint([0], 0.0), FakePoint([100], 0.4)],
+    )
+
+    started_at = time.monotonic()
+    started, _error = executor.start_async(jt, SimpleQueue())
+    elapsed = time.monotonic() - started_at
+
+    assert started is True
+    assert (
+        elapsed < 0.1
+    ), f"start_async blocked for {elapsed:.2f} s (trajectory is 0.4 s)"
+    assert executor.is_running() is True
+    assert executor.join(timeout=10.0) is True
+    assert motor.positions, "the worker never commanded the motor"
+
+
+def test_start_async_returns_before_duration_elapses() -> None:
+    motor = FakeMotor("elbow")
+    clock = FakeClock()
+    executor = _executor({"elbow": [motor]}, clock)
+    jt = FakeJointTrajectory(
+        ["elbow"],
+        [FakePoint([0], 0.0), FakePoint([100], 5.0)],
+    )
+    started, _ = executor.start_async(jt, SimpleQueue())
+    assert started is True
+    assert executor.is_running() is True
+    assert executor.join(timeout=1.0) is True
+
+
+def test_path_speed_derivation_slow_vs_fast_leg() -> None:
+    times = [0.0, 1.0, 2.0]
+    slow = [0.0, 10.0, 20.0]
+    fast = [0.0, 100.0, 200.0]
+    slow_speed = abs(interpolate_joint_velocity_centideg_per_sec(times, slow, 0.5))
+    fast_speed = abs(interpolate_joint_velocity_centideg_per_sec(times, fast, 0.5))
+    assert slow_speed < fast_speed
+    assert slow_speed == pytest.approx(10.0, rel=0.05)
+
+
+STS3095_CURVE = ((200, 2091.8), (700, 4729.3), (2000, 4948.8))
+FINGER_CURVE = ((200, 1740.5), (700, 3483.3), (2000, 3834.6))
+
+
+def test_derive_sts_velocity_uses_the_measured_curve() -> None:
+    """Between two measured points the inverse interpolates; it cannot be a linear factor.
+
+    3000 cdg/s x 1.2 = 3600 cdg/s needed. On the STS3095 curve that lies between (200, 2091.8) and
+    (700, 4729.3): 200 + (3600 - 2091.8) / (4729.3 - 2091.8) * 500 = 486. The same demand on the
+    finger curve lies between (700, 3483.3) and (2000, 3834.6) and gives 1132 - a factor of 2.3
+    apart, which is exactly why a single scalar factor cannot work.
+    """
+    assert derive_sts_velocity_setting(3000.0, curve=STS3095_CURVE, margin=1.2) == 486
+    assert derive_sts_velocity_setting(3000.0, curve=FINGER_CURVE, margin=1.2) == 1132
+
+
+def test_derive_sts_velocity_defaults_to_the_slower_family() -> None:
+    """A motor that cannot name its servo is treated as a finger servo, not as a fast one.
+
+    Guessing fast would bring the stepping back; guessing slow only costs tracking accuracy.
+    """
+    assert derive_sts_velocity_setting(
+        3000.0, margin=1.2
+    ) == derive_sts_velocity_setting(3000.0, curve=FINGER_CURVE, margin=1.2)
+
+
+def test_derive_sts_velocity_clamps_at_both_ends() -> None:
+    # a path that barely moves is clamped to the smallest setting the servo accepts
+    assert derive_sts_velocity_setting(5.0, margin=1.0) == STS_VELOCITY_MIN
+    # a path faster than the curve saturates at the top of the measured curve
+    assert derive_sts_velocity_setting(50000.0, margin=1.0) == 2000
+    # standing still keeps the minimum setting, so the joint still holds its position
+    assert derive_sts_velocity_setting(0.0) == STS_VELOCITY_MIN
+
+
+def test_derive_sts_velocity_accepts_an_explicit_curve() -> None:
+    """A servo whose measured curve differs must be able to say so.
+
+    2500 cdg/s on the finger curve: 200 + (2500 - 1740.5) / (3483.3 - 1740.5) * 500 = 418.
+    On the STS3095 curve the same rate needs 200 + (2500 - 2091.8) / (4729.3 - 2091.8) * 500 = 277.
+    """
+    assert derive_sts_velocity_setting(2500.0, curve=FINGER_CURVE, margin=1.0) == 418
+    assert derive_sts_velocity_setting(2500.0, curve=STS3095_CURVE, margin=1.0) == 277
+
+
+def test_the_write_carries_the_speed_and_the_acceleration() -> None:
+    """The speed has to travel with the write - a settings write per tick would be absurd."""
+    motor = FakeMotor("elbow")
+    executor = _executor({"elbow": [motor]})
+    jt = FakeJointTrajectory(["elbow"], [FakePoint([0], 0.0), FakePoint([100], 1.0)])
+
+    assert executor.execute(jt) is True
+    assert motor.write_settings, motor.write_settings
+    assert all(entry["speed"] for entry in motor.write_settings)
+    # the first tick has no previous speed to compare against, so it carries no acceleration
+    assert motor.write_settings[0]["acc"] is None
+    assert any(entry["acc"] is not None for entry in motor.write_settings[1:])
+
+
+def test_interpolate_joint_velocity_empty_and_flat() -> None:
+    assert interpolate_joint_velocity_centideg_per_sec([], [], 0.0) == 0.0
+    assert interpolate_joint_velocity_centideg_per_sec([0.0], [5.0], 0.0) == 0.0
+    flat = interpolate_joint_velocity_centideg_per_sec([0.0, 1.0], [10.0, 10.0], 0.5)
+    assert flat == pytest.approx(0.0, abs=1e-6)
+
+
+def test_active_trajectory_leg_index() -> None:
+    times = [0.0, 1.0, 3.0]
+    assert active_trajectory_leg_index(times, -1.0) == 0
+    assert active_trajectory_leg_index(times, 0.5) == 0
+    assert active_trajectory_leg_index(times, 2.0) == 1
+    assert active_trajectory_leg_index(times, 10.0) == 1

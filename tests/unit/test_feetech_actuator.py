@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+import time
 import types
 from pathlib import Path
 from unittest import mock
@@ -21,6 +22,15 @@ for path in (
 ):
     if path not in sys.path:
         sys.path.insert(0, path)
+
+
+@pytest.fixture(autouse=True)
+def _reset_bus_writer_registry():
+    from pib_motors.bus_writer import reset_bus_writer_registry_for_tests
+
+    reset_bus_writer_registry_for_tests()
+    yield
+    reset_bus_writer_registry_for_tests()
 
 
 class FakeStsPacketHandler:
@@ -436,3 +446,75 @@ def test_feetech_actuator_custom_velocity_and_acceleration_in_write_pos_ex(
     assert actuator.apply_settings({"velocity": 1200, "acceleration": 45}) is True
     assert actuator.set_position(0) is True
     assert pk_instance.writes[-1] == (18, ft_mod.TICKS_AT_JOINT_ZERO, 1200, 45)
+
+
+def test_holding_the_port_too_long_is_logged_with_its_caller(
+    monkeypatch, caplog
+) -> None:
+    """The holder of the port is invisible otherwise: every waiter only sees the wait.
+
+    With the threshold lowered to 1 ms, a short artificial hold must produce a
+    BUS_ACCESS_HELD line naming the function that held it.
+    """
+    import threading
+
+    from pib_motors import feetech_actuator
+
+    class _FakePort:
+        port_name = "/dev/fake-motor0"
+        ser = None
+
+    monkeypatch.setattr(feetech_actuator, "HELD_WARN_MS", 1.0)
+    with caplog.at_level("WARNING"):
+        with feetech_actuator._BusAccess(_FakePort(), threading.Lock()):
+            time.sleep(0.01)
+    assert "BUS_ACCESS_HELD" in caplog.text
+    assert "test_holding_the_port_too_long_is_logged_with_its_caller" in caplog.text
+
+
+def test_short_port_hold_is_not_logged(monkeypatch, caplog) -> None:
+    """Counter-check: without this the warning above could fire on every transaction."""
+    import threading
+
+    from pib_motors import feetech_actuator
+
+    class _FakePort:
+        port_name = "/dev/fake-motor0"
+        ser = None
+
+    monkeypatch.setattr(feetech_actuator, "HELD_WARN_MS", 5_000.0)
+    with caplog.at_level("WARNING"):
+        with feetech_actuator._BusAccess(_FakePort(), threading.Lock()):
+            time.sleep(0.005)
+    assert "BUS_ACCESS_HELD" not in caplog.text
+
+
+def test_tty_flags_keep_dtr_and_drop_hardware_flow_control() -> None:
+    """Three processes share each adapter; the last close must not drop DTR.
+
+    Measured on the pib5advanced: when an adapter stops answering there is no USB disconnect in
+    dmesg, so the link is fine and only the line state changes. HUPCL - the default - drops DTR
+    on the last close, which a CDC-ACM bridge firmware reads as "host gone".
+    """
+    import termios
+
+    from pib_motors import feetech_actuator
+
+    # no CLOCAL in the input: otherwise setting it could not be observed
+    cflag = termios.HUPCL | termios.CRTSCTS | termios.CREAD
+    result = feetech_actuator.desired_cflag(cflag)
+
+    assert result & termios.HUPCL == 0, "HUPCL must be cleared"
+    assert result & termios.CRTSCTS == 0, "hardware flow control must be off"
+    assert result & termios.CLOCAL, "CLOCAL must be set"
+    assert result & termios.CREAD, "unrelated flags must survive"
+
+
+def test_tty_flags_are_idempotent() -> None:
+    """Applying the flags twice must not accumulate anything."""
+    import termios
+
+    from pib_motors import feetech_actuator
+
+    once = feetech_actuator.desired_cflag(termios.CLOCAL)
+    assert feetech_actuator.desired_cflag(once) == once

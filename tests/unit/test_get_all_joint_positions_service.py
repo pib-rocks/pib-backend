@@ -93,6 +93,9 @@ def _load_motor_control_for_batch(lookup: dict, motors_list: list):
         "pib_motors.trajectory_executor",
         TrajectoryExecutor=trajectory_executor.TrajectoryExecutor,
         is_software_trajectory=trajectory_executor.is_software_trajectory,
+        validate_software_trajectory_schedule=(
+            trajectory_executor.validate_software_trajectory_schedule
+        ),
     )
     pib_motors_joint_cmd = _module(
         "pib_motors.joint_trajectory_command",

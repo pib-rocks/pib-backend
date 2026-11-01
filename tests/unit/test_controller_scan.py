@@ -86,3 +86,115 @@ def test_build_detected_assignments_no_controller_below_min_match():
     assert assignments[0]["controllerNumber"] is None
     assert assignments[0]["matchCount"] == 0
     assert assignments[0]["expectedCount"] == 0
+
+
+def test_count_matches_takes_the_port_per_probe() -> None:
+    """Holding the port across all probes blocked the sweep for about a second.
+
+    Each probe must be its own port acquisition, so an adapter is never held longer than
+    one response timeout - a servo that is not on this adapter costs exactly that.
+    """
+    acquisitions: list[str] = []
+
+    class _Access:
+        def __init__(self, _ph, _lock) -> None:
+            pass
+
+        def __enter__(self) -> None:
+            acquisitions.append("enter")
+
+        def __exit__(self, *_args) -> None:
+            acquisitions.append("exit")
+
+    class _Pk:
+        def ReadPosSpeed(self, servo_id: int):
+            return (0, 0, 0, 0) if servo_id == 16 else (-1, 0, 1, "no answer")
+
+    with mock.patch.object(
+        controller_scan, "_get_or_open_port", return_value=(None, _Pk(), None)
+    ):
+        with mock.patch.object(controller_scan, "_BusAccess", _Access):
+            counts = controller_scan._count_matches("test-serial", {2: [16, 17, 18]})
+
+    assert counts == {2: 1}
+    assert acquisitions == ["enter", "exit"] * 3, acquisitions
+
+
+def test_present_servos_give_the_match_counts_without_a_scan() -> None:
+    """The periodic picture comes from /joint_states, so it must not touch the bus."""
+    expected = {1: [1, 2, 3], 2: [16, 17]}
+    with mock.patch.object(controller_scan, "_count_matches") as count_matches:
+        assignments = controller_scan.assignments_from_present_servos(
+            ["serial-a", "serial-b"],
+            expected,
+            {"serial-a": 1, "serial-b": 2},
+            {1, 2, 16},
+        )
+    count_matches.assert_not_called()
+    assert assignments == [
+        {
+            "serial": "serial-a",
+            "controllerNumber": 1,
+            "matchCount": 2,
+            "expectedCount": 3,
+        },
+        {
+            "serial": "serial-b",
+            "controllerNumber": 2,
+            "matchCount": 1,
+            "expectedCount": 2,
+        },
+    ]
+
+
+def test_unassigned_adapter_is_reported_as_unassigned() -> None:
+    """No stored address and several controllers: do not guess, report None."""
+    expected = {1: [1, 2], 2: [16, 17]}
+    assignments = controller_scan.assignments_from_present_servos(
+        ["serial-x"], expected, {}, {1, 16}
+    )
+    assert assignments[0]["controllerNumber"] is None
+    assert assignments[0]["matchCount"] == 0
+    assert assignments[0]["expectedCount"] == 0
+
+
+def test_motor_names_are_mapped_to_channels() -> None:
+    """Regression: /joint_states publishes motor names, channels are integers.
+
+    Feeding the names straight into the membership test made every matchCount zero, which
+    the UI then showed as an unassigned controller with expectedCount 0.
+    """
+    payload = {
+        "motors": [
+            {
+                "name": "turn_head_motor",
+                "channel": 51,
+                "controller": {"kind": "feetech_st_serial", "number": 1},
+            },
+            {
+                "name": "mcp_joint",
+                "channel": 19,
+                "controller": {"kind": "feetech_st_serial", "number": 2},
+            },
+            {
+                "name": "not_a_servo",
+                "channel": 3,
+                "controller": {"kind": "tinkerforge_bricklet", "number": 5},
+            },
+        ]
+    }
+    with mock.patch.object(
+        controller_scan.motor_client, "get_all_motors", return_value=(True, payload)
+    ):
+        mapping = controller_scan._servo_channel_by_motor_name()
+    assert mapping == {"turn_head_motor": 51, "mcp_joint": 19}
+
+    present = controller_scan.present_channels_from_names(
+        ["turn_head_motor", "unbekannt"], mapping
+    )
+    assert present == {51}
+    assignments = controller_scan.assignments_from_present_servos(
+        ["serial-a"], {1: [51, 21]}, {"serial-a": 1}, present
+    )
+    assert assignments[0]["matchCount"] == 1
+    assert assignments[0]["expectedCount"] == 2
