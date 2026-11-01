@@ -381,7 +381,7 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(sequence) -> None:
     for host in (rosbridge_host, "localhost"):
         try:
             with Telemetry(host=host, port=9090) as telemetry:
-                live_joints = telemetry.get_joints(joint_names)
+                live_joints = telemetry.get_positions_deg(joint_names)
                 for motor_name, angle_deg in (live_joints or {}).items():
                     if angle_deg is not None:
                         initial_angles[motor_name] = float(angle_deg)
