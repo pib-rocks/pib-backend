@@ -110,6 +110,12 @@ class _BusAccess:
         self._caller = _holding_caller()
 
     def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        # Never leave stservo_sdk's non-reentrant is_using flag wedged True after a bus block:
+        # if readPort/writePort raised or a transaction exited early, is_using=True causes every
+        # future txPacket() on this PortHandler to immediately return COMM_PORT_BUSY (-1) forever
+        # without touching the serial port (0.0 ms transaction time, permanent 0/8 dropout).
+        if getattr(self._ph, "is_using", False):
+            self._ph.is_using = False
         held_ms = (
             time.monotonic() - getattr(self, "_held_at", time.monotonic())
         ) * 1000.0

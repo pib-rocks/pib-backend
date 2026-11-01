@@ -608,3 +608,22 @@ def test_get_temperature_and_get_voltage_route_through_bus_writer(
     assert actuator.get_voltage() == 12.3
     assert "pin51:get_temperature" in labels
     assert "pin51:get_voltage" in labels
+
+
+def test_bus_access_clears_wedged_is_using_flag_on_exit() -> None:
+    """PR-2159: if stservo_sdk leaves PortHandler.is_using=True after an interrupted
+    transaction, _BusAccess.__exit__ must clear it so subsequent transactions do not fail
+    immediately with COMM_PORT_BUSY (-1).
+    """
+    import threading
+    from pib_motors import feetech_actuator
+
+    class _FakePort:
+        port_name = "/dev/fake-motor0"
+        ser = None
+        is_using = True
+
+    ph = _FakePort()
+    with feetech_actuator._BusAccess(ph, threading.Lock()):
+        assert ph.is_using is True
+    assert ph.is_using is False

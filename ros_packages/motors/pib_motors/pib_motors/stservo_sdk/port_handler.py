@@ -33,6 +33,7 @@ class PortHandler(object):
     def closePort(self):
         self.ser.close()
         self.is_open = False
+        self.is_using = False
 
     def clearPort(self):
         self.ser.flush()
@@ -114,6 +115,7 @@ class PortHandler(object):
         )
 
         self.is_open = True
+        self.is_using = False
 
         self.ser.reset_input_buffer()
 
