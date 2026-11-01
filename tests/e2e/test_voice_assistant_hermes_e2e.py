@@ -18,6 +18,8 @@ import shutil
 from robot_address import api_url, robot_base_url
 from smart_connect_token import ensure_smart_connect_token
 
+os.environ["TMPDIR"] = "/tmp"
+
 
 def _get_chromium_launch_kwargs() -> dict:
     kwargs = {"headless": True}
@@ -345,11 +347,14 @@ def _send_chat_message(chat_id: str, content: str) -> None:
                 "rosbridge did not return the send_chat_message service response "
                 f"within {SERVICE_ACK_TIMEOUT} seconds"
             )
-        # Accept both immediate OK and service timeout (background turn processing continues in ROS node)
-        is_ok = response.get("result") is True or "Timeout exceeded" in str(
-            response.get("values")
-        )
-        assert is_ok, f"ROS service call failed unexpectedly: {response}"
+        # /send_chat_message only enqueues the goal asynchronously and must return
+        # result=True with values.successful=True immediately. If VoiceAssistantNode
+        # is hung before executor.spin() (e.g. waiting on record_audio), rosbridge
+        # returns result=False ("Timeout exceeded"), which must FAIL the test!
+        values = response.get("values") or {}
+        assert (
+            response.get("result") is True and values.get("successful") is True
+        ), f"ROS /send_chat_message service call failed or timed out: {response}"
     finally:
         connection.close()
 
@@ -899,3 +904,197 @@ def test_voice_assistant_latency_and_smartconnect_e2e():
                     )
                 except requests.RequestException:
                     pass
+
+
+def test_voice_assistant_ros_stack_and_audio_recorder_supervision_e2e():
+    """
+    Live E2E guard against the PR-2163 failure mode where `audio_recorder` died on
+    startup and left `VoiceAssistantNode` deadlocked before `executor.spin()`:
+    1. Verifies that all 5 voice-assistant ROS nodes (`/voice_assistant`, `/chat`,
+       `/audio_recorder`, `/audio_player`, `/token_service`) are registered in the
+       live ROS graph.
+    2. Verifies that `/get_voice_assistant_state` responds within 5 s and that
+       `/voice_assistant_state` is actively published at ~1 Hz.
+    3. Kills `audio_recorder` inside `pib-backend-ros-voice-assistant-1` (when SSH to
+       the robot host is available) and verifies that `launch.py` supervision
+       automatically respawns `/audio_recorder` and `/get_voice_assistant_state`
+       stays responsive throughout.
+    """
+    try:
+        import websocket
+    except ImportError:
+        pytest.skip("websocket-client is not installed")
+
+    parsed = urlparse(ROBOT_URL)
+    host = parsed.hostname or "localhost"
+    rosbridge_url = os.environ.get("PIB_E2E_ROSBRIDGE_URL", f"ws://{host}:9090")
+
+    connection = websocket.create_connection(rosbridge_url, timeout=15)
+    try:
+        # 1. Verify all 5 voice-assistant nodes are registered
+        nodes_req_id = f"va-nodes-{uuid.uuid4()}"
+        connection.send(
+            json.dumps(
+                {
+                    "op": "call_service",
+                    "id": nodes_req_id,
+                    "service": "/rosapi/nodes",
+                    "type": "rosapi/Nodes",
+                    "args": {},
+                }
+            )
+        )
+        nodes_resp = _await_service_response(connection, nodes_req_id, 10)
+        assert (
+            nodes_resp is not None and nodes_resp.get("result") is True
+        ), f"/rosapi/nodes failed: {nodes_resp}"
+        live_nodes = set((nodes_resp.get("values") or {}).get("nodes") or [])
+        expected_nodes = {
+            "/voice_assistant",
+            "/chat",
+            "/audio_recorder",
+            "/audio_player",
+            "/token_service",
+        }
+        missing_nodes = expected_nodes - live_nodes
+        assert not missing_nodes, (
+            f"Voice assistant ROS nodes missing from live graph: {sorted(missing_nodes)} "
+            f"(present: {sorted(live_nodes)})"
+        )
+
+        # 2. Verify /get_voice_assistant_state responds quickly (proves executor.spin() is running)
+        state_req_id = f"va-state-{uuid.uuid4()}"
+        connection.send(
+            json.dumps(
+                {
+                    "op": "call_service",
+                    "id": state_req_id,
+                    "service": "/get_voice_assistant_state",
+                    "type": "datatypes/srv/GetVoiceAssistantState",
+                    "args": {},
+                }
+            )
+        )
+        state_resp = _await_service_response(connection, state_req_id, 5)
+        assert state_resp is not None and state_resp.get("result") is True, (
+            "VoiceAssistantNode did not answer /get_voice_assistant_state within 5s "
+            f"(executor not spinning?): {state_resp}"
+        )
+        va_state = (state_resp.get("values") or {}).get("voice_assistant_state")
+        assert (
+            isinstance(va_state, dict) and "turned_on" in va_state
+        ), f"Unexpected /get_voice_assistant_state payload: {state_resp}"
+
+        # 3. Verify /voice_assistant_state topic publishes at ~1 Hz
+        connection.send(
+            json.dumps(
+                {
+                    "op": "subscribe",
+                    "topic": "/voice_assistant_state",
+                    "type": "datatypes/msg/VoiceAssistantState",
+                }
+            )
+        )
+        topic_msg = None
+        deadline = time.monotonic() + 4.0
+        while time.monotonic() < deadline:
+            connection.settimeout(2.0)
+            try:
+                raw = connection.recv()
+                frame = json.loads(raw)
+                if (
+                    isinstance(frame, dict)
+                    and frame.get("op") == "publish"
+                    and frame.get("topic") == "/voice_assistant_state"
+                ):
+                    topic_msg = frame.get("msg")
+                    break
+            except Exception:
+                continue
+        connection.send(
+            json.dumps({"op": "unsubscribe", "topic": "/voice_assistant_state"})
+        )
+        assert topic_msg is not None, (
+            "No message published on /voice_assistant_state within 4s "
+            "(VoiceAssistantNode 1 Hz timer is not spinning)"
+        )
+
+        # 4. Verify supervision respawns audio_recorder if it crashes
+        ssh_cmd = [
+            "ssh",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "StrictHostKeyChecking=no",
+            "-o",
+            "ConnectTimeout=5",
+            f"pib@{host}",
+            "docker exec pib-backend-ros-voice-assistant-1 pkill -9 -f '/lib/voice_assistant/audio_recorder'",
+        ]
+        kill_res = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=15)
+        if kill_res.returncode != 0 and os.environ.get("SUDO_PASSWORD"):
+            sshpass_cmd = [
+                "sshpass",
+                "-e",
+                "ssh",
+                "-o",
+                "StrictHostKeyChecking=no",
+                "-o",
+                "ConnectTimeout=5",
+                f"pib@{host}",
+                "docker exec pib-backend-ros-voice-assistant-1 pkill -9 -f '/lib/voice_assistant/audio_recorder'",
+            ]
+            env = dict(os.environ, SSHPASS=os.environ["SUDO_PASSWORD"])
+            kill_res = subprocess.run(
+                sshpass_cmd, capture_output=True, text=True, timeout=15, env=env
+            )
+
+        if kill_res.returncode == 0:
+            # Wait up to 20s for launch supervision to respawn audio_recorder
+            respawned = False
+            deadline = time.monotonic() + 20.0
+            while time.monotonic() < deadline:
+                time.sleep(2.0)
+                check_cmd = [
+                    "ssh",
+                    "-o",
+                    "StrictHostKeyChecking=no",
+                    "-o",
+                    "ConnectTimeout=5",
+                    f"pib@{host}",
+                    "docker exec pib-backend-ros-voice-assistant-1 pgrep -f '/lib/voice_assistant/audio_recorder'",
+                ]
+                if os.environ.get("SUDO_PASSWORD"):
+                    check_cmd = ["sshpass", "-e"] + check_cmd
+                    env = dict(os.environ, SSHPASS=os.environ["SUDO_PASSWORD"])
+                else:
+                    env = os.environ
+                proc_check = subprocess.run(
+                    check_cmd, capture_output=True, text=True, timeout=10, env=env
+                )
+                if proc_check.returncode == 0 and proc_check.stdout.strip():
+                    respawned = True
+                    break
+            assert (
+                respawned
+            ), "launch.py supervision did not respawn audio_recorder within 20s after SIGKILL"
+
+            # And verify /get_voice_assistant_state is still responsive after respawn
+            post_req_id = f"va-state-post-{uuid.uuid4()}"
+            connection.send(
+                json.dumps(
+                    {
+                        "op": "call_service",
+                        "id": post_req_id,
+                        "service": "/get_voice_assistant_state",
+                        "type": "datatypes/srv/GetVoiceAssistantState",
+                        "args": {},
+                    }
+                )
+            )
+            post_resp = _await_service_response(connection, post_req_id, 5)
+            assert (
+                post_resp is not None and post_resp.get("result") is True
+            ), f"/get_voice_assistant_state failed after audio_recorder respawn: {post_resp}"
+    finally:
+        connection.close()
