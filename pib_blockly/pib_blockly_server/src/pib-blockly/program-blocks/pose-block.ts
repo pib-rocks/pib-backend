@@ -191,17 +191,15 @@ export const moveToPose = {
             });
             this.itemCount_ = current.length;
             this.updateShape_(current);
-            if (Blockly.Events.isEnabled()) {
-                Blockly.Events.fire(
-                    new (Blockly.Events.get(Blockly.Events.BLOCK_CHANGE))(
-                        this,
-                        "mutation",
-                        null,
-                        oldState,
-                        this.saveExtraState(),
-                    ),
-                );
-            }
+            Blockly.Events.fire(
+                new (Blockly.Events.get(Blockly.Events.BLOCK_CHANGE))(
+                    this,
+                    "mutation",
+                    null,
+                    oldState,
+                    this.saveExtraState(),
+                ),
+            );
         },
 
         removeStepAt(this: PlayPoseSequenceBlock, index: number): void {
@@ -217,17 +215,15 @@ export const moveToPose = {
             current.splice(clampedIndex, 1);
             this.itemCount_ = Math.max(MIN_POSE_SEQUENCE_COUNT, current.length);
             this.updateShape_(current);
-            if (Blockly.Events.isEnabled()) {
-                Blockly.Events.fire(
-                    new (Blockly.Events.get(Blockly.Events.BLOCK_CHANGE))(
-                        this,
-                        "mutation",
-                        null,
-                        oldState,
-                        this.saveExtraState(),
-                    ),
-                );
-            }
+            Blockly.Events.fire(
+                new (Blockly.Events.get(Blockly.Events.BLOCK_CHANGE))(
+                    this,
+                    "mutation",
+                    null,
+                    oldState,
+                    this.saveExtraState(),
+                ),
+            );
         },
 
         saveExtraState(this: PlayPoseSequenceBlock): {
