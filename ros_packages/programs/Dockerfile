@@ -30,7 +30,7 @@ ENV PIP_ROOT_USER_ACTION=ignore \
 # PyPI happens to serve - which is how the pin went unnoticed before. opencv-python-headless
 # stays below 5 for the same reason as in camera/Dockerfile (5.x dropped cv2 APIs user
 # programs rely on).
-ARG PIB_SDK_VERSION=0.8.0
+ARG PIB_SDK_VERSION=0.9.0
 RUN pip install --break-system-packages --ignore-installed \
         "pib-sdk>=${PIB_SDK_VERSION}" \
         requests==2.32.3 \
