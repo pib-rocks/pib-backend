@@ -13,6 +13,8 @@ if str(PIB_MOTORS_DIR) not in sys.path:
     sys.path.insert(0, str(PIB_MOTORS_DIR))
 
 from pib_motors.servo_speed_curve import (  # noqa: E402
+    LOW_SPEED_CURVE_BY_FAMILY,
+    merged_measured_curve,
     SERVO_FAMILY_FINGER,
     SERVO_FAMILY_STS3095,
     SPEED_CURVE_BY_FAMILY,
@@ -31,7 +33,8 @@ def test_family_follows_the_servo_id() -> None:
     assert family_for_servo_id(19) == SERVO_FAMILY_STS3095
     assert family_for_servo_id(10) == SERVO_FAMILY_FINGER
     assert family_for_servo_id(36) == SERVO_FAMILY_FINGER
-    assert curve_for_servo_id(51) == SPEED_CURVE_BY_FAMILY[SERVO_FAMILY_STS3095]
+    # the curve a servo gets is the merged one: measured low-speed points plus the rest
+    assert curve_for_servo_id(51) == merged_measured_curve(SERVO_FAMILY_STS3095)
 
 
 def test_the_measured_points_are_reproduced_exactly() -> None:
@@ -55,7 +58,8 @@ def test_rate_rises_with_the_setting_and_saturates() -> None:
 
 def test_inverse_never_asks_for_more_than_the_curve_can_do() -> None:
     points = SPEED_CURVE_BY_FAMILY[SERVO_FAMILY_FINGER]
-    assert speed_for_rate(10_000.0, points) == 2000
+    # the finger's highest measured point is 700; nothing above it is claimed
+    assert speed_for_rate(10_000.0, points) == 700
     assert speed_for_rate(0.0, points) == 0
     # a negative rate is a direction, not a smaller speed: the magnitude decides
     assert speed_for_rate(-500.0, points) == speed_for_rate(500.0, points)
@@ -93,3 +97,32 @@ def test_result_stays_inside_the_setting_range() -> None:
 def test_an_empty_curve_does_not_crash() -> None:
     assert rate_for_speed(500, ()) == 0.0
     assert speed_for_rate(500.0, ()) == 0
+
+
+def test_rad_per_sec_conversion_round_trips() -> None:
+    from pib_motors.servo_speed_curve import (
+        centideg_per_sec_from_rad_per_sec,
+        rad_per_sec_from_centideg_per_sec,
+    )
+
+    cdps = 171.9
+    assert centideg_per_sec_from_rad_per_sec(
+        rad_per_sec_from_centideg_per_sec(cdps)
+    ) == pytest.approx(cdps)
+
+
+def test_merged_curve_adds_low_speed_points_when_measured(monkeypatch) -> None:
+    from pib_motors.servo_speed_curve import merged_measured_curve
+
+    monkeypatch.setitem(
+        LOW_SPEED_CURVE_BY_FAMILY,
+        SERVO_FAMILY_STS3095,
+        ((50, 400.0), (200, None)),
+    )
+    merged = merged_measured_curve(SERVO_FAMILY_STS3095)
+    assert (50, 400.0) in merged
+    # a None row is skipped instead of poisoning the curve
+    assert all(rate is not None for _setting, rate in merged)
+    assert 200 not in [setting for setting, _rate in merged]
+    # the rest of the measured curve survives
+    assert (700, 4436.5) in merged

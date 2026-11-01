@@ -39,6 +39,21 @@ def format_perf_trace_trajectory_leg_motion(
     )
 
 
+def format_perf_trace_trajectory_slow_path(
+    joint: str,
+    min_path_centideg_per_sec: float,
+    floor_centideg_per_sec: float,
+    floor_rad_per_sec: float,
+) -> str:
+    safe_joint = (joint or "unknown").replace(" ", "_")
+    return (
+        f"[PERF_TRACE] TRAJECTORY_SLOW_PATH joint={safe_joint} "
+        f"min_path_cdps={float(min_path_centideg_per_sec):.2f} "
+        f"floor_cdps={float(floor_centideg_per_sec):.2f} "
+        f"floor_rad_s={float(floor_rad_per_sec):.6f}"
+    )
+
+
 def format_perf_trace_joint_state_sweep(
     joint_count: int, elapsed_ms: float, ports_ok: int, ports_total: int
 ) -> str:

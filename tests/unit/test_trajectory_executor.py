@@ -22,6 +22,7 @@ if str(PIB_MOTORS_ROOT) not in sys.path:
     sys.path.insert(0, str(PIB_MOTORS_ROOT))
 
 try:
+    from pib_motors.servo_speed_curve import merged_measured_curve
     from pib_motors.trajectory_executor import (
         MAX_SOFTWARE_TRAJECTORY_DURATION_SEC,
         PATH_SPEED_TRACKING_MARGIN,
@@ -29,13 +30,16 @@ try:
         STS_VELOCITY_MIN,
         TrajectoryExecutor,
         active_trajectory_leg_index,
+        assess_slow_path_trajectory,
         derive_sts_velocity_setting,
         interpolate_joint,
         interpolate_joint_velocity_centideg_per_sec,
         interpolate_positions,
         is_software_trajectory,
+        minimum_path_speed_centideg_per_sec,
         validate_software_trajectory_schedule,
     )
+    import pib_motors.servo_speed_curve as servo_speed_curve
 except ImportError as exc:  # pragma: no cover - unexpected missing module
     pytest.skip(
         f"trajectory_executor is not importable: {exc}",
@@ -439,8 +443,9 @@ def test_path_speed_derivation_slow_vs_fast_leg() -> None:
     assert slow_speed == pytest.approx(10.0, rel=0.05)
 
 
-STS3095_CURVE = ((200, 2091.8), (700, 4729.3), (2000, 4948.8))
-FINGER_CURVE = ((200, 1740.5), (700, 3483.3), (2000, 3834.6))
+# the measured curves, low-speed points included - the same ones the executor uses
+STS3095_CURVE = merged_measured_curve(servo_speed_curve.SERVO_FAMILY_STS3095)
+FINGER_CURVE = merged_measured_curve(servo_speed_curve.SERVO_FAMILY_FINGER)
 
 
 def test_derive_sts_velocity_uses_the_measured_curve() -> None:
@@ -451,8 +456,12 @@ def test_derive_sts_velocity_uses_the_measured_curve() -> None:
     finger curve lies between (700, 3483.3) and (2000, 3834.6) and gives 1132 - a factor of 2.3
     apart, which is exactly why a single scalar factor cannot work.
     """
-    assert derive_sts_velocity_setting(3000.0, curve=STS3095_CURVE, margin=1.2) == 486
-    assert derive_sts_velocity_setting(3000.0, curve=FINGER_CURVE, margin=1.2) == 1132
+    # 3000 cdg/s x 1.2 = 3600 cdg/s. By hand on the STS curve: between 200 (1736.3) and
+    # 700 (4436.5) each setting is worth 5.4 cdg/s, so (3600 - 1736.3) / 5.4 = 345 -> 545.
+    assert derive_sts_velocity_setting(3000.0, curve=STS3095_CURVE, margin=1.2) == 545
+    # The finger curve is steeper between the same points: 4.04 cdg/s per setting, so
+    # (3600 - 1629.2) / 4.04 = 488 -> 688.
+    assert derive_sts_velocity_setting(3000.0, curve=FINGER_CURVE, margin=1.2) == 688
 
 
 def test_derive_sts_velocity_defaults_to_the_slower_family() -> None:
@@ -468,8 +477,10 @@ def test_derive_sts_velocity_defaults_to_the_slower_family() -> None:
 def test_derive_sts_velocity_clamps_at_both_ends() -> None:
     # a path that barely moves is clamped to the smallest setting the servo accepts
     assert derive_sts_velocity_setting(5.0, margin=1.0) == STS_VELOCITY_MIN
-    # a path faster than the curve saturates at the top of the measured curve
-    assert derive_sts_velocity_setting(50000.0, margin=1.0) == 2000
+    # a path faster than the curve saturates at the top of the measured curve: the finger
+    # curve ends at setting 700 because nobody measured beyond it
+    assert derive_sts_velocity_setting(50000.0, margin=1.0) == 700
+    assert derive_sts_velocity_setting(50000.0, curve=STS3095_CURVE, margin=1.0) == 2000
     # standing still keeps the minimum setting, so the joint still holds its position
     assert derive_sts_velocity_setting(0.0) == STS_VELOCITY_MIN
 
@@ -477,11 +488,11 @@ def test_derive_sts_velocity_clamps_at_both_ends() -> None:
 def test_derive_sts_velocity_accepts_an_explicit_curve() -> None:
     """A servo whose measured curve differs must be able to say so.
 
-    2500 cdg/s on the finger curve: 200 + (2500 - 1740.5) / (3483.3 - 1740.5) * 500 = 418.
-    On the STS3095 curve the same rate needs 200 + (2500 - 2091.8) / (4729.3 - 2091.8) * 500 = 277.
+    2500 cdg/s on the finger curve: 200 + (2500 - 1629.2) / (3649.0 - 1629.2) * 500 = 416.
+    On the STS3095 curve the same rate needs 200 + (2500 - 1736.3) / (4436.5 - 1736.3) * 500 = 341.
     """
-    assert derive_sts_velocity_setting(2500.0, curve=FINGER_CURVE, margin=1.0) == 418
-    assert derive_sts_velocity_setting(2500.0, curve=STS3095_CURVE, margin=1.0) == 277
+    assert derive_sts_velocity_setting(2500.0, curve=FINGER_CURVE, margin=1.0) == 416
+    assert derive_sts_velocity_setting(2500.0, curve=STS3095_CURVE, margin=1.0) == 341
 
 
 def test_the_write_carries_the_speed_and_the_acceleration() -> None:
@@ -511,3 +522,83 @@ def test_active_trajectory_leg_index() -> None:
     assert active_trajectory_leg_index(times, 0.5) == 0
     assert active_trajectory_leg_index(times, 2.0) == 1
     assert active_trajectory_leg_index(times, 10.0) == 1
+
+
+def test_minimum_path_speed_finds_the_slowest_segment() -> None:
+    times = [0.0, 5.0, 10.0]
+    slow_leg = [0.0, 50.0, 100.0]
+    fast_leg = [0.0, 500.0, 600.0]
+    slow_min = minimum_path_speed_centideg_per_sec(times, slow_leg)
+    fast_min = minimum_path_speed_centideg_per_sec(times, fast_leg)
+    assert slow_min < fast_min
+    assert slow_min == pytest.approx(10.0, rel=0.1)
+
+
+def test_a_path_below_the_measured_floor_warns_and_still_runs() -> None:
+    """The floor is measured now, so a slow path must be reported - and still executed."""
+    reject, warnings = assess_slow_path_trajectory(
+        ["elbow"],
+        [0.0, 10.0],
+        {"elbow": [0.0, 100.0]},
+        lambda _name: servo_speed_curve.SERVO_FAMILY_STS3095,
+    )
+    assert reject is None, "the warn policy must not block the motion"
+    assert len(warnings) == 1
+    _joint, min_path, floor = warnings[0]
+    assert min_path < floor == 447.0
+
+
+def test_no_floor_means_no_warning(monkeypatch) -> None:
+    """Counter-check: with the floor unmeasured this check must stay silent."""
+    monkeypatch.setitem(
+        servo_speed_curve.MIN_CONTINUOUS_PATH_SPEED_CDPS_BY_FAMILY,
+        servo_speed_curve.SERVO_FAMILY_STS3095,
+        None,
+    )
+    reject, warnings = assess_slow_path_trajectory(
+        ["elbow"],
+        [0.0, 10.0],
+        {"elbow": [0.0, 100.0]},
+        lambda _name: servo_speed_curve.SERVO_FAMILY_STS3095,
+    )
+    assert reject is None
+    assert warnings == []
+
+
+def test_slow_path_warns_when_path_is_below_configured_floor(monkeypatch) -> None:
+    monkeypatch.setitem(
+        servo_speed_curve.MIN_CONTINUOUS_PATH_SPEED_CDPS_BY_FAMILY,
+        servo_speed_curve.SERVO_FAMILY_FINGER,
+        100.0,
+    )
+    reject, warnings = assess_slow_path_trajectory(
+        ["finger"],
+        [0.0, 10.0],
+        {"finger": [0.0, 300.0]},
+        lambda _name: servo_speed_curve.SERVO_FAMILY_FINGER,
+    )
+    assert reject is None
+    assert len(warnings) == 1
+    _joint, min_path, floor = warnings[0]
+    assert min_path < floor
+
+
+def test_slow_path_reject_policy_blocks_execution(monkeypatch) -> None:
+    monkeypatch.setitem(
+        servo_speed_curve.MIN_CONTINUOUS_PATH_SPEED_CDPS_BY_FAMILY,
+        servo_speed_curve.SERVO_FAMILY_FINGER,
+        500.0,
+    )
+    monkeypatch.setattr(
+        servo_speed_curve,
+        "SLOW_PATH_BELOW_FLOOR_POLICY",
+        servo_speed_curve.SLOW_PATH_POLICY_REJECT,
+    )
+    reject, warnings = assess_slow_path_trajectory(
+        ["finger"],
+        [0.0, 10.0],
+        {"finger": [0.0, 300.0]},
+        lambda _name: servo_speed_curve.SERVO_FAMILY_FINGER,
+    )
+    assert reject is not None
+    assert warnings == []
