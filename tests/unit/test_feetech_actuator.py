@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+import time
 import types
 from pathlib import Path
 from unittest import mock
@@ -23,6 +24,15 @@ for path in (
         sys.path.insert(0, path)
 
 
+@pytest.fixture(autouse=True)
+def _reset_bus_writer_registry():
+    from pib_motors.bus_writer import reset_bus_writer_registry_for_tests
+
+    reset_bus_writer_registry_for_tests()
+    yield
+    reset_bus_writer_registry_for_tests()
+
+
 class FakeStsPacketHandler:
     """Fakes pib_motors.stservo_sdk.sts.sts without opening a physical serial port."""
 
@@ -33,6 +43,7 @@ class FakeStsPacketHandler:
         self.speed: int = 0
         self.current: int = 15
         self.temperature: int = 34
+        self.voltage_raw: int = 118
         self.comm_result: int = 0  # COMM_SUCCESS
         self.writes: list[tuple[int, int, int, int]] = []
         self.byte_writes: list[tuple[int, int, int]] = []
@@ -436,3 +447,183 @@ def test_feetech_actuator_custom_velocity_and_acceleration_in_write_pos_ex(
     assert actuator.apply_settings({"velocity": 1200, "acceleration": 45}) is True
     assert actuator.set_position(0) is True
     assert pk_instance.writes[-1] == (18, ft_mod.TICKS_AT_JOINT_ZERO, 1200, 45)
+
+
+def test_holding_the_port_too_long_is_logged_with_its_caller(
+    monkeypatch, caplog
+) -> None:
+    """The holder of the port is invisible otherwise: every waiter only sees the wait.
+
+    With the threshold lowered to 1 ms, a short artificial hold must produce a
+    BUS_ACCESS_HELD line naming the function that held it.
+    """
+    import threading
+
+    from pib_motors import feetech_actuator
+
+    class _FakePort:
+        port_name = "/dev/fake-motor0"
+        ser = None
+
+    monkeypatch.setattr(feetech_actuator, "HELD_WARN_MS", 1.0)
+    with caplog.at_level("WARNING"):
+        with feetech_actuator._BusAccess(_FakePort(), threading.Lock()):
+            time.sleep(0.01)
+    assert "BUS_ACCESS_HELD" in caplog.text
+    assert "test_holding_the_port_too_long_is_logged_with_its_caller" in caplog.text
+
+
+def test_short_port_hold_is_not_logged(monkeypatch, caplog) -> None:
+    """Counter-check: without this the warning above could fire on every transaction."""
+    import threading
+
+    from pib_motors import feetech_actuator
+
+    class _FakePort:
+        port_name = "/dev/fake-motor0"
+        ser = None
+
+    monkeypatch.setattr(feetech_actuator, "HELD_WARN_MS", 5_000.0)
+    with caplog.at_level("WARNING"):
+        with feetech_actuator._BusAccess(_FakePort(), threading.Lock()):
+            time.sleep(0.005)
+    assert "BUS_ACCESS_HELD" not in caplog.text
+
+
+def test_tty_flags_keep_dtr_and_drop_hardware_flow_control() -> None:
+    """Three processes share each adapter; the last close must not drop DTR.
+
+    Measured on the pib5advanced: when an adapter stops answering there is no USB disconnect in
+    dmesg, so the link is fine and only the line state changes. HUPCL - the default - drops DTR
+    on the last close, which a CDC-ACM bridge firmware reads as "host gone".
+    """
+    import termios
+
+    from pib_motors import feetech_actuator
+
+    # no CLOCAL in the input: otherwise setting it could not be observed
+    cflag = termios.HUPCL | termios.CRTSCTS | termios.CREAD
+    result = feetech_actuator.desired_cflag(cflag)
+
+    assert result & termios.HUPCL == 0, "HUPCL must be cleared"
+    assert result & termios.CRTSCTS == 0, "hardware flow control must be off"
+    assert result & termios.CLOCAL, "CLOCAL must be set"
+    assert result & termios.CREAD, "unrelated flags must survive"
+
+
+def test_tty_flags_are_idempotent() -> None:
+    """Applying the flags twice must not accumulate anything."""
+    import termios
+
+    from pib_motors import feetech_actuator
+
+    once = feetech_actuator.desired_cflag(termios.CLOCAL)
+    assert feetech_actuator.desired_cflag(once) == once
+
+
+def test_reopen_port_keeps_existing_actuator_and_bus_writer_handles_alive(
+    monkeypatch,
+) -> None:
+    """PR-2159: reopen_port() must reopen the cached PortHandler in place instead of
+    popping it and leaving BusWriter._ph / actuator._ph closed forever.
+    """
+    ft_mod, act_mod = _load_modules()
+
+    class StrictPortHandler(FakePortHandler):
+        def __init__(self, port_name: str, can_open: bool = True) -> None:
+            super().__init__(port_name, can_open=can_open)
+            self.open_count = 0
+            self.close_count = 0
+
+        def openPort(self) -> bool:
+            self.open_count += 1
+            return super().openPort()
+
+        def closePort(self) -> None:
+            self.close_count += 1
+            super().closePort()
+
+    class StrictPacketHandler(FakeStsPacketHandler):
+        def ReadPosSpeed(self, servo_id: int):
+            if not self.ph.is_open:
+                raise RuntimeError("serial port is closed")
+            return super().ReadPosSpeed(servo_id)
+
+        def WritePosEx(self, servo_id: int, position: int, speed: int, acc: int):
+            if not self.ph.is_open:
+                raise RuntimeError("serial port is closed")
+            return super().WritePosEx(servo_id, position, speed, acc)
+
+    monkeypatch.setattr(ft_mod, "PortHandler", StrictPortHandler)
+    monkeypatch.setattr(ft_mod, "sts", lambda ph: StrictPacketHandler(ph))
+    ft_mod._port_cache.clear()
+
+    actuator = act_mod.create_actuator("feetech_st_serial", 51, "5B91030562", "max")
+    ph_before = actuator._ph
+    assert ph_before.is_open is True
+    assert actuator.set_position(1000) is True
+
+    # Trigger reopen_port: the SAME PortHandler instance must be closed and reopened in place
+    assert ft_mod.reopen_port("5B91030562") is True
+    assert actuator._ph is ph_before
+    assert ph_before.close_count == 1
+    assert ph_before.open_count == 2
+    assert ph_before.is_open is True
+
+    # Existing actuator and BusWriter continue working without recreating anything
+    assert actuator.set_position(4500) is True
+    assert actuator.get_position() == 4500
+
+
+def test_get_temperature_and_get_voltage_route_through_bus_writer(
+    monkeypatch,
+) -> None:
+    """PR-2159: get_temperature() and get_voltage() must serialize through BusWriter.run_service."""
+    ft_mod, act_mod = _load_modules()
+
+    def fake_sts(ph):
+        pk = FakeStsPacketHandler(ph)
+        pk.temperature = 41
+        pk.voltage_raw = 123
+        return pk
+
+    monkeypatch.setattr(ft_mod, "PortHandler", FakePortHandler)
+    monkeypatch.setattr(ft_mod, "sts", fake_sts)
+    ft_mod._port_cache.clear()
+
+    actuator = act_mod.create_actuator("feetech_st_serial", 51, "WS-HEAD", "max")
+    writer = actuator._writer()
+    labels: list[str] = []
+    orig_run_service = writer.run_service
+
+    def spy_run_service(execute, *, deadline=None, wait_timeout=None, label=""):
+        labels.append(label)
+        return orig_run_service(
+            execute, deadline=deadline, wait_timeout=wait_timeout, label=label
+        )
+
+    monkeypatch.setattr(writer, "run_service", spy_run_service)
+
+    assert actuator.get_temperature() == 41
+    assert actuator.get_voltage() == 12.3
+    assert "pin51:get_temperature" in labels
+    assert "pin51:get_voltage" in labels
+
+
+def test_bus_access_clears_wedged_is_using_flag_on_exit() -> None:
+    """PR-2159: if stservo_sdk leaves PortHandler.is_using=True after an interrupted
+    transaction, _BusAccess.__exit__ must clear it so subsequent transactions do not fail
+    immediately with COMM_PORT_BUSY (-1).
+    """
+    import threading
+    from pib_motors import feetech_actuator
+
+    class _FakePort:
+        port_name = "/dev/fake-motor0"
+        ser = None
+        is_using = True
+
+    ph = _FakePort()
+    with feetech_actuator._BusAccess(ph, threading.Lock()):
+        assert ph.is_using is True
+    assert ph.is_using is False

@@ -4,6 +4,13 @@ from pib_api_client import send_request, URL_PREFIX
 import json
 
 DETECTED_ASSIGNMENTS_URL = URL_PREFIX + "/controller/detected-assignments"
+ALL_CONTROLLERS_URL = URL_PREFIX + "/controller"
+
+
+def get_all_controllers() -> (bool, dict[str, Any]):
+    """Controllers incl. their address, which is the serial adapter identifier."""
+    request = Request(ALL_CONTROLLERS_URL, method="GET")
+    return send_request(request)
 
 
 def report_detected_assignments(

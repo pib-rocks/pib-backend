@@ -1,5 +1,6 @@
 #!/usr/bin/python3
 import base64
+from typing import Optional
 from collections import deque
 import math
 import os
@@ -27,9 +28,17 @@ from datatypes.srv import (
     StartModel,
     StopModel,
 )
+import json
+from urllib.request import urlopen
 from rclpy.node import Node
-from sensor_msgs.msg import Imu
+from sensor_msgs.msg import CompressedImage, Imu
 from std_msgs.msg import Float32MultiArray, Float64, Int32, Int32MultiArray, String
+
+from .mjpeg_server import (
+    DEFAULT_STREAM_PORT,
+    MjpegFrameBuffer,
+    MjpegStreamServer,
+)
 
 from .imu import (
     ClockOffsetEstimator,
@@ -111,6 +120,12 @@ FACE_DETECT_HEIGHT = 180
 # crop back onto the frame.
 PUBLISHED_FRAME_WIDTH = 1280
 PUBLISHED_FRAME_HEIGHT = 720
+COMPRESSED_IMAGE_TOPIC = "/oak/rgb/image_raw/compressed"
+COMPRESSED_IMAGE_FRAME_ID = "oak_rgb_camera_optical_frame"
+DEFAULT_QUALITY_FACTOR = 80
+DEFAULT_TIMER_PERIOD_SECONDS = 0.1
+MIN_TIMER_PERIOD_SECONDS = 1.0 / 30.0
+MAX_STREAM_FPS = 30
 # Full-field branch at that aspect, nine tenths of the preview. Model inputs
 # are stretched from this branch; the camera is not asked for their aspect.
 # A stretch keeps fractions, so a detection maps back through the window the
@@ -244,15 +259,12 @@ class ErrorPublisher(Node):
 
     def __init__(self):
         super().__init__("error_publisher")
-        self.publisher_ = self.create_publisher(String, "camera_topic", 10)
         timer_period = 1  # seconds
         self.timer = self.create_timer(timer_period, self.timer_callback)
         self.current_image = ""
 
     def timer_callback(self):
-        msg = String()
-        msg.data = "Camera not available: "
-        self.publisher_.publish(msg)
+        return
 
 
 class CameraNode(
@@ -274,7 +286,9 @@ class CameraNode(
     def __init__(self):
         super().__init__("camera_node")
 
-        self.publisher_ = self.create_publisher(String, "camera_topic", 10)
+        self.compressed_publisher_ = self.create_publisher(
+            CompressedImage, COMPRESSED_IMAGE_TOPIC, 10
+        )
         self.depth_publisher_ = self.create_publisher(String, "stereo_depth", 10)
         self.face_center_publisher_ = self.create_publisher(
             Float32MultiArray, "face_center", 10
@@ -308,12 +322,19 @@ class CameraNode(
 
         self.preview_width = PUBLISHED_FRAME_WIDTH
         self.preview_height = PUBLISHED_FRAME_HEIGHT
-        self.quality_factor = 80
+        self.quality_factor = DEFAULT_QUALITY_FACTOR
+        self.timer_period = DEFAULT_TIMER_PERIOD_SECONDS
+        self.current_jpeg_bytes = b""
         self.current_image = ""
         self.current_frame = None
         self.current_source_size = (0, 0)
         self.current_depth = None
         self.pipeline = None
+        self.video_manip = None
+        self.video_encoder = None
+        self.mjpeg_buffer = MjpegFrameBuffer()
+        self.mjpeg_server = None
+        self._load_startup_camera_settings()
         self.queue = None
         self.depth_queue = None
         self.imu_queue = None
@@ -415,7 +436,7 @@ class CameraNode(
         self.get_detections_service = self.create_service(
             GetDetections, "get_detections", self.get_detections_callback
         )
-        self.timer_period = 0.1  # seconds
+        self._start_mjpeg_server()
         self.timer = self.create_timer(self.timer_period, self.timer_callback)
         self.imu_timer = self.create_timer(IMU_POLL_PERIOD_SECONDS, self._process_imu)
         self.models_status_timer = self.create_timer(1.0, self.publish_model_statuses)
@@ -430,8 +451,11 @@ class CameraNode(
         return base64.b64encode(buffer).decode("utf-8")
 
     def get_camera_image_callback(self, request, response):
-        # Encode on demand when the service is requested and we have a cached frame.
-        if self.current_frame is not None:
+        # Prefer the hardware-encoded JPEG bytes from the OAK VideoEncoder.
+        jpeg_bytes = getattr(self, "current_jpeg_bytes", b"")
+        if jpeg_bytes:
+            self.current_image = base64.b64encode(jpeg_bytes).decode("utf-8")
+        elif self.current_frame is not None:
             encoded = self._encode_frame(self.current_frame)
             if encoded is not None:
                 self.current_image = encoded
@@ -522,13 +546,13 @@ class CameraNode(
         detections = DetectionArray()
         detections.header.stamp = self.get_clock().now().to_msg()
         detections.model_id = model_id
-        if self.current_frame is None:
+        if not self._has_active_frame():
             detections.frame_width = 0
             detections.frame_height = 0
         else:
-            detections.frame_height, detections.frame_width = self.current_frame.shape[
-                :2
-            ]
+            detections.frame_width, detections.frame_height = (
+                self._active_frame_dimensions()
+            )
         detections.detections = []
         return detections
 
@@ -554,11 +578,7 @@ class CameraNode(
             return "?"
 
     def _publish_parsed_detections(self, model_id, packet):
-        if self.current_frame is None:
-            frame_width = self.preview_width
-            frame_height = self.preview_height
-        else:
-            frame_height, frame_width = self.current_frame.shape[:2]
+        frame_width, frame_height = self._active_frame_dimensions()
         field = self._object_detection_field(packet, frame_width, frame_height)
         detections = translate_detections(
             packet,
@@ -580,12 +600,11 @@ class CameraNode(
             publisher.publish(message)
 
     def _publish_qr_detections(self, packet):
-        if self.current_frame is None:
+        frame = self._decode_current_frame()
+        if frame is None:
             raise ValueError("QR detections cannot be decoded without a cached frame")
-        frame_height, frame_width = self.current_frame.shape[:2]
-        decoded = decode_qr_detections(
-            packet, self.current_frame, detector=self.qr_detector
-        )
+        frame_height, frame_width = frame.shape[:2]
+        decoded = decode_qr_detections(packet, frame, detector=self.qr_detector)
         detections = []
         for result in decoded:
             detection = Detection()
@@ -804,9 +823,13 @@ class CameraNode(
 
         self.depth_queue = stereo.depth.createOutputQueue()
 
-    def publish_face_center(self, frame):
+    def publish_face_center(self, frame=None):
         # Skip expensive Haar cascade when nobody is listening to face_center.
         if self.face_center_publisher_.get_subscription_count() == 0:
+            return
+        if frame is None:
+            frame = self._decode_current_frame()
+        if frame is None:
             return
 
         face_msg = Float32MultiArray()
@@ -950,31 +973,51 @@ class CameraNode(
                 image_rgb = self.queue.tryGet()
             if image_rgb is not None:
                 self._preview_packet = image_rgb
-                frame = image_rgb.getCvFrame()
-                self.current_source_size = (frame.shape[1], frame.shape[0])
-
-                if (
-                    frame.shape[1] != self.preview_width
-                    or frame.shape[0] != self.preview_height
-                ):
-                    frame = cv2.resize(frame, (self.preview_width, self.preview_height))
-
-                self.current_frame = frame
-                if self.hand_decoder_queue is not None:
-                    self._count_hand_stage("colour_isp")
-                if self.imitation_queue is not None:
-                    self._count_imitation_stage("colour_isp")
-                self.publish_face_center(frame)
-
-                # Only JPEG/base64 encode when someone is subscribed to camera_topic.
-                # get_camera_image encodes on demand from current_frame instead.
-                if self.publisher_.get_subscription_count() > 0:
-                    encoded = self._encode_frame(frame)
-                    if encoded is not None:
-                        self.current_image = encoded
-                        msg = String()
-                        msg.data = encoded
-                        self.publisher_.publish(msg)
+                jpeg_bytes = self._extract_packet_jpeg(image_rgb)
+                if jpeg_bytes is not None:
+                    self.current_jpeg_bytes = jpeg_bytes
+                    self.current_frame = None
+                    self.current_source_size = self._published_frame_size()
+                    if getattr(self, "mjpeg_buffer", None) is not None:
+                        self.mjpeg_buffer.publish(jpeg_bytes)
+                    self._publish_compressed_image(jpeg_bytes)
+                    if self.hand_decoder_queue is not None:
+                        self._count_hand_stage("colour_isp")
+                    if self.imitation_queue is not None:
+                        self._count_imitation_stage("colour_isp")
+                    self.publish_face_center(None)
+                else:
+                    frame = image_rgb.getCvFrame()
+                    self.current_source_size = (frame.shape[1], frame.shape[0])
+                    if (
+                        frame.shape[1] != self.preview_width
+                        or frame.shape[0] != self.preview_height
+                    ):
+                        frame = cv2.resize(
+                            frame, (self.preview_width, self.preview_height)
+                        )
+                    self.current_frame = frame
+                    self.current_jpeg_bytes = b""
+                    if self.hand_decoder_queue is not None:
+                        self._count_hand_stage("colour_isp")
+                    if self.imitation_queue is not None:
+                        self._count_imitation_stage("colour_isp")
+                    self.publish_face_center(frame)
+                    if (
+                        getattr(self, "compressed_publisher_", None) is not None
+                        and self.compressed_publisher_.get_subscription_count() > 0
+                    ):
+                        ok, buf = cv2.imencode(
+                            ".jpg",
+                            frame,
+                            [int(cv2.IMWRITE_JPEG_QUALITY), self.quality_factor],
+                        )
+                        if ok:
+                            raw_jpeg = bytes(buf)
+                            self.current_jpeg_bytes = raw_jpeg
+                            if getattr(self, "mjpeg_buffer", None) is not None:
+                                self.mjpeg_buffer.publish(raw_jpeg)
+                            self._publish_compressed_image(raw_jpeg)
 
         self._drain_colour_branch_capture()
 
@@ -1047,21 +1090,33 @@ class CameraNode(
         self._publish_colorized_depth(depth)
 
     def timer_period_callback(self, msg):
-        self.timer_period = msg.data
+        requested = float(msg.data)
+        if not math.isfinite(requested) or requested <= 0:
+            return
+        self.timer_period = max(MIN_TIMER_PERIOD_SECONDS, requested)
         self.timer.cancel()
         self.timer = self.create_timer(self.timer_period, self.timer_callback)
+        with self._pipeline_lock:
+            self._stop_pipeline()
+            self.camera_available = self.init_pipeline()
 
     def quality_factor_callback(self, msg):
-        self.quality_factor = msg.data
+        self.quality_factor = max(1, min(100, int(msg.data)))
+        with self._pipeline_lock:
+            self._stop_pipeline()
+            self.camera_available = self.init_pipeline()
 
     def preview_size_callback(self, msg):
-        self.preview_width, self.preview_height = msg.data
+        self.preview_width, self.preview_height = int(msg.data[0]), int(msg.data[1])
 
         with self._pipeline_lock:
             self._stop_pipeline()
             self.camera_available = self.init_pipeline()
 
     def destroy_node(self):
+        if getattr(self, "mjpeg_server", None) is not None:
+            self.mjpeg_server.stop()
+            self.mjpeg_server = None
         self._stop_pipeline()
         return super().destroy_node()
 

@@ -9,8 +9,13 @@ from __future__ import annotations
 
 import fcntl
 import logging
+import struct
+import termios
 import threading
+
+TIOCM_DTR = getattr(termios, "TIOCM_DTR", 0x002)
 import time
+import traceback
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
@@ -22,6 +27,7 @@ from pib_motors.stservo_sdk.sts import (
     STS_TORQUE_ENABLE,
     sts,
 )
+from pib_motors.bus_writer import BusPriority, get_bus_writer
 from pib_motors.stservo_sdk.stservo_def import COMM_SUCCESS
 
 DEFAULT_BAUDRATE = 1_000_000
@@ -29,7 +35,12 @@ DEFAULT_SPEED = 1000
 DEFAULT_ACCEL = 50
 
 # Heavy arm/head servos (STS3095) run at lower speed/acceleration than finger servos.
-STS3095_SERVO_IDS: frozenset[int] = frozenset({18, 19, 20, 21, 38, 39, 40, 41, 50, 51})
+# The id set and the measured speed curve live together in servo_speed_curve.
+from pib_motors.servo_speed_curve import (  # noqa: E402  (single source for the family ids)
+    STS3095_SERVO_IDS,
+)
+from pib_motors.servo_speed_curve import curve_for_servo_id
+
 STS3095_SPEED = 700
 STS3095_ACCEL = 30
 FINGER_SPEED = 3000
@@ -52,6 +63,30 @@ _port_cache: dict[str, tuple[PortHandler, sts, threading.Lock]] = {}
 _cache_lock = threading.Lock()
 
 
+#: Per-thread record of how long the last _BusAccess took to acquire Lock + flock.
+#: The bus writer reads it after a transaction to tell "slow servo" from "busy port".
+_acquire_state = threading.local()
+
+#: How long a port may be HELD before it is worth a warning. Everything else on the same
+#: adapter waits exactly this long, in every process, so this is the number that explains
+#: multi-second waits that are not caused by a slow servo.
+HELD_WARN_MS = 200.0
+
+
+def last_bus_acquire_wait_ms() -> float:
+    """Milliseconds the calling thread spent acquiring the port in its last _BusAccess."""
+    return float(getattr(_acquire_state, "wait_ms", 0.0))
+
+
+def _holding_caller() -> str:
+    """The first stack frame outside this module - i.e. who is holding the port."""
+    stack = traceback.extract_stack(limit=12)
+    for frame in reversed(stack):
+        if Path(frame.filename).name != Path(__file__).name:
+            return f"{Path(frame.filename).name}:{frame.lineno}:{frame.name}"
+    return "unknown"
+
+
 class _BusAccess:
     """Serializes bus transactions across threads and OS processes (motor_control + motor_current)."""
 
@@ -60,6 +95,7 @@ class _BusAccess:
         self._lock = lock
 
     def __enter__(self) -> None:
+        started = time.monotonic()
         self._lock.acquire()
         ser = getattr(self._ph, "ser", None)
         if ser is not None and hasattr(ser, "fileno"):
@@ -67,8 +103,29 @@ class _BusAccess:
                 fcntl.flock(ser.fileno(), fcntl.LOCK_EX)
             except Exception:
                 pass
+        # Includes both the in-process Lock and the cross-process flock, which is what a
+        # transaction actually waits for when another process is on the same adapter.
+        _acquire_state.wait_ms = (time.monotonic() - started) * 1000.0
+        self._held_at = time.monotonic()
+        self._caller = _holding_caller()
 
     def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        # Never leave stservo_sdk's non-reentrant is_using flag wedged True after a bus block:
+        # if readPort/writePort raised or a transaction exited early, is_using=True causes every
+        # future txPacket() on this PortHandler to immediately return COMM_PORT_BUSY (-1) forever
+        # without touching the serial port (0.0 ms transaction time, permanent 0/8 dropout).
+        if getattr(self._ph, "is_using", False):
+            self._ph.is_using = False
+        held_ms = (
+            time.monotonic() - getattr(self, "_held_at", time.monotonic())
+        ) * 1000.0
+        if held_ms > HELD_WARN_MS:
+            logging.warning(
+                "[PERF_TRACE] BUS_ACCESS_HELD device=%s held_ms=%.1f caller=%s",
+                getattr(self._ph, "port_name", "unknown"),
+                held_ms,
+                getattr(self, "_caller", "unknown"),
+            )
         ser = getattr(self._ph, "ser", None)
         if ser is not None and hasattr(ser, "fileno"):
             try:
@@ -109,6 +166,45 @@ def resolve_serial_device(address: str, by_id_dir: Path = SERIAL_BY_ID_DIR) -> s
     return cleaned
 
 
+def desired_cflag(cflag: int) -> int:
+    """Control flags for this kind of adapter: never drop DTR when a handle closes.
+
+    The four Waveshare CDC-ACM bridges are opened by three processes at once (motor_control,
+    motor_current, controller_scan). With HUPCL set - the default - the last close on the tty
+    drops DTR, which many bridge firmwares interpret as "host gone" and which leaves the servo
+    bus silent until a new open. Measured on the pib5advanced: no USB disconnect in dmesg at
+    all when an adapter stops answering, so the link stays up and only the line state changes.
+    """
+    cflag |= termios.CLOCAL  # ignore modem control lines
+    cflag &= ~termios.HUPCL  # do not hang up (drop DTR) on the last close
+    cflag &= ~termios.CRTSCTS  # no hardware flow control, the adapter does not use it
+    return cflag
+
+
+def _configure_tty(ph: PortHandler) -> None:
+    """Apply the flags above to an freshly opened port, and keep latency low."""
+    ser = getattr(ph, "ser", None)
+    fileno = getattr(ser, "fileno", None)
+    if not callable(fileno):
+        return
+    try:
+        fd = fileno()
+    except Exception:  # noqa: BLE001 - a closed handle has no fd
+        return
+    try:
+        attributes = termios.tcgetattr(fd)
+        attributes[2] = desired_cflag(attributes[2])
+        termios.tcsetattr(fd, termios.TCSANOW, attributes)
+    except Exception as error:  # noqa: BLE001 - never fail the open because of tuning
+        logging.warning("could not configure tty flags (%s): %s", ph.port_name, error)
+    try:
+        import fcntl as _fcntl
+
+        _fcntl.ioctl(fd, termios.TIOCMBIS, struct.pack("I", termios.TIOCM_DTR))
+    except Exception:  # noqa: BLE001 - DTR is best effort
+        pass
+
+
 def _get_or_open_port(
     address: str, baudrate: int = DEFAULT_BAUDRATE
 ) -> tuple[PortHandler, sts, threading.Lock]:
@@ -124,10 +220,74 @@ def _get_or_open_port(
         if not ph.setBaudRate(baudrate):
             ph.closePort()
             raise RuntimeError(f"Failed to set STS baudrate {baudrate} on {device}")
+        _configure_tty(ph)
         pk = sts(ph)
         entry = (ph, pk, threading.Lock())
         _port_cache[device] = entry
         return entry
+
+
+def reopen_port(address: str) -> bool:
+    """Close and reopen the cached PortHandler in place so existing BusWriter and
+    FeetechStSerialActuator references stay attached to a live serial handle.
+
+    Previously ``reopen_port`` popped the entry from ``_port_cache`` and called
+    ``ph.closePort()``, while ``BusWriter._ph`` and ``actuator._ph`` kept their startup
+    reference forever - so the first reopen permanently killed the port until a container
+    restart. Reopening the same ``PortHandler`` object under its bus lock keeps all existing
+    references valid and restores the baudrate and tty flags (-hupcl clocal -crtscts, DTR).
+    """
+    device = resolve_serial_device(address)
+    with _cache_lock:
+        cached = _port_cache.get(device)
+    if cached is None:
+        return False
+    ph, _pk, lock = cached
+    with _BusAccess(ph, lock):
+        try:
+            # Flush any half-transaction in either buffer before closing the old fd.
+            ser = getattr(ph, "ser", None)
+            if ser is not None and hasattr(ser, "reset_input_buffer"):
+                ser.reset_input_buffer()
+                ser.reset_output_buffer()
+            elif ser is not None and hasattr(ser, "flush"):
+                ser.flush()
+        except Exception as error:  # noqa: BLE001 - a dead handle may refuse to flush
+            logging.error("could not flush %s before reopening: %s", device, error)
+        try:
+            ph.closePort()
+        except Exception as error:  # noqa: BLE001 - a dead handle may fail to close
+            logging.warning("could not close %s cleanly: %s", device, error)
+        try:
+            ph.port_name = device
+            if not ph.openPort():
+                logging.error(
+                    "[PERF_TRACE] PORT_REOPEN device=%s stage=REOPEN_FAILED - openPort returned False",
+                    device,
+                )
+                return False
+            if not ph.setBaudRate(getattr(ph, "baudrate", DEFAULT_BAUDRATE)):
+                ph.closePort()
+                logging.error(
+                    "[PERF_TRACE] PORT_REOPEN device=%s stage=REOPEN_FAILED - setBaudRate returned False",
+                    device,
+                )
+                return False
+            _configure_tty(ph)
+        except (
+            Exception
+        ) as error:  # noqa: BLE001 - hardware may still be re-enumerating
+            logging.error(
+                "[PERF_TRACE] PORT_REOPEN device=%s stage=REOPEN_FAILED error=%s",
+                device,
+                error,
+            )
+            return False
+    logging.error(
+        "[PERF_TRACE] PORT_REOPEN device=%s stage=REOPEN - reopened in place and reconfigured tty",
+        device,
+    )
+    return True
 
 
 def centideg_to_ticks(
@@ -199,6 +359,12 @@ class FeetechStSerialActuator:
         self.uid: str = uid
         self.upper_endpoint: str = upper_endpoint
         self.direction_sign: int = -1 if upper_endpoint == "min" else 1
+        # The cable-driven fingers of pib4advanced/pib5advanced travel +/-180 degrees, every
+        # other joint +/-90. The bound comes from the motor's DB settings, so it has to be
+        # carried here: centideg_to_ticks() otherwise enforces its +/-9000 default on every
+        # motor and silently caps the fingers.
+        self.rotation_range_min: int = _DEFAULT_ROTATION_RANGE_MIN
+        self.rotation_range_max: int = _DEFAULT_ROTATION_RANGE_MAX
         self._baudrate: int = DEFAULT_BAUDRATE
         self._connected: bool | None = None
         self._target_position: int | None = None
@@ -225,6 +391,15 @@ class FeetechStSerialActuator:
         assert self._ph is not None and self._lock is not None
         with _BusAccess(self._ph, self._lock):
             yield
+
+    def _writer(self) -> Any:
+        assert self._ph is not None and self._pk is not None and self._lock is not None
+        device = resolve_serial_device(self.uid)
+        return get_bus_writer(device, self._ph, self._pk, self._lock)
+
+    def speed_curve(self) -> tuple[tuple[int, float], ...]:
+        """Measured (speed setting, centideg/s) points for this servo model."""
+        return curve_for_servo_id(self.pin)
 
     def check_connection(self) -> bool:
         """Open the serial port if needed and probe this servo ID once."""
@@ -321,6 +496,20 @@ class FeetechStSerialActuator:
             if key in settings_dto:
                 self._settings[key] = settings_dto[key]
 
+        range_min = settings_dto.get(
+            "rotationRangeMin", settings_dto.get("rotation_range_min")
+        )
+        range_max = settings_dto.get(
+            "rotationRangeMax", settings_dto.get("rotation_range_max")
+        )
+        if range_min is not None and range_max is not None:
+            if range_min >= range_max:
+                raise ValueError(
+                    f"rotation range [{range_min}, {range_max}] is empty or inverted"
+                )
+            self.rotation_range_min = int(range_min)
+            self.rotation_range_max = int(range_max)
+
         if not self.is_connected() or self._pk is None or self._lock is None:
             return False
 
@@ -342,27 +531,74 @@ class FeetechStSerialActuator:
     def get_current(self) -> int:
         if not self.is_connected() or self._pk is None or self._lock is None:
             return self.NO_CURRENT
-        try:
-            with self._bus():
-                sts_present_current, res, _err = self._pk.ReadCurrent(self.pin)
+        pin = self.pin
+
+        def _read(pk: sts) -> int | None:
+            sts_present_current, res, _err = pk.ReadCurrent(pin)
             if res != COMM_SUCCESS:
-                return self.NO_CURRENT
+                return None
             return int(sts_present_current) * 10
+
+        try:
+            value, error = self._writer().run_service(
+                _read, label=f"pin{self.pin}:get_current"
+            )
+            if error or value is None:
+                return self.NO_CURRENT
+            return int(value)
         except Exception:
             return self.NO_CURRENT
 
-    def set_position(self, position: int) -> bool:
+    def set_position(
+        self,
+        position: int,
+        *,
+        bus_priority: BusPriority = BusPriority.SERVICE,
+        speed: int | None = None,
+        acc: int | None = None,
+    ) -> bool:
+        """Command a position. ``speed``/``acc`` override the stored motion settings.
+
+        The override exists for trajectories: they know the path speed for the current tick and
+        must not write registers to express it. One write, one transaction.
+        """
         if not self.is_connected() or self._pk is None or self._lock is None:
             return False
 
         position = int(round(position))
         centideg = position * self.direction_sign
-        ticks = centideg_to_ticks(float(centideg))
-        speed, acc = self._resolve_speed_and_acc()
+        ticks = centideg_to_ticks(
+            float(centideg), self.rotation_range_min, self.rotation_range_max
+        )
+        if speed is None or acc is None:
+            default_speed, default_acc = self._resolve_speed_and_acc()
+            speed = default_speed if speed is None else int(speed)
+            acc = default_acc if acc is None else int(acc)
+        else:
+            speed, acc = int(speed), int(acc)
+
+        if bus_priority is BusPriority.STREAM:
+            try:
+                self._writer().submit_stream(self.pin, ticks, speed, acc)
+                self._target_position = centideg
+                return True
+            except Exception as error:
+                logging.error(f"Exception during STS stream submit: {error}")
+                return False
+
+        pin = self.pin
+
+        def _write(pk: sts) -> tuple[int, int]:
+            return pk.WritePosEx(pin, ticks, speed, acc)
 
         try:
-            with self._bus():
-                res, err = self._pk.WritePosEx(self.pin, ticks, speed, acc)
+            payload, error = self._writer().run_service(
+                _write, label=f"pin{self.pin}:set_position"
+            )
+            if error:
+                logging.error(f"STS WritePosEx failed on id {self.pin}: {error}")
+                return False
+            res, err = payload if payload is not None else (-1, 0)
             if res != COMM_SUCCESS:
                 logging.error(
                     f"STS WritePosEx failed on id {self.pin} (res={res}, err={err})"
@@ -393,38 +629,64 @@ class FeetechStSerialActuator:
     def get_current_position(self) -> int:
         if not self.is_connected() or self._pk is None or self._lock is None:
             return 0
-        try:
-            with self._bus():
-                ticks, _spd, res, _err = self._pk.ReadPosSpeed(self.pin)
+        pin = self.pin
+        sign = self.direction_sign
+
+        def _read(pk: sts) -> int | None:
+            ticks, _spd, res, _err = pk.ReadPosSpeed(pin)
             if res != COMM_SUCCESS:
-                return 0
+                return None
             centideg = ticks_to_centideg(int(ticks))
-            return int(round(centideg * self.direction_sign))
+            return int(round(centideg * sign))
+
+        try:
+            value, error = self._writer().run_service(
+                _read, label=f"pin{self.pin}:get_current_position"
+            )
+            if error or value is None:
+                return 0
+            return int(value)
         except Exception:
             return 0
 
     def get_temperature(self) -> int | None:
         if not self.is_connected() or self._pk is None or self._lock is None:
             return None
-        try:
-            with self._bus():
-                temp, res, _err = self._pk.read1ByteTxRx(
-                    self.pin, STS_PRESENT_TEMPERATURE
-                )
+        pin = self.pin
+
+        def _read(pk: sts) -> int | None:
+            temp, res, _err = pk.read1ByteTxRx(pin, STS_PRESENT_TEMPERATURE)
             if res != COMM_SUCCESS:
                 return None
             return int(temp)
+
+        try:
+            value, error = self._writer().run_service(
+                _read, label=f"pin{self.pin}:get_temperature"
+            )
+            if error or value is None:
+                return None
+            return int(value)
         except Exception:
             return None
 
     def get_voltage(self) -> float | None:
         if not self.is_connected() or self._pk is None or self._lock is None:
             return None
-        try:
-            with self._bus():
-                raw_v, res, _err = self._pk.read1ByteTxRx(self.pin, STS_PRESENT_VOLTAGE)
+        pin = self.pin
+
+        def _read(pk: sts) -> float | None:
+            raw_v, res, _err = pk.read1ByteTxRx(pin, STS_PRESENT_VOLTAGE)
             if res != COMM_SUCCESS:
                 return None
             return round(int(raw_v) / 10.0, 2)
+
+        try:
+            value, error = self._writer().run_service(
+                _read, label=f"pin{self.pin}:get_voltage"
+            )
+            if error or value is None:
+                return None
+            return float(value)
         except Exception:
             return None

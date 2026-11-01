@@ -93,6 +93,9 @@ def _load_motor_control_for_batch(lookup: dict, motors_list: list):
         "pib_motors.trajectory_executor",
         TrajectoryExecutor=trajectory_executor.TrajectoryExecutor,
         is_software_trajectory=trajectory_executor.is_software_trajectory,
+        validate_software_trajectory_schedule=(
+            trajectory_executor.validate_software_trajectory_schedule
+        ),
     )
     pib_motors_joint_cmd = _module(
         "pib_motors.joint_trajectory_command",
@@ -168,7 +171,8 @@ def test_no_bus_returns_clear_error_without_hanging(monkeypatch):
             now=lambda: SimpleNamespace(
                 to_msg=lambda: SimpleNamespace(sec=1, nanosec=2)
             )
-        )
+        ),
+        _motor_power_is_off=lambda: False,
     )
     handler = module.MotorControl.get_all_joint_positions.__get__(
         node, module.MotorControl
@@ -206,7 +210,8 @@ def test_one_silent_joint_keeps_other_measurements(monkeypatch):
             now=lambda: SimpleNamespace(
                 to_msg=lambda: SimpleNamespace(sec=3, nanosec=4)
             )
-        )
+        ),
+        _motor_power_is_off=lambda: False,
     )
     handler = module.MotorControl.get_all_joint_positions.__get__(
         node, module.MotorControl
@@ -226,3 +231,87 @@ def test_one_silent_joint_keeps_other_measurements(monkeypatch):
     assert response.results[0].successful is True
     assert response.results[1].successful is False
     assert response.results[1].error_code == "position_unavailable"
+
+
+def _batch_call(monkeypatch, lookup, sweep_result, *, power_off: bool):
+    module = _load_motor_control_for_batch(lookup, [])
+    calls = []
+
+    def fake_sweep(_motors):
+        calls.append(1)
+        return sweep_result
+
+    monkeypatch.setattr(module, "sweep_feetech_joint_positions", fake_sweep)
+    node = SimpleNamespace(
+        get_clock=lambda: SimpleNamespace(
+            now=lambda: SimpleNamespace(
+                to_msg=lambda: SimpleNamespace(sec=1, nanosec=2)
+            )
+        ),
+        _motor_power_is_off=lambda: power_off,
+    )
+    handler = module.MotorControl.get_all_joint_positions.__get__(
+        node, module.MotorControl
+    )
+    response = SimpleNamespace(
+        header=None, successful=True, message="", results=[], positions=[]
+    )
+    handler(SimpleNamespace(joint_names=[]), response)
+    return response, calls
+
+
+def test_power_off_answers_without_touching_the_bus(monkeypatch):
+    """Load-bearing: the SSR-off case - 26 probes x 50 ms timeout per sweep."""
+    from pib_motors import joint_state_sweep
+
+    lookup = {"turn_head_motor": [SimpleNamespace(name="turn_head_motor")]}
+    empty = joint_state_sweep.JointStateSweepResult({}, 0.0, 0, 0)
+
+    response, calls = _batch_call(monkeypatch, lookup, empty, power_off=True)
+
+    assert calls == [], "kein Sweep bei ausgeschalteter Versorgung"
+    assert response.successful is False
+    assert "motor power is off" in response.message
+    assert response.results[0].error_code == "bus_unavailable"
+    assert response.results[0].detail == response.message
+
+
+def test_unreachable_ports_are_named_instead_of_claiming_no_actuators(monkeypatch):
+    """A dead bus must not read like 'this robot has no sweepable actuators'."""
+    from pib_motors import joint_state_sweep
+
+    lookup = {"turn_head_motor": [SimpleNamespace(name="turn_head_motor")]}
+    dead = joint_state_sweep.JointStateSweepResult({}, 0.0, 0, 0, {}, {}, 4)
+
+    response, calls = _batch_call(monkeypatch, lookup, dead, power_off=False)
+
+    assert calls == [1]
+    assert response.successful is False
+    assert "no Feetech bus reachable" in response.message
+    assert "4 port(s)" in response.message
+    assert response.results[0].error_code == "bus_unavailable"
+
+
+def test_power_off_stops_the_joint_state_publisher(monkeypatch):
+    """Load-bearing: no measurement attempts while the relay is off."""
+    module = _load_motor_control_for_batch({"turn_head_motor": []}, [])
+    calls = []
+    published = []
+    monkeypatch.setattr(
+        module, "sweep_feetech_joint_positions", lambda _m: calls.append(1)
+    )
+    node = SimpleNamespace(
+        _motor_power_is_off=lambda: True,
+        joint_state_publisher=SimpleNamespace(
+            publish=lambda msg: published.append(msg)
+        ),
+        get_clock=lambda: SimpleNamespace(
+            now=lambda: SimpleNamespace(
+                to_msg=lambda: SimpleNamespace(sec=1, nanosec=2)
+            )
+        ),
+    )
+    module.MotorControl._publish_joint_states.__get__(node, module.MotorControl)()
+
+    assert calls == []
+    assert published == []

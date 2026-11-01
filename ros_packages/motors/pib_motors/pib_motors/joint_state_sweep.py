@@ -1,34 +1,60 @@
-"""Atomic Feetech bus sweep via GroupSyncRead for joint state publishing (PR-2112)."""
+"""Atomic Feetech bus sweep for joint state publishing (PR-2112, PR-2128).
+
+Two read strategies live here, both under the port's own bus lock:
+
+* the fast one - a single ``GroupSyncRead`` request per port that every servo
+  answers in ID order (0.4 s measured for a 26-servo robot);
+* the slow one - one addressed transaction per servo (``ReadPosSpeed``), which
+  is what the Waveshare CDC-ACM adapters actually answer. Measured on the
+  pib5advanced at 192.168.1.168: the group read returned no measurement for any
+  servo while single reads returned real positions.
+
+A port that yields nothing from the group read is retried with single reads in
+the same tick and remembered, so later sweeps go straight to the slow path
+instead of paying a failed broadcast every time.
+"""
 
 from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
+from pib_motors.port_probe import forget_dead_ports, port_answers
+from pib_motors.port_recovery import RecoveryAction, note_failure, note_success
+from pib_motors.port_usb_reset import reset_cdc_acm_adapter
 from pib_motors.feetech_actuator import (
     FeetechStSerialActuator,
-    _BusAccess,
+    resolve_serial_device,
     ticks_to_centideg,
 )
-from pib_motors.stservo_sdk.group_sync_read import GroupSyncRead
-from pib_motors.stservo_sdk.sts import STS_PRESENT_POSITION_L
+from pib_motors.bus_writer import get_bus_writer
 from pib_motors.stservo_sdk.stservo_def import COMM_SUCCESS
+from pib_motors.units import centideg_to_rad
 
 _LOG = logging.getLogger(__name__)
 _NO_BUS_LOG_INTERVAL_SEC = 60.0
 _last_no_bus_log_monotonic = 0.0
 
+MODE_SINGLE = "single"
+MODE_UNREACHABLE = "unreachable"
+
 
 @dataclass(frozen=True)
 class JointStateSweepResult:
-    """Measured centidegree positions from one or more port-level group sync reads."""
+    """Measured centidegree positions from one or more port-level sweeps."""
 
     positions_centideg: dict[str, int]
     sweep_monotonic: float
     ports_attempted: int
     ports_succeeded: int
+    #: Which strategy each port needed, keyed by port uid ("group" / "single").
+    mode_by_port: dict[str, str] = field(default_factory=dict)
+    #: Wall time spent reading each port, for the latency work.
+    port_durations_ms: dict[str, float] = field(default_factory=dict)
+    #: Ports whose single probe failed and that were therefore skipped.
+    ports_unreachable: int = 0
 
 
 def _feetech_entries(motors: list[Any]) -> list[tuple[str, FeetechStSerialActuator]]:
@@ -49,74 +75,200 @@ def _group_by_port(
     return grouped
 
 
+def _to_centideg(pk: Any, actuator: FeetechStSerialActuator, raw_ticks: Any) -> int:
+    host_ticks = pk.sts_tohost(raw_ticks, 15)
+    centideg = ticks_to_centideg(int(host_ticks))
+    return int(round(centideg * actuator.direction_sign))
+
+
+def _read_single(
+    pk: Any, group: list[tuple[str, FeetechStSerialActuator]]
+) -> dict[str, int]:
+    """One addressed transaction per servo. The caller already holds the bus."""
+    positions: dict[str, int] = {}
+    for motor_name, actuator in group:
+        try:
+            raw_ticks, _speed, result, _error = pk.ReadPosSpeed(actuator.pin)
+        except Exception as error:  # noqa: BLE001 - one servo must not stop the port
+            _LOG.debug("single read failed for %s: %s", motor_name, error)
+            continue
+        if result != COMM_SUCCESS:
+            continue
+        positions[motor_name] = _to_centideg(pk, actuator, raw_ticks)
+    return positions
+
+
+def serial_for_port(actuator: Any) -> str:
+    """The device path this actuator lives on, resolved the same way the writer does."""
+    return resolve_serial_device(str(getattr(actuator, "uid", "") or ""))
+
+
+def _port_answers(group: list[tuple[str, FeetechStSerialActuator]]) -> bool:
+    """One probe per port instead of one per servo (see ``port_probe``)."""
+    return port_answers(group[0][1])
+
+
+def _note_and_maybe_reopen(device: str) -> None:
+    """Feed the failure into the policy and run reopen or USB reset when it says so."""
+    from pib_motors.feetech_actuator import reopen_port
+
+    action = note_failure(device)
+    if action == RecoveryAction.REOPEN:
+        reopen_port(device)
+    elif action == RecoveryAction.USB_RESET:
+        reset_cdc_acm_adapter(device)
+        reopen_port(device)
+        forget_dead_ports()
+
+
 def _sweep_port(
     group: list[tuple[str, FeetechStSerialActuator]],
-) -> dict[str, int]:
+) -> tuple[dict[str, int], str]:
+    """Read one port, one addressed transaction per servo."""
     sample = group[0][1]
     ph = sample._ph
     pk = sample._pk
     lock = sample._lock
     if ph is None or pk is None or lock is None:
-        return {}
+        return {}, ""
 
-    positions: dict[str, int] = {}
+    port_key = str(getattr(sample, "uid", "") or "")
     try:
-        with _BusAccess(ph, lock):
-            group_read = GroupSyncRead(ph, STS_PRESENT_POSITION_L, 2)
-            for _, actuator in group:
-                group_read.addParam(actuator.pin)
-            comm = group_read.txRxPacket()
-            if comm != COMM_SUCCESS and not group_read.last_result:
-                return {}
-            for motor_name, actuator in group:
-                available, _error = group_read.isAvailable(
-                    actuator.pin, STS_PRESENT_POSITION_L, 2
-                )
-                if not available:
-                    continue
-                raw_ticks = group_read.getData(actuator.pin, STS_PRESENT_POSITION_L, 2)
-                host_ticks = pk.sts_tohost(raw_ticks, 15)
-                centideg = ticks_to_centideg(int(host_ticks))
-                positions[motor_name] = int(round(centideg * actuator.direction_sign))
-    except Exception as error:
-        _LOG.debug("group sync read failed on port %s: %s", sample.uid, error)
-        return {}
-    return positions
+        device = resolve_serial_device(sample.uid)
+        writer = get_bus_writer(device, ph, pk, lock)
+
+        def _execute(bus_pk: Any) -> dict[str, int]:
+            return _read_single(bus_pk, group)
+
+        positions, error = writer.run_sweep(
+            _execute, label=f"sweep:{len(group)} servos"
+        )
+        if error:
+            _LOG.error("joint state sweep: port %s sweep failed: %s", port_key, error)
+            _note_and_maybe_reopen(device)
+            return {}, ""
+        if positions:
+            note_success(device)
+        # No success without data: this call cleared the failure counter on every tick, which is
+        # why the retry loop attempted once and then went silent even though the caller reported
+        # the empty sweep as a failure (793 times in one minute on the robot).
+        return positions or {}, MODE_SINGLE
+    except Exception as error:  # noqa: BLE001 - a dead port must not break the sweep
+        _LOG.error("joint state sweep: port %s failed entirely: %s", port_key, error)
+        try:
+            _note_and_maybe_reopen(resolve_serial_device(sample.uid))
+        except (
+            Exception
+        ) as error:  # noqa: BLE001 - never let the recovery break the sweep
+            _LOG.error(
+                "joint state sweep: port %s recovery failed: %s",
+                port_key,
+                error,
+                exc_info=True,
+            )
+        return {}, ""
 
 
 def sweep_feetech_joint_positions(motors: list[Any]) -> JointStateSweepResult:
-    """Read present position for all connected Feetech actuators, grouped by serial port."""
+    """Read present position for all connected Feetech actuators, port by port."""
     global _last_no_bus_log_monotonic
 
     entries = _feetech_entries(motors)
     if not entries:
         return JointStateSweepResult({}, time.monotonic(), 0, 0)
 
-    connected = [
-        (name, actuator) for name, actuator in entries if actuator.is_connected()
-    ]
-    if not connected:
-        now = time.monotonic()
-        if now - _last_no_bus_log_monotonic >= _NO_BUS_LOG_INTERVAL_SEC:
-            _last_no_bus_log_monotonic = now
-            _LOG.info(
-                "joint state sweep: no connected Feetech actuators (bus absent or SSR off)"
-            )
-        return JointStateSweepResult({}, time.monotonic(), 0, 0)
-
-    grouped = _group_by_port(connected)
+    grouped = _group_by_port(entries)
     all_positions: dict[str, int] = {}
-    ports_attempted = len(grouped)
+    ports_attempted = 0
     ports_succeeded = 0
-    for group in grouped.values():
-        port_positions = _sweep_port(group)
+    ports_unreachable = 0
+    mode_by_port: dict[str, str] = {}
+    port_durations_ms: dict[str, float] = {}
+    for port_key, group in grouped.items():
+        if not _port_answers(group):
+            ports_unreachable += 1
+            mode_by_port[port_key] = MODE_UNREACHABLE
+            # A port the probe cannot reach counts as a failure too. Without this the recovery
+            # gave up after a single reopen: the probe skipped the port, so no further failure
+            # was ever counted and the retry budget was never spent - measured on the robot,
+            # ports_ok stayed at 3/4 for a minute with only one PORT_REOPEN in the log.
+            try:
+                _note_and_maybe_reopen(serial_for_port(group[0][1]))
+            except (
+                Exception
+            ) as error:  # noqa: BLE001 - recovery must never break the sweep
+                # Loud on purpose: swallowing this hid why the retry loop never ran on the
+                # robot (one PORT_REOPEN in the log, then silence, ports_ok stuck at 3/4).
+                _LOG.error(
+                    "joint state sweep: port %s recovery failed: %s",
+                    port_key,
+                    error,
+                    exc_info=True,
+                )
+            continue
+        ports_attempted += 1
+        started = time.monotonic()
+        port_positions, mode = _sweep_port(group)
+        port_durations_ms[port_key] = round((time.monotonic() - started) * 1000.0, 1)
+        if mode:
+            mode_by_port[port_key] = mode
         if port_positions:
             ports_succeeded += 1
             all_positions.update(port_positions)
+        elif mode == MODE_SINGLE:
+            # The port was read without an error and delivered nothing. Treating that as a
+            # success reset the failure counter on every tick, so the threshold was never
+            # reached again - measured on the robot as exactly one PORT_REOPEN, then a silent
+            # log with ports_ok stuck at 3/4 for the rest of the observation.
+            _LOG.warning(
+                "joint state sweep: port %s answered without positions", port_key
+            )
+            try:
+                _note_and_maybe_reopen(serial_for_port(group[0][1]))
+            except Exception as error:  # noqa: BLE001 - never break the sweep
+                _LOG.error(
+                    "joint state sweep: port %s recovery failed: %s",
+                    port_key,
+                    error,
+                    exc_info=True,
+                )
+
+    if not all_positions and ports_unreachable:
+        now = time.monotonic()
+        if now - _last_no_bus_log_monotonic >= _NO_BUS_LOG_INTERVAL_SEC:
+            _last_no_bus_log_monotonic = now
+            _LOG.warning(
+                "joint state sweep: %d of %d ports did not answer the probe "
+                "(adapters absent or motor power off)",
+                ports_unreachable,
+                len(grouped),
+            )
 
     return JointStateSweepResult(
         all_positions,
         time.monotonic(),
         ports_attempted,
         ports_succeeded,
+        mode_by_port,
+        port_durations_ms,
+        ports_unreachable,
     )
+
+
+def fill_joint_state(message: Any, positions_centideg: dict[str, int]) -> int:
+    """Write sorted joint names and radian positions into a JointState message.
+
+    The field is ``name`` - ``sensor_msgs/JointState`` has exactly
+    ``header, name, position, velocity, effort`` (read from the robot image).
+    Writing ``joint_names`` raised AttributeError inside the publish callback and
+    killed the whole motor_control process the first time a sweep had data.
+
+    Lives next to the sweep because it publishes exactly what the sweep measured;
+    kept free of ROS imports so it stays unit-testable.
+    """
+    written = 0
+    for motor_name in sorted(positions_centideg):
+        message.name.append(motor_name)
+        message.position.append(centideg_to_rad(positions_centideg[motor_name]))
+        written += 1
+    return written

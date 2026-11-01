@@ -7,6 +7,7 @@ import math
 import sys
 import types
 from pathlib import Path
+from queue import SimpleQueue
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -142,6 +143,9 @@ def _load_motor_control_helpers():
         "pib_motors.trajectory_executor",
         TrajectoryExecutor=trajectory_executor.TrajectoryExecutor,
         is_software_trajectory=trajectory_executor.is_software_trajectory,
+        validate_software_trajectory_schedule=(
+            trajectory_executor.validate_software_trajectory_schedule
+        ),
     )
     pib_motors_joint_cmd = _module(
         "pib_motors.joint_trajectory_command",
@@ -335,6 +339,9 @@ def _load_motor_control_multi(lookup, motors_list):
         "pib_motors.trajectory_executor",
         TrajectoryExecutor=trajectory_executor.TrajectoryExecutor,
         is_software_trajectory=trajectory_executor.is_software_trajectory,
+        validate_software_trajectory_schedule=(
+            trajectory_executor.validate_software_trajectory_schedule
+        ),
     )
     pib_motors_joint_cmd = _module(
         "pib_motors.joint_trajectory_command",
@@ -512,6 +519,7 @@ def test_multi_point_trajectory_uses_software_executor() -> None:
         clock_fn=clock.time,
     )
     node.trajectory_executor = executor
+    node._trajectory_completion_queue = SimpleQueue()
 
     jt = FakeJointTrajectory()
     jt.joint_names = ["elbow"]
@@ -528,6 +536,7 @@ def test_multi_point_trajectory_uses_software_executor() -> None:
     response.results = []
 
     result = module.MotorControl.apply_joint_trajectory(node, request, response)
+    assert executor.join(timeout=1.0) is True
     assert result.successful is True
     assert lookup["elbow"][0].writes[-1] == 100
 

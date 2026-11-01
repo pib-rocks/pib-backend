@@ -1,6 +1,7 @@
 from typing import Iterable, Mapping, Sequence, Tuple
 import math
 import time
+from queue import SimpleQueue
 import rclpy
 from datatypes.msg import MotorResult, MotorSettings, SolidStateRelayState
 from datatypes.srv import (
@@ -23,14 +24,27 @@ from pib_motors.joint_trajectory_command import (
     outcomes_to_success,
     validate_radians_trajectory,
 )
-from pib_motors.trajectory_executor import TrajectoryExecutor, is_software_trajectory
+from pib_motors.trajectory_executor import (
+    TrajectoryExecutor,
+    is_software_trajectory,
+    validate_software_trajectory_schedule,
+)
 from pib_motors.perf_trace import (
     format_perf_trace_joint_state_sweep,
+    format_perf_trace_trajectory_done,
     format_perf_trace_trajectory_start,
     log_perf_trace,
 )
+from pib_motors.bus_writer import (
+    all_bus_writers,
+    format_bus_writer_summary,
+    shutdown_all_bus_writers,
+)
 from pib_motors.units import centideg_to_rad, rad_to_centideg
-from pib_motors.joint_state_sweep import sweep_feetech_joint_positions
+from pib_motors.joint_state_sweep import (
+    fill_joint_state,
+    sweep_feetech_joint_positions,
+)
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Header
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
@@ -144,10 +158,10 @@ class MotorControl(Node):
         self.declare_parameter("dev", False)
         self.dev = self.get_parameter("dev").value
 
-        self.declare_parameter("joint_state_publish_rate_hz", 20.0)
+        self.declare_parameter("joint_state_publish_rate_hz", 10.0)
         rate_hz = float(self.get_parameter("joint_state_publish_rate_hz").value)
         if rate_hz <= 0:
-            rate_hz = 20.0
+            rate_hz = 10.0
 
         # Service for JointTrajectory
         self.srv = self.create_service(
@@ -180,6 +194,13 @@ class MotorControl(Node):
         )
         self._joint_state_timer = self.create_timer(
             1.0 / rate_hz, self._publish_joint_states
+        )
+        self._trajectory_completion_queue: SimpleQueue = SimpleQueue()
+        self._trajectory_completion_timer = self.create_timer(
+            0.05, self._process_trajectory_completions
+        )
+        self._bus_writer_stats_timer = self.create_timer(
+            1.0, self._log_bus_writer_stats
         )
 
         # Publisher for MotorSettings
@@ -218,12 +239,38 @@ class MotorControl(Node):
         self.startup_pose_executor = StartupPoseExecutor(self, motors=motors)
         self.trajectory_executor = TrajectoryExecutor(self, name_to_motors)
 
+        #: Last known motor power state: None until a source told us, then True/False.
+        self._relay_on: bool | None = None
         if solid_state_relay_bricklet is None:
             self.get_logger().info(
                 "No SSR configured. Executing startup pose immediately."
             )
             self._startup_done = True
             self._execute_startup_pose()
+        else:
+            self._read_relay_state()
+
+    def _read_relay_state(self) -> None:
+        """Ask the relay brick directly once, so the first tick is not blind.
+
+        The topic only fires on a change; without this the node would assume
+        nothing and pay 26 serial timeouts per sweep while the power is off.
+        """
+        if solid_state_relay_bricklet is None:
+            return
+        try:
+            self._relay_on = bool(solid_state_relay_bricklet.get_state())
+        except Exception as error:  # noqa: BLE001 - unknown is a valid state
+            self.get_logger().warn(f"Could not read the relay state: {error}")
+            self._relay_on = None
+
+    def _motor_power_is_off(self) -> bool:
+        """True only when the relay definitely reports off.
+
+        Unknown counts as on: a build without a relay, or a relay that has not
+        answered yet, must not silently stop publishing joint states.
+        """
+        return self._relay_on is False
 
     def _execute_startup_pose(self):
         try:
@@ -240,6 +287,7 @@ class MotorControl(Node):
             )
 
     def on_ssr_state_change(self, msg: SolidStateRelayState):
+        self._relay_on = bool(msg.turned_on)
         if not msg.turned_on or self._startup_done:
             return
         self._startup_done = True
@@ -308,6 +356,28 @@ class MotorControl(Node):
 
         return response
 
+    def _process_trajectory_completions(self) -> None:
+        while not self._trajectory_completion_queue.empty():
+            completion = self._trajectory_completion_queue.get()
+            log_perf_trace(
+                self.get_logger(),
+                format_perf_trace_trajectory_done(
+                    completion.duration_sec,
+                    completion.successful,
+                    completion.cancelled,
+                ),
+            )
+            if completion.successful and not completion.cancelled:
+                for motor_name in completion.joint_names:
+                    for motor in name_to_motors[motor_name]:
+                        self.joint_trajectory_publisher.publish(
+                            as_joint_trajectory(motor.name, motor.get_position())
+                        )
+
+    def _stop_running_software_trajectory(self) -> None:
+        if self.trajectory_executor.is_running():
+            self.trajectory_executor.cancel()
+
     def apply_joint_trajectory(
         self,
         request: ApplyJointTrajectory.Request,
@@ -324,10 +394,32 @@ class MotorControl(Node):
         trace_started = time.monotonic()
         point_count = len(raw.points)
 
+        if not joint_names and not raw.points:
+            if self.trajectory_executor.is_running():
+                self._stop_running_software_trajectory()
+                response.successful = True
+                response.results = []
+            else:
+                response.successful = False
+                response.results = motor_outcomes_to_ros(
+                    [
+                        (
+                            "",
+                            False,
+                            "invalid_trajectory",
+                            "empty trajectory does not cancel a running sequence",
+                        )
+                    ]
+                )
+            return response
+
         if is_legacy_zip_shape(raw):
             outcomes = legacy_zip_outcomes(joint_names)
             response.successful = False
             response.results = motor_outcomes_to_ros(outcomes)
+            self.get_logger().warning(
+                f"apply_joint_trajectory rejected legacy zip shape for {len(joint_names)} joints"
+            )
             return response
 
         validation_errors, validation_outcomes = validate_radians_trajectory(
@@ -336,28 +428,51 @@ class MotorControl(Node):
         if validation_errors is not None:
             response.successful = False
             response.results = motor_outcomes_to_ros(validation_outcomes)
+            self.get_logger().warning(
+                f"apply_joint_trajectory rejected invalid trajectory: {validation_errors}"
+            )
             return response
+
+        if is_software_trajectory(raw):
+            schedule_error = validate_software_trajectory_schedule(raw)
+            if schedule_error is not None:
+                response.successful = False
+                response.results = motor_outcomes_to_ros(
+                    [
+                        (name, False, "invalid_schedule", schedule_error)
+                        for name in joint_names
+                    ]
+                )
+                self.get_logger().warning(
+                    f"apply_joint_trajectory rejected invalid schedule: {schedule_error}"
+                )
+                return response
 
         try:
             jt = joint_trajectory_radians_to_centidegrees(raw, name_to_motors)
             self._emit_trajectory_start(point_count, trace_started)
             if is_software_trajectory(jt):
-                trajectory_ok = self.trajectory_executor.execute(jt)
-                if trajectory_ok:
-                    outcomes = [(name, True, "", "") for name in joint_names]
-                    for motor_name in jt.joint_names:
-                        for motor in name_to_motors[motor_name]:
-                            self.joint_trajectory_publisher.publish(
-                                as_joint_trajectory(motor.name, motor.get_position())
-                            )
-                else:
+                if self.trajectory_executor.is_running():
+                    self._stop_running_software_trajectory()
+                started, start_error = self.trajectory_executor.start_async(
+                    jt, self._trajectory_completion_queue
+                )
+                if not started:
+                    detail = start_error or "failed to start software trajectory"
                     outcomes = [
-                        (name, False, "write_failed", "trajectory execution failed")
+                        (name, False, "trajectory_rejected", detail)
                         for name in joint_names
                     ]
+                    response.successful = False
+                    response.results = motor_outcomes_to_ros(outcomes)
+                    return response
+                outcomes = [(name, True, "", "") for name in joint_names]
                 response.successful = outcomes_to_success(outcomes)
                 response.results = motor_outcomes_to_ros(outcomes)
                 return response
+
+            if self.trajectory_executor.is_running():
+                self._stop_running_software_trajectory()
 
             apply_outcomes: list[MotorOutcome] = []
             for motor_name, position in as_motor_positions(jt):
@@ -402,6 +517,10 @@ class MotorControl(Node):
         )
 
     def _publish_joint_states(self) -> None:
+        if self._motor_power_is_off():
+            # No power on the bus: every read would burn its serial timeout.
+            self._relay_off_skips = getattr(self, "_relay_off_skips", 0) + 1
+            return
         started = time.monotonic()
         sweep = sweep_feetech_joint_positions(motors)
         positions = sweep.positions_centideg
@@ -410,9 +529,7 @@ class MotorControl(Node):
 
         msg = JointState()
         msg.header.stamp = self.get_clock().now().to_msg()
-        for motor_name in sorted(positions):
-            msg.joint_names.append(motor_name)
-            msg.positions.append(centideg_to_rad(positions[motor_name]))
+        fill_joint_state(msg, positions)
         self.joint_state_publisher.publish(msg)
         elapsed_ms = (time.monotonic() - started) * 1000.0
         log_perf_trace(
@@ -424,6 +541,10 @@ class MotorControl(Node):
                 sweep.ports_attempted,
             ),
         )
+
+    def _log_bus_writer_stats(self) -> None:
+        for writer in all_bus_writers():
+            log_perf_trace(self.get_logger(), format_bus_writer_summary(writer))
 
     def get_all_joint_positions(
         self,
@@ -441,8 +562,29 @@ class MotorControl(Node):
         response.results = []
         response.positions = []
 
+        if self._motor_power_is_off():
+            response.successful = False
+            response.message = "motor power is off (solid state relay off)"
+            for joint_name in target_names:
+                result = MotorResult()
+                result.motor_name = joint_name
+                result.successful = False
+                if joint_name not in name_to_motors:
+                    result.error_code = "unknown_joint"
+                    result.detail = f"unknown joint name '{joint_name}'"
+                else:
+                    result.error_code = "bus_unavailable"
+                    result.detail = response.message
+                response.results.append(result)
+                response.positions.append(0)
+            return response
+
         sweep = sweep_feetech_joint_positions(motors)
-        if sweep.ports_attempted == 0 and not sweep.positions_centideg:
+        if (
+            sweep.ports_attempted == 0
+            and not sweep.ports_unreachable
+            and not sweep.positions_centideg
+        ):
             response.successful = False
             response.message = "no sweepable actuator family on this robot (servo bricklets report no position feedback)"
             for joint_name in target_names:
@@ -460,8 +602,15 @@ class MotorControl(Node):
                 response.positions.append(0)
             return response
 
-        response.successful = True
-        response.message = ""
+        bus_error = ""
+        if not sweep.positions_centideg and sweep.ports_unreachable:
+            bus_error = (
+                "no Feetech bus reachable "
+                f"({sweep.ports_unreachable} port(s) did not answer; "
+                "adapter absent or motor power off)"
+            )
+        response.successful = not bus_error
+        response.message = bus_error
         for joint_name in target_names:
             result = MotorResult()
             result.motor_name = joint_name
@@ -475,6 +624,11 @@ class MotorControl(Node):
                 result.error_code = ""
                 result.detail = ""
                 response.positions.append(int(sweep.positions_centideg[joint_name]))
+            elif bus_error:
+                result.successful = False
+                result.error_code = "bus_unavailable"
+                result.detail = bus_error
+                response.positions.append(0)
             else:
                 result.successful = False
                 result.error_code = "position_unavailable"
@@ -511,7 +665,11 @@ def main(args=None):
 
     rclpy.init(args=args)
     motor_control = MotorControl()
-    rclpy.spin(motor_control)
+    try:
+        rclpy.spin(motor_control)
+    finally:
+        shutdown_all_bus_writers()
+        motor_control.destroy_node()
     rclpy.shutdown()
     ipcon.disconnect()
 

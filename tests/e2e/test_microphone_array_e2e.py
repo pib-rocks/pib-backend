@@ -1,10 +1,79 @@
+import base64
+import json
+import os
 import re
+import socket
+import time
+
 import pytest
 from playwright.sync_api import sync_playwright, Page, expect
 
-from robot_address import robot_base_url
+from robot_address import robot_base_url, robot_hostname
 
 BASE_URL = robot_base_url()
+ROBOT_HOST = robot_hostname()
+ROSBRIDGE_PORT = int(os.getenv("PIB_ROSBRIDGE_PORT", "9090"))
+
+
+def _get_doa_param(param_name: str, timeout: float = 5.0) -> str:
+    """Read a live ROS parameter from /doa_publisher over rosbridge."""
+    sock = socket.create_connection((ROBOT_HOST, ROSBRIDGE_PORT), timeout=timeout)
+    try:
+        key = base64.b64encode(os.urandom(16)).decode("ascii")
+        handshake = (
+            f"GET / HTTP/1.1\r\n"
+            f"Host: {ROBOT_HOST}:{ROSBRIDGE_PORT}\r\n"
+            f"Upgrade: websocket\r\n"
+            f"Connection: Upgrade\r\n"
+            f"Sec-WebSocket-Key: {key}\r\n"
+            f"Sec-WebSocket-Version: 13\r\n\r\n"
+        )
+        sock.sendall(handshake.encode("ascii"))
+        resp = b""
+        while b"\r\n\r\n" not in resp:
+            chunk = sock.recv(4096)
+            if not chunk:
+                raise RuntimeError("WebSocket handshake closed unexpectedly")
+            resp += chunk
+
+        payload = json.dumps(
+            {
+                "op": "call_service",
+                "id": f"get_{param_name}_{int(time.time() * 1000)}",
+                "service": "/rosapi/get_param",
+                "type": "rosapi_msgs/srv/GetParam",
+                "args": {"name": f"/doa_publisher:{param_name}", "default_value": ""},
+            }
+        ).encode("utf-8")
+
+        mask = os.urandom(4)
+        header = bytearray([0x81])
+        length = len(payload)
+        if length < 126:
+            header.append(0x80 | length)
+        else:
+            header.append(0x80 | 126)
+            header.extend(length.to_bytes(2, "big"))
+        header.extend(mask)
+        masked = bytearray(b ^ mask[i % 4] for i, b in enumerate(payload))
+        sock.sendall(header + masked)
+
+        first2 = sock.recv(2)
+        ln = first2[1] & 0x7F
+        if ln == 126:
+            ln = int.from_bytes(sock.recv(2), "big")
+        elif ln == 127:
+            ln = int.from_bytes(sock.recv(8), "big")
+        body = b""
+        while len(body) < ln:
+            body += sock.recv(ln - len(body))
+        msg = json.loads(body.decode("utf-8"))
+        assert msg.get("result") is True, f"get_param failed for {param_name}: {msg}"
+        values = msg.get("values") or {}
+        assert values.get("successful") is True, f"get_param unsuccessful: {msg}"
+        return str(values.get("value", "")).strip().strip('"')
+    finally:
+        sock.close()
 
 
 @pytest.fixture(scope="function")
@@ -121,9 +190,11 @@ class TestMicrophoneArrayE2E:
 
     def test_03_led_ring_controls_and_custom_tuning(self, page: Page):
         """
-        Tests LED Ring mode and brightness controls:
-        1. Selects LED mode 'DOA Trace'.
-        2. Adjusts LED Brightness slider to 90%.
+        Tests LED Ring mode and brightness controls end-to-end against /doa_publisher:
+        1. Selects a new LED mode via #led-mode and verifies /doa_publisher:led_mode updates.
+        2. Adjusts LED Brightness slider (#led-brightness, range 0..31) and verifies
+           /doa_publisher:led_brightness updates on the live ROS node.
+        3. Restores the previous LED mode and brightness.
         """
         page.locator("#system-nav").click()
         mic_tab = page.locator(
@@ -131,15 +202,71 @@ class TestMicrophoneArrayE2E:
         ).first
         mic_tab.click()
 
-        # Select LED mode dropdown
         led_mode_select = page.locator(
-            "select#led-mode, select[data-test='DDN_LED_Mode']"
+            "select#led-mode, select[data-test='SEL_LED_Mode']"
         ).first
-        expect(led_mode_select).to_be_visible(timeout=10000)
-        led_mode_select.select_option(label="DOA Trace")
+        expect(led_mode_select).to_be_visible(timeout=15000)
+        expect(led_mode_select).to_be_enabled(timeout=15000)
 
-        # Set LED brightness slider
         brightness_slider = page.locator(
             "input#led-brightness, input[data-test='SLD_LED_Brightness']"
         ).first
-        expect(brightness_slider).to_be_visible(timeout=10000)
+        expect(brightness_slider).to_be_visible(timeout=15000)
+        expect(brightness_slider).to_be_enabled(timeout=15000)
+
+        initial_mode = _get_doa_param("led_mode")
+        initial_brightness = int(_get_doa_param("led_brightness"))
+
+        target_mode_label = "Spin" if initial_mode == "trace" else "DOA Trace"
+        target_mode_val = "spin" if initial_mode == "trace" else "trace"
+        target_brightness = 28 if initial_brightness != 28 else 14
+
+        try:
+            led_mode_select.select_option(label=target_mode_label)
+            expect(
+                page.locator("[data-test='MSG_Microphone_Array_Success']")
+            ).to_be_visible(timeout=15000)
+            expect(led_mode_select).to_be_enabled(timeout=15000)
+            assert _get_doa_param("led_mode") == target_mode_val, (
+                f"Expected /doa_publisher:led_mode to be {target_mode_val!r}, "
+                f"got {_get_doa_param('led_mode')!r}"
+            )
+
+            expect(brightness_slider).to_be_enabled(timeout=15000)
+            brightness_slider.evaluate(f"""el => {{
+                    el.value = '{target_brightness}';
+                    el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                    el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                }}""")
+            deadline = time.monotonic() + 10.0
+            live_brightness = initial_brightness
+            while time.monotonic() < deadline:
+                live_brightness = int(_get_doa_param("led_brightness"))
+                if live_brightness == target_brightness:
+                    break
+                page.wait_for_timeout(250)
+            assert live_brightness == target_brightness, (
+                f"Expected /doa_publisher:led_brightness to become {target_brightness}, "
+                f"got {live_brightness}"
+            )
+        finally:
+            expect(led_mode_select).to_be_enabled(timeout=15000)
+            mode_label_map = {
+                "off": "Off",
+                "listen": "Listen",
+                "speak": "Speak",
+                "think": "Think",
+                "spin": "Spin",
+                "trace": "DOA Trace",
+                "mono": "Solid Color",
+            }
+            if initial_mode in mode_label_map:
+                led_mode_select.select_option(label=mode_label_map[initial_mode])
+                expect(led_mode_select).to_be_enabled(timeout=15000)
+            expect(brightness_slider).to_be_enabled(timeout=15000)
+            brightness_slider.evaluate(f"""el => {{
+                    el.value = '{initial_brightness}';
+                    el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                    el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                }}""")
+            page.wait_for_timeout(500)

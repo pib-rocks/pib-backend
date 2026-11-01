@@ -151,7 +151,7 @@ class ServoBrickletActuator:
             return self.check_connection()
         return self._connected
 
-    def set_position(self, position: int) -> bool:
+    def set_position(self, position: int, **_kwargs: Any) -> bool:
         """sets the position of the bricklet-pin and returns 'True' if this was successful"""
         if not self.is_connected():
             return False

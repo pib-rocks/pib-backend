@@ -8,6 +8,10 @@ Endpoints:
   POST /turn    → JSON {text, chat_id, personality_id?, toolsets?, max_turns?}
                   → {"reply": "..."}
                   With stream=true, returns newline-delimited delta/final JSON.
+  POST /profile  → JSON {personality_id, ...} → canonical profile provisioning
+  GET  /warm?personality_id=… → {"warm": bool, "state": "warm"|"cold"}
+  POST /warm     → JSON {personality_id} → build that personality's cached
+                  agent without a model turn (zero tokens)
 """
 
 from __future__ import annotations
@@ -48,6 +52,8 @@ from typing import Callable, Optional
 from urllib.error import URLError
 from urllib.parse import parse_qs, urlparse
 from urllib.request import Request, urlopen
+
+from public_api_client import turn_failure
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8088
@@ -1547,6 +1553,17 @@ def _run_turn_in_home(
                 exc,
             )
             continue
+        except SystemExit as exc:
+            # Hermes' bootstrap exits the process when its home is unusable
+            # (read-only install lock, broken install). Importing it inside a
+            # running daemon must not take the daemon's turn down silently.
+            logging.warning(
+                "run_agent import %s exited (%s); the CLI subprocess runs this turn",
+                module_name,
+                exc,
+            )
+            agent_module = None
+            break
     agent_cls = getattr(agent_module, "AIAgent", None)
     run_agent_main = getattr(agent_module, "main", None)
 
@@ -1843,11 +1860,30 @@ class HermesDaemonHandler(BaseHTTPRequestHandler):
                 return
             self._send_json(200, {"ok": True, **_profile_layout(personality_ids[0])})
             return
+        if parsed.path.rstrip("/") == "/warm":
+            personality_ids = parse_qs(parsed.query).get("personality_id", [])
+            if not personality_ids or not personality_ids[0]:
+                self._send_json(
+                    400, {"ok": False, "error": "personality_id is required"}
+                )
+                return
+            personality_id = personality_ids[0]
+            warm = personality_is_warm(personality_id)
+            self._send_json(
+                200,
+                {
+                    "ok": True,
+                    "personality_id": personality_id,
+                    "warm": warm,
+                    "state": WARM_STATE_WARM if warm else WARM_STATE_COLD,
+                },
+            )
+            return
         self._send_json(404, {"error": "not found"})
 
     def do_POST(self) -> None:  # noqa: N802 — http.server API
         path = urlparse(self.path).path.rstrip("/")
-        if path not in {"/turn", "/profile"}:
+        if path not in {"/turn", "/profile", "/warm"}:
             self._send_json(404, {"error": "not found"})
             return
 
@@ -1939,6 +1975,22 @@ class HermesDaemonHandler(BaseHTTPRequestHandler):
                 self._send_json(500, {"ok": False, "error": str(exc)})
                 return
             self._send_json(200, result)
+            return
+
+        if path == "/warm":
+            personality_id = data.get("personality_id")
+            if not isinstance(personality_id, str) or not personality_id:
+                self._send_json(
+                    400, {"ok": False, "error": "personality_id is required"}
+                )
+                return
+            try:
+                result = warm_personality(personality_id)
+            except Exception as exc:  # noqa: BLE001 - reported as a state
+                logging.exception("hermes-daemon /warm failed: %s", exc)
+                self._send_json(500, {"ok": False, "error": str(exc)})
+                return
+            self._send_json(200, {"ok": True, **result})
             return
 
         t0 = time.monotonic()
@@ -2034,12 +2086,31 @@ class HermesDaemonHandler(BaseHTTPRequestHandler):
 
         try:
             reply = runner(**runner_kwargs)
-        except Exception as exc:
-            logging.exception("hermes-daemon /turn failed: %s", exc)
+        except BaseException as exc:  # noqa: BLE001 - SystemExit must answer too
+            reason = turn_failure.classify_turn_failure(
+                detail=f"{type(exc).__name__}: {exc}", source="daemon"
+            )
+            detail = turn_failure.failure_detail(reason, f"{type(exc).__name__}: {exc}")
+            logging.error(
+                turn_failure.failure_log_line(
+                    reason, chat_id=chat_id, source="daemon", detail=detail
+                )
+            )
+            logging.debug("hermes-daemon /turn traceback", exc_info=True)
             if stream:
-                self._send_stream_chunk({"error": str(exc)})
+                self._send_stream_chunk(
+                    {"error": str(exc), "reason": reason, "detail": detail}
+                )
             else:
-                self._send_json(500, {"error": str(exc)})
+                self._send_json(
+                    500,
+                    {
+                        "ok": False,
+                        "error": str(exc),
+                        "reason": reason,
+                        "detail": detail,
+                    },
+                )
             return
 
         if not first_delta:
@@ -2108,8 +2179,86 @@ def resolve_prewarm_personality_id(
     return None
 
 
-def _construct_warm_agent_for_personality(personality_id: str) -> None:
-    """Build the cached in-process agent without running a user turn."""
+def personality_profile_dir(personality_id: str) -> str:
+    """Absolute Hermes profile directory that backs one personality."""
+    from pib_hermes_config import profile_dir_for
+
+    return str(Path(profile_dir_for(personality_id)))
+
+
+def personality_home_key(personality_id: str) -> str:
+    """The agent-cache home key of one personality, resolved like the turns do."""
+    return str(Path(personality_profile_dir(personality_id)).resolve())
+
+
+def personality_is_warm(personality_id: str) -> bool:
+    """True when this process already holds a constructed agent for the personality.
+
+    Warmth is the agent cache, not a guess: a turn with the same profile, model
+    and provider key reuses the entry that this check sees.
+    """
+    home = personality_home_key(personality_id)
+    with _agent_cache_lock:
+        return any(key[0] == home for key in _agent_cache)
+
+
+# The two states the status chip can show. ``warming`` is the caller's own
+# in-flight state and is never reported by the daemon.
+WARM_STATE_WARM = "warm"
+WARM_STATE_COLD = "cold"
+
+# Why a warm-up could not build an agent. Reported as ``reason`` so the caller
+# can tell "no key on this robot" from "the in-process agent is unavailable".
+WARM_REASON_NO_PROVIDER_KEY = "no_provider_key"
+WARM_REASON_IN_PROCESS_UNAVAILABLE = "in_process_unavailable"
+WARM_REASON_AGENT_UNAVAILABLE = "agent_unavailable"
+WARM_REASON_FAILED = "warm_failed"
+
+
+def warm_personality(personality_id: str) -> dict:
+    """Build the cached agent for one personality. Costs no tokens.
+
+    The cold start is a local cost - imports, tool registration, MCP discovery
+    and the session store - so the warm-up runs exactly those steps and never
+    calls a model. A ``hello`` turn would spend tokens and would still not
+    prepare the toolsets of this personality.
+    """
+    started = time.monotonic()
+    reason = None
+    try:
+        reason = _construct_warm_agent_for_personality(personality_id)
+    except Exception as exc:  # noqa: BLE001 - a failed warm-up is a state, not an error
+        logging.warning(
+            "hermes warm failed for personality=%s: %s",
+            personality_id,
+            exc,
+            exc_info=True,
+        )
+        reason = WARM_REASON_FAILED
+
+    warm = personality_is_warm(personality_id)
+    payload: dict = {
+        "personality_id": personality_id,
+        "state": WARM_STATE_WARM if warm else WARM_STATE_COLD,
+        "warm": warm,
+        "elapsedMs": round((time.monotonic() - started) * 1000.0, 2),
+    }
+    if not warm:
+        payload["reason"] = reason or WARM_REASON_FAILED
+    logging.info(
+        "[PERF_TRACE] HERMES_WARM personality=%s state=%s elapsed_ms=%.2f",
+        personality_id,
+        payload["state"],
+        payload["elapsedMs"],
+    )
+    return payload
+
+
+def _construct_warm_agent_for_personality(personality_id: str) -> Optional[str]:
+    """Build the cached in-process agent without running a user turn.
+
+    Returns a reason when no agent could be built, ``None`` on success.
+    """
     from pib_hermes_config import profile_dir_for
     from public_api_client.hermes_agent_client import (
         DEFAULT_DISABLED_TOOLSETS,
@@ -2127,7 +2276,7 @@ def _construct_warm_agent_for_personality(personality_id: str) -> None:
         except Exception as exc:
             if _missing_provider_key(exc):
                 logging.warning("hermes pre-warm skipped: %s", exc)
-                return
+                return WARM_REASON_NO_PROVIDER_KEY
             raise
         _repair_stale_profile_config_if_needed()
 
@@ -2137,7 +2286,7 @@ def _construct_warm_agent_for_personality(personality_id: str) -> None:
                 "(personality=%s)",
                 personality_id,
             )
-            return
+            return WARM_REASON_IN_PROCESS_UNAVAILABLE
 
         ensure_hermes_source_on_path()
         agent_module = None
@@ -2153,7 +2302,7 @@ def _construct_warm_agent_for_personality(personality_id: str) -> None:
                 "hermes pre-warm skipped: AIAgent import unavailable (personality=%s)",
                 personality_id,
             )
-            return
+            return WARM_REASON_AGENT_UNAVAILABLE
 
         if "pib" in (_toolset_list(DEFAULT_ENABLED_TOOLSETS) or []):
             _ensure_mcp_tools_discovered()
@@ -2165,6 +2314,7 @@ def _construct_warm_agent_for_personality(personality_id: str) -> None:
             agent_cls,
             provider_key or "",
         )
+    return None
 
 
 def prewarm_default_agent_at_start(

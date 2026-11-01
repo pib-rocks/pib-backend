@@ -71,7 +71,7 @@ services:
         # This default applies only when that argument and the environment are
         # both absent.
         APP_VERSION: ${APP_VERSION:-dev}
-        PIB_SDK_VERSION: ${PIB_SDK_VERSION:-0.8.0}
+        PIB_SDK_VERSION: ${PIB_SDK_VERSION:-0.9.0}
     command: "bash -c 'python3 -m db_location && flask --app run db upgrade && flask --app run seed_db && flask --app run reconcile_system_properties && exec gunicorn --workers 1 --threads 8 --bind 0.0.0.0:5000 --timeout 600 run:app'"
     networks:
       - pib-network
@@ -136,7 +136,7 @@ services:
     build:
       context: ./ros_packages
       dockerfile: ./rosbridge/Dockerfile
-    command: ros2 launch rosbridge_server rosbridge_websocket_launch.xml
+    command: ros2 launch rosbridge_server rosbridge_websocket_launch.xml default_call_service_timeout:=90.0
     networks:
       - pib-network
     restart: always
@@ -162,9 +162,11 @@ services:
       - pib-network
     environment:
       - PIB_CAMERA_STEREO=auto
+      - FLASK_API_BASE_URL=http://flask-app:5000
     restart: always
     depends_on:
       - rosbridge-ws
+      - flask-app
 
   ros-motors:
     image: ${PIB_IMAGE_PREFIX:-ghcr.io/pib-rocks/pib-backend}-ros-motors:${PIB_IMAGE_TAG:-develop}
@@ -318,7 +320,7 @@ services:
       context: .
       dockerfile: ./ros_packages/programs/Dockerfile
       args:
-        PIB_SDK_VERSION: ${PIB_SDK_VERSION:-0.8.0}
+        PIB_SDK_VERSION: ${PIB_SDK_VERSION:-0.9.0}
     command: >
       bash -lc "
         source /opt/ros/jazzy/setup.bash &&

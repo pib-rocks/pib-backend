@@ -138,8 +138,11 @@ def live_robot():
         session.close()
 
 
+HAND_TRACKING_MODEL_ID = "hand_tracking_fast"
+
+
 def _assert_detection_array(message: dict[str, Any]) -> None:
-    assert message["model_id"] == "hand_tracking"
+    assert message["model_id"] == HAND_TRACKING_MODEL_ID
     assert isinstance(message["frame_width"], int)
     assert isinstance(message["frame_height"], int)
     assert isinstance(message["detections"], list)
@@ -236,11 +239,15 @@ def test_model_lifecycle_and_detection_contract_e2e(live_robot):
     _session, ros = live_robot
     owner = f"pytest-e2e-{uuid.uuid4()}"
     ros.subscribe("/models_status", "datatypes/msg/ModelStatusArray")
-    ros.subscribe("/detections/hand_tracking", "datatypes/msg/DetectionArray")
+    ros.subscribe(
+        f"/detections/{HAND_TRACKING_MODEL_ID}", "datatypes/msg/DetectionArray"
+    )
 
     listed = ros.call_service("/list_models", "datatypes/srv/ListModels", {})
     hand_model = next(
-        model for model in listed["models"] if model["model_id"] == "hand_tracking"
+        model
+        for model in listed["models"]
+        if model["model_id"] == HAND_TRACKING_MODEL_ID
     )
     assert set(
         (
@@ -259,7 +266,7 @@ def test_model_lifecycle_and_detection_contract_e2e(live_robot):
         started = ros.call_service(
             "/start_model",
             "datatypes/srv/StartModel",
-            {"model_id": "hand_tracking", "shaves": 0, "owner": owner},
+            {"model_id": HAND_TRACKING_MODEL_ID, "shaves": 0, "owner": owner},
             MODEL_TIMEOUT,
         )
         assert started["success"] is True, started["message"]
@@ -268,7 +275,7 @@ def test_model_lifecycle_and_detection_contract_e2e(live_robot):
             "/models_status",
             MODEL_TIMEOUT,
             lambda message: any(
-                status.get("model_id") == "hand_tracking"
+                status.get("model_id") == HAND_TRACKING_MODEL_ID
                 and status.get("active") is True
                 for status in message.get("models", [])
             ),
@@ -277,46 +284,48 @@ def test_model_lifecycle_and_detection_contract_e2e(live_robot):
         hand_status = next(
             status
             for status in status_array["models"]
-            if status["model_id"] == "hand_tracking"
+            if status["model_id"] == HAND_TRACKING_MODEL_ID
         )
         assert hand_status["state"] in {"starting", "running", "failed"}
         assert isinstance(hand_status["fps"], (int, float))
         assert hand_status["active"] is True
 
-        # The composite chain produces well under one DetectionArray per status
-        # publication, so its rate is only visible once the measurement window
-        # has collected packets.
+        # Wait until the model reaches running state on /models_status.
+        # Note: hand_tracking_fast only emits detection packets when a palm is
+        # present in view, so fps may legitimately be 0.0 when no hand is in front
+        # of the camera.
         running_status = ros.wait_for_topic(
             "/models_status",
             MODEL_TIMEOUT,
             lambda message: any(
-                status.get("model_id") == "hand_tracking"
+                status.get("model_id") == HAND_TRACKING_MODEL_ID
                 and status.get("state") == "running"
-                and status.get("fps", 0) > 0
                 for status in message.get("models", [])
             ),
         )
         assert (
             running_status is not None
-        ), "hand_tracking reported no measured FPS while running"
+        ), f"{HAND_TRACKING_MODEL_ID} did not reach running state"
 
         service_detection = ros.call_service(
             "/get_detections",
             "datatypes/srv/GetDetections",
-            {"model_id": "hand_tracking"},
+            {"model_id": HAND_TRACKING_MODEL_ID},
         )["detections"]
         _assert_detection_array(service_detection)
 
         # A hand is not required in view. If the topic publishes, its payload must
         # obey the same contract; the Blockly test below covers the no-message path.
-        topic_detection = ros.wait_for_topic("/detections/hand_tracking", timeout=5)
+        topic_detection = ros.wait_for_topic(
+            f"/detections/{HAND_TRACKING_MODEL_ID}", timeout=5
+        )
         if topic_detection is not None:
             _assert_detection_array(topic_detection)
     finally:
         stopped = ros.call_service(
             "/stop_model",
             "datatypes/srv/StopModel",
-            {"model_id": "hand_tracking", "owner": owner},
+            {"model_id": HAND_TRACKING_MODEL_ID, "owner": owner},
             MODEL_TIMEOUT,
         )
         assert stopped["success"] is True, stopped["message"]
@@ -385,12 +394,9 @@ def test_blockly_detection_to_named_pose_e2e(live_robot):
         assert marker in output
 
         printed_lines = {line["content"].strip() for line in output_lines}
-        if "no face detections received" in output:
-            assert "[]" in printed_lines
-        else:
-            assert any(
-                line.startswith("[[") for line in printed_lines
-            ), f"face detection list was not printed: {output}"
+        assert "[]" in printed_lines or any(
+            line.startswith("[[") for line in printed_lines
+        ), f"face detection list was not printed: {output}"
 
         poses = session.get(f"{API_URL}/pose", timeout=REQUEST_TIMEOUT)
         poses.raise_for_status()

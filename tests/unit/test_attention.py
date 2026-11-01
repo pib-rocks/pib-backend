@@ -348,3 +348,11 @@ def test_an_empty_preface_leaves_the_turn_text_unchanged():
     plan = AttentionPlan()
     assert plan.for_hermes("Hi") == "Hi"
     assert plan.for_direct("Du bist pib.") == "Du bist pib."
+
+
+def test_centideg_to_rad_works_without_pib_motors_installed():
+    from voice_assistant.attention import _centideg_to_rad
+
+    assert _centideg_to_rad(0) == pytest.approx(0.0)
+    assert _centideg_to_rad(9000) == pytest.approx(math.pi / 2.0)
+    assert _centideg_to_rad(-9000) == pytest.approx(-math.pi / 2.0)

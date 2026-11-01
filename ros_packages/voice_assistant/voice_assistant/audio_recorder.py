@@ -81,6 +81,7 @@ class AudioRecorderNode(Node):
         self.chunk_size = None
         self.audio_format = None
         self.sample_rate = None
+        self._initialized = False
 
         # Prepare service client
         self.ros_mic_configuration_client = self.create_client(
@@ -89,8 +90,8 @@ class AudioRecorderNode(Node):
 
         # Request & handle response
         if not self.request_mic_configuration():
-            rclpy.shutdown()
             return
+        self._initialized = True
 
         self.token: Optional[str] = None
         self.stt_engine = FasterWhisperSTTEngine()
@@ -517,6 +518,10 @@ class AudioRecorderNode(Node):
 def main(args=None):
     rclpy.init()
     node = AudioRecorderNode()
+    if not getattr(node, "_initialized", False):
+        node.destroy_node()
+        rclpy.shutdown()
+        raise SystemExit(1)
     executor = MultiThreadedExecutor(4)
     executor.add_node(node)
     executor.spin()

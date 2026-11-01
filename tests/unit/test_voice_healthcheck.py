@@ -51,7 +51,7 @@ def test_healthcheck_exits_nonzero_only_for_real_failures():
 
 
 def test_healthcheck_ros_stack_requires_chat_nodes():
-    """Load-bearing: a running assistant without /chat must fail the node check."""
+    """Load-bearing: a running assistant without /chat or /audio_recorder must fail the node check."""
     stdout = "/voice_assistant\n/other\n"
 
     def fake_run(fragment, timeout):
@@ -65,6 +65,22 @@ def test_healthcheck_ros_stack_requires_chat_nodes():
     assert ok is False
     assert reason == voice_healthcheck.REASON_CHAT_NODE
     assert "/chat" in detail
+    assert "/audio_recorder" in detail
+
+
+def test_healthcheck_ros_stack_succeeds_when_all_three_nodes_present():
+    stdout = "/voice_assistant\n/chat\n/audio_recorder\n"
+
+    def fake_run(fragment, timeout):
+        if "node list" in fragment:
+            return 0, stdout, ""
+        return 0, "/send_chat_message\n", ""
+
+    with patch.object(voice_healthcheck, "_run_ros_command", side_effect=fake_run):
+        ok, reason, detail = voice_healthcheck.check_ros_stack()
+
+    assert ok is True
+    assert reason == ""
 
 
 def test_healthcheck_provider_key_surfaces_no_key_reason(monkeypatch):

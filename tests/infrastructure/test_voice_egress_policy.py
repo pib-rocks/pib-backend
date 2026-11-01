@@ -480,3 +480,177 @@ def test_voice_compose_drops_privilege_and_the_raw_hermes_mount(compose_dict):
     assert "PIB_CLOUD_BASE_URL=" in env
     assert "PIB_OLLAMA_BASE_URL=" in env
     assert compose_dict["services"]["ros-audio-io"]["privileged"] is True
+
+
+# --- PR-2131: the view root stays writable, only the secret covers are read-only
+
+
+def test_prepare_view_never_remounts_the_view_root_read_only():
+    """The agent writes its profile, session DB and install locks into the root."""
+    text = APPLY.read_text(encoding="utf-8")
+    assert 'remount,bind,ro "$VIEW"' not in text
+    cover_remount = text.index('mount -o remount,bind,ro "$target"')
+    make_private = text.index('mount --make-private "$target"')
+    # A cover is private before it is remounted: the view root is rshared, and a
+    # remount of a shared mount reaches its peers - that is how the whole home
+    # once turned read-only.
+    assert make_private < cover_remount
+    assert "ensure_view_root_writable" in text
+    assert "check-view" in text
+
+
+def _prepare_view_run(tmp_path, *, root_writable="return 0", extra_hooks=""):
+    """Run prepare_view with mount/cp helpers replaced; return the recorded calls."""
+    library = tmp_path / "library.sh"
+    library.write_text(APPLY.read_text().split('command="${1:-}"', 1)[0])
+    calls = tmp_path / "calls.txt"
+    calls.write_text("")
+    home = tmp_path / "home"
+    (home / "profiles").mkdir(parents=True)
+    # The view is a bind of the home; the cover target must exist to be covered.
+    view = tmp_path / "view"
+    view.mkdir()
+    (view / ".env").write_text("SECRET=1\n")
+    (home / ".env").write_text("SECRET=1\n")
+    blank = tmp_path / "blank.env"
+    blank.write_text("\n")
+    script = f"""
+set -euo pipefail
+source "$1"
+need_root() {{ :; }}
+py() {{ :; }}
+mountpoint() {{ return 0; }}
+mount_table() {{ printf '%s\\n' "$VIEW/.env"; }}
+mount() {{ printf 'mount %s\\n' "$*" >> "$CALLS"; }}
+cp() {{ :; }}
+chmod() {{ :; }}
+cmp() {{ return 0; }}
+mkdir() {{ command mkdir "$@"; }}
+python3() {{ printf '.env\\n'; }}
+view_root_is_writable() {{ {root_writable}; }}
+{extra_hooks}
+prepare_view
+"""
+    result = subprocess.run(
+        ["bash", "-c", script, "test", str(library)],
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "CALLS": str(calls),
+            "PIB_HERMES_HOME": str(home),
+            "PIB_VOICE_HERMES_VIEW": str(tmp_path / "view"),
+            "PIB_VOICE_EGRESS_COVERS": str(tmp_path / "covers"),
+            "PIB_VOICE_EGRESS_BLANK": str(blank),
+        },
+    )
+    return result, calls.read_text().splitlines()
+
+
+def test_prepare_view_makes_each_cover_private_before_remounting_it(tmp_path):
+    result, calls = _prepare_view_run(tmp_path)
+    assert result.returncode == 0, result.stderr
+    private = [line for line in calls if "--make-private" in line]
+    read_only = [line for line in calls if "remount,bind,ro" in line]
+    assert len(private) == 1 and len(read_only) == 1
+    assert calls.index(private[0]) < calls.index(read_only[0])
+    remounts = [line for line in calls if "remount" in line]
+    # Only a cover is ever remounted; the view root is never a remount target.
+    assert remounts and all(
+        line.rstrip().endswith("/view/.env") for line in remounts
+    ), remounts
+    assert "hermes_view_root=rw" in result.stdout
+    assert "prepare_view=ok" in result.stdout
+
+
+def test_prepare_view_heals_a_root_that_a_previous_run_left_read_only(tmp_path):
+    result, calls = _prepare_view_run(
+        tmp_path,
+        root_writable="[[ -f %s/healed ]] && return 0\n  return 1" % str(tmp_path),
+        extra_hooks=f"""
+mount() {{
+  case "$*" in
+    *remount,bind,rw*) : > "{tmp_path}/healed" ;;
+  esac
+  printf 'mount %s\\n' "$*" >> "$CALLS"
+}}
+""",
+    )
+    assert result.returncode == 0, result.stderr
+    assert any("remount,bind,rw" in line for line in calls)
+    assert "prepare_view=ok" in result.stdout
+
+
+def test_prepare_view_fails_loudly_when_the_root_stays_read_only(tmp_path):
+    result, _ = _prepare_view_run(tmp_path, root_writable="return 1")
+    assert result.returncode != 0
+    assert "policy_error=hermes view root is not writable" in result.stderr
+
+
+def test_check_view_reports_a_read_only_root_as_a_policy_error(tmp_path):
+    library = tmp_path / "library.sh"
+    library.write_text(APPLY.read_text().split('command="${1:-}"', 1)[0])
+    view = tmp_path / "view"
+    view.mkdir()
+    script = """
+set -euo pipefail
+source "$1"
+mountpoint() { return 0; }
+mount_table() { printf '%s\\n' "$VIEW/.env"; }
+view_root_is_writable() { return 1; }
+check_view
+"""
+    result = subprocess.run(
+        ["bash", "-c", script, "test", str(library)],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PIB_VOICE_HERMES_VIEW": str(view)},
+    )
+    assert result.returncode != 0
+    assert "hermes_view_root=ro" in result.stdout
+    assert "policy_error=" in result.stderr
+    assert "check_view=failed" in result.stdout
+
+
+def test_verify_script_checks_the_hermes_home_of_both_containers():
+    text = VERIFY.read_text(encoding="utf-8")
+    assert "hermes_view_root=" in text
+    assert "hermes_home_writable_" in text
+    assert 'probe_hermes_home "$CONTAINER" voice' in text
+    assert "sed 's/ros-voice-assistant/hermes-daemon/'" in text
+    assert "check-view" in text
+
+
+def test_verify_resolves_both_containers_by_service_label(tmp_path):
+    """A robot names its project pib-backend; a name-based lookup finds nothing."""
+    text = VERIFY.read_text(encoding="utf-8")
+    start = text.index("resolve_container() {")
+    end = text.index('INSPECT="$(docker inspect')
+    library = tmp_path / "library.sh"
+    library.write_text(
+        "set -u\nPY=/dev/null\nALLOW=/dev/null\n"
+        + text[start:end]
+        + '\nCONTAINER="$(resolve_container ros-voice-assistant)"\n'
+        + 'DAEMON="$(resolve_container hermes-daemon)"\n'
+        + 'printf "container=%s\\ndaemon=%s\\n" "$CONTAINER" "$DAEMON"\n'
+    )
+    stub = tmp_path / "bin"
+    stub.mkdir()
+    (stub / "docker").write_text(
+        "#!/bin/bash\n"
+        'case "$*" in\n'
+        "  *com.docker.compose.service=ros-voice-assistant*) echo pib-backend-ros-voice-assistant-1 ;;\n"
+        "  *com.docker.compose.service=hermes-daemon*) echo pib-backend-hermes-daemon-1 ;;\n"
+        "  *) exit 0 ;;\n"
+        "esac\n"
+    )
+    (stub / "docker").chmod(0o755)
+    result = subprocess.run(
+        ["bash", str(library)],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PATH": f"{stub}:{os.environ['PATH']}"},
+    )
+    assert result.returncode == 0, result.stderr
+    assert "container=pib-backend-ros-voice-assistant-1" in result.stdout
+    assert "daemon=pib-backend-hermes-daemon-1" in result.stdout

@@ -76,7 +76,7 @@ DEFAULT_DISABLED_TOOLSETS = os.environ.get(
     "PIB_HERMES_DISABLED_TOOLSETS",
     "terminal,code_execution,file,memory,session_search",
 )
-DEFAULT_MAX_TURNS = int(os.environ.get("PIB_HERMES_MAX_TURNS", "4"))
+DEFAULT_MAX_TURNS = int(os.environ.get("PIB_HERMES_MAX_TURNS", "10"))
 
 CONFIG_FILENAME = "config.yaml"
 ENV_FILENAME = ".env"
@@ -1131,6 +1131,8 @@ def delete_profile(personality_id: str, timeout: int = 60) -> bool:
         return False
 
 
+from public_api_client import turn_failure as _turn_failure
+
 FALLBACK_REPLY = (
     "Entschuldige, das hat gerade einen Moment zu lange gedauert. "
     "Frag mich bitte später noch einmal."
@@ -1138,6 +1140,10 @@ FALLBACK_REPLY = (
 
 # Local warm daemon (see hermes_daemon.py). Overridable for tests / custom binds.
 DEFAULT_DAEMON_TURN_URL = "http://127.0.0.1:8088/turn"
+
+# The daemon's own reason/detail for the last failed attempt, so the turn can
+# speak and record the cause instead of only the transport class (PR-2132).
+_last_daemon_failure_detail = ""
 
 # Persistent HTTP session for warm-daemon turns (connection pooling / keep-alive).
 _daemon_http_session = None
@@ -1301,6 +1307,12 @@ def is_warm_daemon_active(timeout: float = 0.15) -> bool:
         return False
 
 
+def _remember_daemon_failure(text: str) -> None:
+    """Keep the daemon's own words for the sentence and the metadata."""
+    global _last_daemon_failure_detail
+    _last_daemon_failure_detail = (text or "")[:500]
+
+
 def _try_daemon_turn(
     tool_sink: Optional[list],
     text: str,
@@ -1358,6 +1370,7 @@ def _try_daemon_turn(
             chat_id,
             exc,
         )
+        _remember_daemon_failure(str(exc))
         return None, type(exc).__name__
 
     ttft_ms = _perf_ms(http_start)
@@ -1374,15 +1387,23 @@ def _try_daemon_turn(
         except ValueError:
             payload = None
         error_text = payload.get("error") if isinstance(payload, dict) else None
+        reason = payload.get("reason") if isinstance(payload, dict) else None
+        detail = payload.get("detail") if isinstance(payload, dict) else None
+        _remember_daemon_failure(
+            " ".join(part for part in (error_text, detail) if part)
+        )
         if _provider_key_was_refused(payload):
             from voice_assistant.direct_tool_loop import DirectToolLoopError
 
             raise DirectToolLoopError(str(error_text))
         logging.warning(
-            "hermes daemon returned %s (chat=%s); falling back to subprocess",
+            "hermes daemon returned %s (chat=%s) reason=%s; falling back to subprocess",
             response.status_code,
             chat_id,
+            reason or "-",
         )
+        if isinstance(reason, str) and reason:
+            return None, reason
         return None, f"http_{response.status_code}"
 
     try:
@@ -1541,22 +1562,39 @@ def run_turn_subprocess(
         )
     except subprocess.TimeoutExpired:
         logging.warning("hermes turn timed out after %ss (chat=%s)", timeout, chat_id)
-        return FALLBACK_REPLY
+        return _turn_failure.failure_sentence(_turn_failure.REASON_TURN_TIMEOUT)
     except Exception as exc:
-        logging.error("hermes turn failed (chat=%s): %s", chat_id, exc)
-        return FALLBACK_REPLY
+        logging.error(
+            _turn_failure.failure_log_line(
+                "subprocess_error", chat_id=chat_id, source="subprocess", detail=exc
+            )
+        )
+        return _turn_failure.failure_sentence("subprocess_error", exc)
 
     if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "")[:500]
         logging.error(
-            "hermes exited %s (chat=%s): %s",
-            result.returncode,
-            chat_id,
-            (result.stderr or "")[:500],
+            _turn_failure.failure_log_line(
+                f"exit_{result.returncode}",
+                chat_id=chat_id,
+                source="subprocess",
+                detail=detail,
+            )
         )
-        return FALLBACK_REPLY
+        return _turn_failure.failure_sentence(f"exit_{result.returncode}", detail)
 
     reply = (result.stdout or "").strip()
-    return reply or FALLBACK_REPLY
+    if not reply:
+        logging.error(
+            _turn_failure.failure_log_line(
+                _turn_failure.REASON_STREAM_INCOMPLETE,
+                chat_id=chat_id,
+                source="subprocess",
+                detail="the CLI produced no answer text",
+            )
+        )
+        return _turn_failure.failure_sentence(_turn_failure.REASON_STREAM_INCOMPLETE)
+    return reply
 
 
 def run_turn(
@@ -1586,6 +1624,9 @@ def run_turn(
 
     # Try the warm daemon first — no filesystem binary/profile checks on this path.
     fallback_reason = "unreachable"
+    daemon_failure_detail = ""
+    global _last_daemon_failure_detail
+    _last_daemon_failure_detail = ""
     for attempt in range(1, _DAEMON_TURN_ATTEMPTS + 1):
         daemon_reply, failure_reason = _try_daemon_turn(
             tool_sink,
@@ -1606,6 +1647,7 @@ def run_turn(
             )
             return daemon_reply
         fallback_reason = failure_reason or "unreachable"
+        daemon_failure_detail = _last_daemon_failure_detail
         logging.info(
             "[PERF_TRACE] DAEMON_ATTEMPT chat=%s attempt=%d reason=%s elapsed_ms=%.2f",
             chat_id,
@@ -1630,16 +1672,20 @@ def run_turn(
             chat_id,
             _perf_ms(t0),
         )
-        return FALLBACK_REPLY
+        return _turn_failure.failure_sentence(_turn_failure.REASON_AGENT_MISSING)
 
+    classified_reason = _turn_failure.classify_turn_failure(
+        reason=fallback_reason, detail=daemon_failure_detail, source="daemon"
+    )
     logging.warning(
-        "hermes turn falling back to oneshot subprocess (chat=%s): %s",
+        "hermes turn falling back to oneshot subprocess (chat=%s): %s (%s)",
         chat_id,
         fallback_reason,
+        classified_reason,
     )
     if on_subprocess_fallback is not None:
         try:
-            on_subprocess_fallback(fallback_reason)
+            on_subprocess_fallback(classified_reason)
         except Exception as exc:
             logging.debug(
                 "subprocess fallback notifier failed (chat=%s): %s", chat_id, exc

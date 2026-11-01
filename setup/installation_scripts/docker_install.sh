@@ -208,6 +208,20 @@ function setup_hermes_view_service() {
         print ERROR "failed to start pib-voice-hermes-view.service: ${start_output}"
         return 1
     fi
+    # Prove the invariants the containers rely on before a single turn runs:
+    # the view root must be writable (profile config, session database, install
+    # locks) and only the secret covers may be read-only. A read-only root
+    # silently breaks every model turn (PR-2131).
+    local view_output view_script="$BACKEND_DIR/setup/voice_egress/apply.sh"
+    if [[ -f "$view_script" ]]; then
+        if ! view_output=$(bash "$view_script" check-view 2>&1); then
+            print ERROR "filtered Hermes view is not usable: ${view_output//$'\n'/ }"
+            return 1
+        fi
+        print INFO "Hermes view: ${view_output//$'\n'/ }"
+    else
+        print WARN "voice egress apply.sh is missing; the Hermes view was not verified"
+    fi
     print SUCCESS "Filtered Hermes view service installed and started"
 }
 

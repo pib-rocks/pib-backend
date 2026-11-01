@@ -23,7 +23,22 @@ mark_fail() {
   FAIL=1
 }
 
-CONTAINER="$(python3 "$PY" --allowlist "$ALLOW" container-name 2>/dev/null || true)"
+resolve_container() {
+  # $1 compose service name. The compose project name differs per install
+  # (pib-backend-* on a robot, multirepo-* on the test device), so the service
+  # label is the only stable handle; the allowlist name is the fallback for an
+  # install that carries no labels.
+  local service="$1" resolved
+  resolved="$(docker ps -a --filter "label=com.docker.compose.service=$service" \
+    --format '{{.Names}}' 2>/dev/null | head -1)"
+  if [[ -n "$resolved" ]]; then
+    printf '%s\n' "$resolved"
+    return 0
+  fi
+  python3 "$PY" --allowlist "$ALLOW" container-name 2>/dev/null || true
+}
+
+CONTAINER="$(resolve_container ros-voice-assistant)"
 if [[ -z "$CONTAINER" ]]; then
   note "container_name="
   note "verify=failed"
@@ -46,6 +61,44 @@ if [[ "$(awk '{print $1}' <<<"$INSPECT")" != "running" ]]; then
 fi
 if [[ "$(awk '{print $3}' <<<"$INSPECT")" != "false" ]]; then
   mark_fail
+fi
+
+# The Hermes home is what the agent writes into: profile config, the Hermes
+# session database and the install locks. A read-only view root stops every
+# model turn before the first token (PR-2131), and only the secret covers may
+# be read-only.
+VIEW_CHECK="$(bash "$ROOT/apply.sh" check-view 2>&1 || true)"
+note "hermes_view_root=$(awk -F= '/^hermes_view_root=/{print $2}' <<<"$VIEW_CHECK")"
+note "hermes_view_covers=$(awk -F= '/^hermes_view_covers=/{print $2}' <<<"$VIEW_CHECK")"
+if ! grep -qx 'check_view=ok' <<<"$VIEW_CHECK"; then
+  note "hermes_view_check=failed"
+  mark_fail
+else
+  note "hermes_view_check=ok"
+fi
+
+probe_hermes_home() {
+  # $1 container, $2 label. Proves the agent can write where it must.
+  local outcome
+  outcome="$(docker exec "$1" sh -c '
+p=/home/pib/.hermes/.pib-verify-probe
+if ( : >"$p" ) 2>/dev/null; then rm -f "$p"; echo writable; else echo read-only; fi
+' 2>/dev/null || echo unknown)"
+  note "hermes_home_writable_$2=$outcome"
+  if [[ "$outcome" != "writable" ]]; then
+    mark_fail
+  fi
+}
+probe_hermes_home "$CONTAINER" voice
+DAEMON_CONTAINER="$(resolve_container hermes-daemon)"
+if [[ -z "$DAEMON_CONTAINER" ]]; then
+  DAEMON_CONTAINER="$(sed 's/ros-voice-assistant/hermes-daemon/' <<<"$CONTAINER")"
+fi
+if docker inspect "$DAEMON_CONTAINER" >/dev/null 2>&1; then
+  note "hermes_daemon_container=$DAEMON_CONTAINER"
+  probe_hermes_home "$DAEMON_CONTAINER" daemon
+else
+  note "hermes_daemon_container=absent"
 fi
 
 note "dns_enforcement=connection-address-not-resolver"

@@ -20,6 +20,38 @@ REQUEST_TIMEOUT_S = 10
 BACKEND_SETTLE_TIMEOUT_S = int(os.getenv("PIB_E2E_BACKEND_SETTLE_TIMEOUT_S", "30"))
 
 SERVO_DEVICE_TYPE = "Servo Bricklet"
+RGB_BUTTON_DEVICE_TYPE = "RGB LED Button Bricklet"
+
+
+def _select_swap_device_type(original_config, all_connected):
+    """Return (device_type, detected_devices, configured_slots) for a Bricklet type
+    that has at least 2 detected devices and 2 configured slots on this robot.
+
+    Supports both Servo-Bricklet robots (pib4 / older pib5) and Waveshare-serial
+    robots (pib5advanced) that have 3 RGB LED Button Bricklets.
+    """
+    for candidate_type in (SERVO_DEVICE_TYPE, RGB_BUTTON_DEVICE_TYPE):
+        detected = sorted(
+            (
+                device
+                for device in all_connected
+                if candidate_type.lower() in (device.get("name") or "").lower()
+            ),
+            key=lambda device: device.get("port") or "",
+        )
+        configured = [
+            (controller["number"], controller.get("address") or "")
+            for controller in _controllers(original_config)
+            if candidate_type in (controller.get("deviceType") or "")
+        ]
+        configured = [(number, address) for number, address in configured if address]
+        if len(detected) >= 2 and len(configured) >= 2:
+            return candidate_type, detected, configured
+    raise AssertionError(
+        f"Need at least two detected and configured Bricklets of the same type "
+        f"({SERVO_DEVICE_TYPE!r} or {RGB_BUTTON_DEVICE_TYPE!r}); "
+        f"/bricklet/connected={all_connected}, config={_controllers(original_config)}"
+    )
 
 
 def _get_chromium_launch_kwargs():
@@ -173,29 +205,10 @@ class TestHardwareIDsE2E:
         # block can put it back.
         original_config = _hardware_config()
 
-        # Detected Servo Bricklets fill the slots; two configured ones get swapped below.
-        detected_servos = sorted(
-            (
-                device
-                for device in _connected_devices()
-                if SERVO_DEVICE_TYPE.lower() in (device.get("name") or "").lower()
-            ),
-            key=lambda device: device.get("port") or "",
+        # Detected Bricklets fill the slots; two configured ones of the same type get swapped below.
+        _, detected_servos, configured = _select_swap_device_type(
+            original_config, _connected_devices()
         )
-        assert len(detected_servos) >= 2, (
-            "Need at least two detected Servo Bricklets for the swap step, "
-            f"/bricklet/connected reported: {detected_servos}"
-        )
-
-        configured = [
-            (controller["number"], controller.get("address") or "")
-            for controller in _controllers(original_config)
-            if SERVO_DEVICE_TYPE in (controller.get("deviceType") or "")
-        ]
-        configured = [(number, address) for number, address in configured if address]
-        assert (
-            len(configured) >= 2
-        ), f"Need two configured Servo Bricklet controllers to swap, config has: {configured}"
         slot_a, uid_a = configured[0]
         slot_b, uid_b = configured[1]
 

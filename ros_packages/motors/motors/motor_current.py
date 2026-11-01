@@ -2,7 +2,10 @@ import rclpy
 from rclpy.node import Node
 from diagnostic_msgs.msg import DiagnosticStatus, KeyValue
 from pib_api_client import motor_client
+from datatypes.msg import SolidStateRelayState
+from pib_motors.bricklet import solid_state_relay_bricklet
 from pib_motors.motor import motors, Motor
+from pib_motors.port_probe import port_answers, port_key
 from tinkerforge.bricklet_servo_v2 import BrickletServoV2
 
 if not hasattr(BrickletServoV2, "CALLBACK_SERVO_CURRENT"):
@@ -22,6 +25,34 @@ class MotorCurrent(Node):
         self.setup_callbacks()
         self.timer = self.create_timer(1.0, self.publish_motor_current)
 
+        #: Motor power state: None until a source told us, then True/False.
+        self._relay_on: bool | None = None
+        self._skips_since_log = 0
+        self.create_subscription(
+            SolidStateRelayState,
+            "solid_state_relay_state",
+            self.on_ssr_state_change,
+            10,
+        )
+        self._read_relay_state()
+
+    def on_ssr_state_change(self, msg: SolidStateRelayState) -> None:
+        self._relay_on = bool(msg.turned_on)
+
+    def _read_relay_state(self) -> None:
+        """Ask the relay brick once, so the first ticks are not blind."""
+        if solid_state_relay_bricklet is None:
+            return
+        try:
+            self._relay_on = bool(solid_state_relay_bricklet.get_state())
+        except Exception as error:  # noqa: BLE001 - unknown is a valid state
+            self.get_logger().warn(f"Could not read the relay state: {error}")
+            self._relay_on = None
+
+    def _motor_power_is_off(self) -> bool:
+        """True only when the relay definitely reports off (unknown counts as on)."""
+        return self._relay_on is False
+
         self.get_logger().info("Now Running MOTOR CURRENT")
 
     def setup_callbacks(self, motor_list=None):
@@ -37,7 +68,9 @@ class MotorCurrent(Node):
                 # carry no bricklet and are skipped here (a family-agnostic current
                 # monitoring is a later step)
                 bricklet = getattr(actuator, "bricklet", None)
-                if actuator.is_connected() and bricklet is not None:
+                # bricklet first: the short circuit used to probe the serial bus
+                # for actuators that cannot ever have a Tinkerforge bricklet.
+                if bricklet is not None and actuator.is_connected():
                     key = (id(bricklet), actuator.pin)
                     if key not in self.pin_to_motors:
                         self.pin_to_motors[key] = []
@@ -76,7 +109,18 @@ class MotorCurrent(Node):
         return callback
 
     def publish_motor_current(self):
+        if self._motor_power_is_off():
+            # No power on the bus: each read would burn its serial timeout.
+            self._skips_since_log += 1
+            if self._skips_since_log == 1 or self._skips_since_log % 60 == 0:
+                self.get_logger().info(
+                    "motor power is off (solid state relay off): "
+                    f"skipping current polling, {self._skips_since_log} ticks so far"
+                )
+            return
+        self._skips_since_log = 0
         telemetry_batch: list[dict] = []
+        probed_ports: dict[str, bool] = {}
         for motor in motors:
             current = motor.get_current()
             if current != Motor.NO_CURRENT:
@@ -85,7 +129,12 @@ class MotorCurrent(Node):
             for actuator in getattr(motor, "actuators", None) or []:
                 if getattr(actuator, "bricklet", None) is not None:
                     continue
-                if not actuator.is_connected():
+                # One probe per port per tick: the adapters are the bus, and a
+                # dead one costs the serial timeout (50.4 ms measured) each time.
+                key = port_key(actuator)
+                if key not in probed_ports:
+                    probed_ports[key] = port_answers(actuator)
+                if not probed_ports[key]:
                     continue
                 uid = getattr(actuator, "uid", None)
                 get_voltage = getattr(actuator, "get_voltage", None)

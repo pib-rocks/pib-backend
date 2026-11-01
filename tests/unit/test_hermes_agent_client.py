@@ -1,3 +1,5 @@
+from public_api_client import turn_failure
+from public_api_client.turn_failure import failure_sentence
 from public_api_client.hermes_agent_client import (
     DEFAULT_REASONING_EFFORT,
     FALLBACK_REPLY,
@@ -286,7 +288,9 @@ def test_run_turn_without_installed_binary_returns_fallback(tmp_path, monkeypatc
     with patch("public_api_client.hermes_agent_client.subprocess.run") as run:
         out = run_turn("hi", "c1")
 
-    assert out == FALLBACK_REPLY
+    # A missing binary is not a timeout: the sentence names the missing agent.
+    assert out == failure_sentence(turn_failure.REASON_AGENT_MISSING)
+    assert "zu lange gedauert" not in out
     run.assert_not_called()  # never attempt a subprocess we know cannot start
 
 
@@ -298,8 +302,9 @@ def test_run_turn_treats_a_non_executable_binary_as_missing(tmp_path, monkeypatc
     monkeypatch.setenv("PIB_HERMES_DAEMON_URL", "http://127.0.0.1:1")
 
     with patch("public_api_client.hermes_agent_client.subprocess.run") as run:
-        assert run_turn("hi", "c1") == FALLBACK_REPLY
+        reply = run_turn("hi", "c1")
 
+    assert reply == failure_sentence(turn_failure.REASON_AGENT_MISSING)
     run.assert_not_called()
 
 
@@ -388,7 +393,9 @@ def test_run_turn_notifies_voice_before_subprocess(
                         on_subprocess_fallback=notices.append,
                     )
 
-    assert notices == ["ConnectionError"] * 1
+    # The trace carries the cause, not the transport class (PR-2132): the
+    # status chip and the stored metadata are read by people.
+    assert notices == [turn_failure.REASON_AGENT_UNREACHABLE]
     assert any(
         "falling back to oneshot subprocess (chat=c1): ConnectionError" in r.message
         for r in caplog.records
@@ -465,7 +472,7 @@ def test_default_timeout_reads_pib_hermes_timeout_env(monkeypatch):
         importlib.reload(hac)
 
 
-def test_voice_defaults_are_configurable_and_budget_defaults_to_four(monkeypatch):
+def test_voice_defaults_are_configurable_and_budget_defaults_to_ten(monkeypatch):
     import importlib
     import public_api_client.hermes_agent_client as hac
 
@@ -487,7 +494,7 @@ def test_voice_defaults_are_configurable_and_budget_defaults_to_four(monkeypatch
         monkeypatch.delenv("FLASK_API_BASE_URL", raising=False)
         importlib.reload(hac)
 
-    assert hac.DEFAULT_MAX_TURNS == 4
+    assert hac.DEFAULT_MAX_TURNS == 10
     # Bare `pib`, not `mcp-pib`: only the bare server name is registered before
     # MCP discovery, and the alias makes Hermes warn on stdout.
     assert set(hac.DEFAULT_ENABLED_TOOLSETS.split(",")) >= {"pib", "vision"}
@@ -932,3 +939,95 @@ def test_profile_settings_guard_a_lan_cloud_url_at_read_time(tmp_path, monkeypat
     _model, _provider, base_url, _env = client.profile_hermes_settings(str(tmp_path))
 
     assert base_url == "https://api.pib.rocks/v1"
+
+
+# --- PR-2132: a failed turn names its cause instead of claiming a timeout
+
+
+def test_run_turn_subprocess_speaks_the_read_only_home_cause(monkeypatch):
+    from public_api_client import hermes_agent_client as hac
+
+    monkeypatch.setattr(hac, "hermes_binary_available", lambda: True)
+    monkeypatch.setattr(hac, "profile_hermes_settings", lambda: (None, None, None, ()))
+    monkeypatch.setattr(hac, "_child_environment", lambda *a, **kw: {})
+
+    class Completed:
+        returncode = 1
+        stdout = ""
+        stderr = (
+            "hermes: [Errno 30] Read-only file system: "
+            "'/home/pib/.hermes/installs/x/.install.lock'; run `hermes pm repair`"
+        )
+
+    monkeypatch.setattr(hac.subprocess, "run", lambda *a, **kw: Completed())
+
+    reply = hac.run_turn_subprocess("Hi", "c-1")
+
+    assert "schreibgeschützt" in reply
+    assert "zu lange gedauert" not in reply
+
+
+def test_run_turn_subprocess_keeps_the_timeout_sentence_for_a_timeout(monkeypatch):
+    from public_api_client import hermes_agent_client as hac
+
+    monkeypatch.setattr(hac, "hermes_binary_available", lambda: True)
+    monkeypatch.setattr(hac, "profile_hermes_settings", lambda: (None, None, None, ()))
+    monkeypatch.setattr(hac, "_child_environment", lambda *a, **kw: {})
+
+    def timeout(*args, **kwargs):
+        raise hac.subprocess.TimeoutExpired(cmd="hermes", timeout=1)
+
+    monkeypatch.setattr(hac.subprocess, "run", timeout)
+
+    assert "zu lange gedauert" in hac.run_turn_subprocess("Hi", "c-1")
+
+
+def test_run_turn_subprocess_speaks_an_empty_answer_as_a_broken_stream(monkeypatch):
+    from public_api_client import hermes_agent_client as hac
+
+    monkeypatch.setattr(hac, "hermes_binary_available", lambda: True)
+    monkeypatch.setattr(hac, "profile_hermes_settings", lambda: (None, None, None, ()))
+    monkeypatch.setattr(hac, "_child_environment", lambda *a, **kw: {})
+
+    class Completed:
+        returncode = 0
+        stdout = "   "
+        stderr = ""
+
+    monkeypatch.setattr(hac.subprocess, "run", lambda *a, **kw: Completed())
+
+    reply = hac.run_turn_subprocess("Hi", "c-1")
+
+    assert "abgebrochen" in reply
+
+
+def test_run_turn_speaks_the_daemon_reason_when_the_agent_cannot_start(monkeypatch):
+    from public_api_client import hermes_agent_client as hac
+
+    monkeypatch.setattr(hac, "provider_key_for_turn", lambda: "key")
+    monkeypatch.setattr(hac, "hermes_binary_available", lambda: True)
+    monkeypatch.setattr(hac, "_DAEMON_TURN_ATTEMPTS", 1)
+    monkeypatch.setattr(
+        hac,
+        "_try_daemon_turn",
+        lambda *a, **kw: (None, "hermes_home_read_only"),
+    )
+    monkeypatch.setattr(
+        hac, "seed_flask_conversation_for_chat", lambda *a, **kw: None, raising=False
+    )
+    seen = []
+    monkeypatch.setattr(
+        hac,
+        "run_turn_subprocess",
+        lambda *a, **kw: "subprocess sentence",
+    )
+
+    reply = hac.run_turn(
+        "Hi",
+        "c-1",
+        on_subprocess_fallback=seen.append,
+    )
+
+    assert reply == "subprocess sentence"
+    # The trace carries the cause, not the transport class.
+    assert seen == ["hermes_home_read_only"]

@@ -761,7 +761,7 @@ def test_client_uses_session_pooling_for_daemon(daemon_server, monkeypatch):
         == "terminal,code_execution,file,memory,session_search"
     )
     assert replies["last"]["enabled_toolsets"] == "pib,vision"
-    assert replies["last"]["max_turns"] == 4
+    assert replies["last"]["max_turns"] == 10
 
 
 def test_run_turn_in_process_constructs_and_reuses_one_agent_per_chat(
@@ -1829,7 +1829,7 @@ def test_run_turn_in_process_reads_reply_from_run_agent_stdout(tmp_path, monkeyp
         "model": hd.IN_PROCESS_MODEL,
         "enabled_toolsets": "pib,vision",
         "disabled_toolsets": "terminal,code_execution,file,memory,session_search",
-        "max_turns": 4,
+        "max_turns": 10,
     }
     subprocess_runner.assert_not_called()
 
@@ -2470,3 +2470,177 @@ def test_prewarm_skips_direct_only_personality_list(monkeypatch, caplog):
     hd.prewarm_default_agent_at_start(fetch_personalities=personalities)
     construct.assert_not_called()
     assert any("no smart personality" in rec.getMessage() for rec in caplog.records)
+
+
+# --- PR-2130: cold/warm state of one personality's warm agent
+
+
+def test_personality_is_warm_reads_the_agent_cache(monkeypatch, tmp_path):
+    """Warmth is the cached agent of that home, not a timestamp or a guess."""
+    monkeypatch.setattr(hd, "personality_home_key", lambda pid: str(tmp_path))
+    monkeypatch.setattr(hd, "_agent_cache", {})
+
+    assert hd.personality_is_warm("p-1") is False
+
+    with hd._agent_cache_lock:
+        hd._agent_cache[(str(tmp_path), ("settings",), "key")] = object()
+
+    assert hd.personality_is_warm("p-1") is True
+
+
+def test_warm_personality_reports_cold_when_the_constructor_skips(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(hd, "personality_home_key", lambda pid: str(tmp_path))
+    monkeypatch.setattr(hd, "_agent_cache", {})
+    monkeypatch.setattr(
+        hd, "_construct_warm_agent_for_personality", lambda pid: "no_provider_key"
+    )
+
+    result = hd.warm_personality("p-1")
+
+    assert result["state"] == "cold"
+    assert result["warm"] is False
+    assert result["reason"] == "no_provider_key"
+    assert result["personality_id"] == "p-1"
+    assert result["elapsedMs"] >= 0.0
+
+
+def test_warm_personality_reports_warm_after_the_agent_is_built(monkeypatch, tmp_path):
+    home = str(tmp_path)
+    monkeypatch.setattr(hd, "personality_home_key", lambda pid: home)
+    monkeypatch.setattr(hd, "_agent_cache", {})
+
+    def construct(pid):
+        with hd._agent_cache_lock:
+            hd._agent_cache[(home, ("settings",), "key")] = object()
+        return None
+
+    monkeypatch.setattr(hd, "_construct_warm_agent_for_personality", construct)
+
+    result = hd.warm_personality("p-1")
+
+    assert result["state"] == "warm"
+    assert result["warm"] is True
+    assert "reason" not in result
+
+
+def test_warm_endpoints_answer_state_and_never_run_a_turn(
+    daemon_server, monkeypatch, tmp_path
+):
+    """GET reads the cache, POST warms it; neither path reaches the model."""
+    server, replies = daemon_server
+    host, port = server.server_address
+    monkeypatch.setattr(hd, "personality_home_key", lambda pid: str(tmp_path))
+    monkeypatch.setattr(hd, "_agent_cache", {})
+
+    with urlopen(f"http://{host}:{port}/warm?personality_id=p-1", timeout=2) as resp:
+        cold = json.loads(resp.read().decode())
+    assert cold["warm"] is False
+    assert cold["state"] == "cold"
+
+    home = str(tmp_path)
+
+    def construct(pid):
+        with hd._agent_cache_lock:
+            hd._agent_cache[(home, ("settings",), "key")] = object()
+        return None
+
+    monkeypatch.setattr(hd, "_construct_warm_agent_for_personality", construct)
+    request = Request(
+        f"http://{host}:{port}/warm",
+        data=json.dumps({"personality_id": "p-1"}).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urlopen(request, timeout=2) as resp:
+        warm = json.loads(resp.read().decode())
+    assert warm["ok"] is True
+    assert warm["warm"] is True
+    assert warm["state"] == "warm"
+    assert "last" not in replies  # no model turn was run
+
+
+def test_warm_endpoints_require_a_personality_id(daemon_server):
+    server, _ = daemon_server
+    host, port = server.server_address
+
+    with pytest.raises(Exception) as get_error:
+        urlopen(f"http://{host}:{port}/warm", timeout=2)
+    assert getattr(get_error.value, "code", None) == 400
+
+    request = Request(
+        f"http://{host}:{port}/warm",
+        data=b"{}",
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with pytest.raises(Exception) as post_error:
+        urlopen(request, timeout=2)
+    assert getattr(post_error.value, "code", None) == 400
+
+
+# --- PR-2132: a failed turn answers with its cause instead of closing the socket
+
+
+def test_a_turn_that_raises_systemexit_answers_with_its_cause(monkeypatch):
+    """Hermes' bootstrap exits on a read-only home; that must not drop the request."""
+    replies = {"value": "unused"}
+
+    def runner(**kwargs):
+        raise SystemExit(
+            "hermes: [Errno 30] Read-only file system: "
+            "'/home/pib/.hermes/installs/x/.install.lock'"
+        )
+
+    server = hd.create_server(host="127.0.0.1", port=0, turn_runner=runner)
+    host, port = server.server_address
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        body = json.dumps({"text": "Hi", "chat_id": "c-1"}).encode()
+        request = Request(
+            f"http://{host}:{port}/turn",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with pytest.raises(Exception) as error:
+            urlopen(request, timeout=5)
+        assert getattr(error.value, "code", None) == 500
+        payload = json.loads(error.value.read().decode())
+        assert payload["ok"] is False
+        assert payload["reason"] == "hermes_home_read_only"
+        assert "Read-only file system" in payload["detail"]
+        assert replies  # the turn runner was the only thing that ran
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2.0)
+
+
+def test_a_turn_that_raises_an_error_answers_with_a_generic_reason():
+    def runner(**kwargs):
+        raise RuntimeError("something else broke")
+
+    server = hd.create_server(host="127.0.0.1", port=0, turn_runner=runner)
+    host, port = server.server_address
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        body = json.dumps({"text": "Hi", "chat_id": "c-1"}).encode()
+        request = Request(
+            f"http://{host}:{port}/turn",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with pytest.raises(Exception) as error:
+            urlopen(request, timeout=5)
+        payload = json.loads(error.value.read().decode())
+        assert payload["reason"] == "turn_failed"
+        assert "something else broke" in payload["detail"]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2.0)
