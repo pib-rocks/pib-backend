@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import time
 
 from pib_hermes_config.attention import (
@@ -104,6 +105,11 @@ def _noop(_motor, _position) -> None:
     return None
 
 
+def _centideg_to_rad(value: int | float) -> float:
+    """Convert centidegrees (100ths of a degree) to radians for JointTrajectory."""
+    return math.radians(float(value) / 100.0)
+
+
 def _ros_command(node):
     from datatypes.srv import ApplyJointTrajectory
 
@@ -113,14 +119,13 @@ def _ros_command(node):
         ready = getattr(client, "service_is_ready", None)
         if ready is None or not ready():
             return
-        from pib_motors.units import centideg_to_rad
         from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
         request = ApplyJointTrajectory.Request()
         trajectory = JointTrajectory()
         trajectory.joint_names = [str(motor)]
         point = JointTrajectoryPoint()
-        point.positions = [centideg_to_rad(int(position_centideg))]
+        point.positions = [_centideg_to_rad(int(position_centideg))]
         trajectory.points = [point]
         request.joint_trajectory = trajectory
         client.call_async(request)

@@ -58,7 +58,11 @@ def check_ros_stack() -> Tuple[bool, str, str]:
         return False, REASON_CHAT_NODE, detail[:200]
 
     nodes = {line.strip() for line in stdout.splitlines() if line.strip()}
-    missing = [name for name in ("/chat", "/voice_assistant") if name not in nodes]
+    missing = [
+        name
+        for name in ("/chat", "/voice_assistant", "/audio_recorder")
+        if name not in nodes
+    ]
     if missing:
         return (
             False,

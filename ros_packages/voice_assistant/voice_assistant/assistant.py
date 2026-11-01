@@ -219,7 +219,10 @@ class VoiceAssistantNode(AssistantTurnCallbacksMixin, AssistantLatencyMixin, Nod
         self.record_audio_client: ActionClient = ActionClient(
             self, RecordAudio, "record_audio"
         )
-        self.record_audio_client.wait_for_server()
+        if not self.record_audio_client.wait_for_server(timeout_sec=10.0):
+            self.get_logger().warning(
+                "record_audio action server not ready after 10s; continuing startup so text chat and state services remain responsive"
+            )
 
         # Which live voice path speaks. "gemini" is the speech-to-speech session
         # that has always been here; "duplex" hands the answer and the synthesis to

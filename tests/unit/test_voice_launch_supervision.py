@@ -147,6 +147,6 @@ def test_launch_registers_supervision_for_chat_and_assistant(
         for e in description.entities
         if isinstance(e, RegisterEventHandler)
     ]
-    assert len(handlers) == 2
+    assert len(handlers) == 3
     supervised = {h.target_action.kwargs["executable"] for h in handlers}
-    assert supervised == {"chat", "assistant"}
+    assert supervised == {"chat", "assistant", "audio_recorder"}

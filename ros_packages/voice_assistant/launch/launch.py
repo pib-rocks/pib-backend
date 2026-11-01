@@ -35,6 +35,10 @@ def _assistant_node() -> Node:
     return Node(package="voice_assistant", executable="assistant")
 
 
+def _audio_recorder_node() -> Node:
+    return Node(package="voice_assistant", executable="audio_recorder")
+
+
 def _supervised_exit_handler(policy: RespawnPolicy, node_factory):
     """Respawn chat/assistant on crash with bounded backoff and one log line."""
 
@@ -76,15 +80,17 @@ def generate_launch_description():
     max_attempts = max_respawn_attempts_from_env()
     chat_policy = RespawnPolicy("chat", max_attempts=max_attempts)
     assistant_policy = RespawnPolicy("assistant", max_attempts=max_attempts)
+    audio_recorder_policy = RespawnPolicy("audio_recorder", max_attempts=max_attempts)
 
     chat = _chat_node(hermes_timeout, hermes_bin, hermes_profiles_dir)
     assistant = _assistant_node()
+    audio_recorder = _audio_recorder_node()
 
     return LaunchDescription(
         [
             assistant,
             Node(package="voice_assistant", executable="audio_player"),
-            Node(package="voice_assistant", executable="audio_recorder"),
+            audio_recorder,
             chat,
             Node(package="voice_assistant", executable="token_service"),
             RegisterEventHandler(
@@ -104,6 +110,15 @@ def generate_launch_description():
                     on_exit=_supervised_exit_handler(
                         assistant_policy,
                         _assistant_node,
+                    ),
+                )
+            ),
+            RegisterEventHandler(
+                OnProcessExit(
+                    target_action=audio_recorder,
+                    on_exit=_supervised_exit_handler(
+                        audio_recorder_policy,
+                        _audio_recorder_node,
                     ),
                 )
             ),
