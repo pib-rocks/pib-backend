@@ -19,7 +19,7 @@ describe("pose blocks", () => {
             ["Wave 2", "pose-3"],
         ];
         const workspace = new Blockly.Workspace();
-        Blockly.Events.disable();
+        Blockly.Events.enable();
         try {
             const single = workspace.newBlock("move_to_pose");
             expect(single.getField("POSE")).toBeTruthy();
