@@ -33,6 +33,7 @@ from typing import Any
 import rclpy
 from datatypes.msg import MotorSettings
 from datatypes.srv import ApplyJointTrajectory, ApplyMotorSettings, GetJointPosition
+from pib_motors.units import centideg_to_rad
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
@@ -79,9 +80,10 @@ class PollTrace:
 
 
 class MeasureServoSpeedFloorNode(Node):
-    def __init__(self, joint_name: str) -> None:
+    def __init__(self, joint_name: str, move_duration_sec: float = 3.0) -> None:
         super().__init__("measure_servo_speed_floor")
         self.joint_name = joint_name
+        self._move_duration_sec = move_duration_sec
         self._baseline_settings: MotorSettings | None = None
         self.create_subscription(
             MotorSettings, "motor_settings", self._on_motor_settings, 10
@@ -164,7 +166,10 @@ class MeasureServoSpeedFloorNode(Node):
             raise RuntimeError(
                 f"get_joint_position failed: {getattr(response, 'message', 'no response')}"
             )
-        return float(response.position)
+        # get_joint_position answers in CENTIDEGREES while /joint_states is radians. Measured on
+        # the robot: service 26.0 against joint_states 0.00454 rad for the same head position.
+        # Reading it as radians produced a move target 26 rad away, which the service rejected.
+        return centideg_to_rad(float(response.position))
 
     def _apply_velocity_setting(self, velocity: int) -> None:
         if self._baseline_settings is None:
@@ -203,7 +208,13 @@ class MeasureServoSpeedFloorNode(Node):
         jt.joint_names = [self.joint_name]
         point = JointTrajectoryPoint()
         point.positions = [target_rad]
-        point.time_from_start.sec = 0
+        # A zero duration is rejected ("apply_joint_trajectory rejected the move"); the move
+        # itself is a single point, so the duration only bounds the executor and lets the servo
+        # run at its speed setting.
+        point.time_from_start.sec = int(self._move_duration_sec)
+        point.time_from_start.nanosec = int(
+            (self._move_duration_sec % 1.0) * 1_000_000_000
+        )
         jt.points = [point]
         request = ApplyJointTrajectory.Request()
         request.joint_trajectory = jt
@@ -337,6 +348,12 @@ def run(argv: list[str] | None = None) -> int:
         default="http://localhost",
         help="Where to read the current motor settings when the motor_settings topic is silent.",
     )
+    parser.add_argument(
+        "--move-duration",
+        type=float,
+        default=3.0,
+        help="Duration given to the single-point move; a zero duration is rejected.",
+    )
     parser.add_argument("--move-rad", type=float, default=DEFAULT_MOVE_RAD)
     parser.add_argument("--runs", type=int, default=DEFAULT_RUNS)
     parser.add_argument("--poll-hz", type=float, default=DEFAULT_POLL_HZ)
@@ -359,7 +376,7 @@ def run(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     rclpy.init()
-    node = MeasureServoSpeedFloorNode(args.joint)
+    node = MeasureServoSpeedFloorNode(args.joint, move_duration_sec=args.move_duration)
     violations: list[str] = []
     try:
         if not node._wait_services():
