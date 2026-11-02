@@ -87,10 +87,17 @@ def cloud_language_code(value: object) -> str:
     return "de"
 
 
+#: The cloud speech codes for the two voices the personality editor offers. ``F3`` is Bella,
+#: ``M3`` is Adam; both are stock ElevenLabs voices the endpoint accepts by name
+#: (``pib_cloud/routes/audio_speech.py:VOICE_IDS``), so the robot never sends a raw voice id.
+VOICE_FEMALE = "F3"
+VOICE_MALE = "M3"
+
+
 def cloud_voice(value: object) -> str:
-    """``F1`` or ``M1``, from the personality's gender or a stored voice id."""
+    """``F3`` or ``M3``, from the personality's gender (the dialog's "Voice" dropdown)."""
     text = value.strip().lower() if isinstance(value, str) else ""
-    return "M1" if text.startswith("m") else "F1"
+    return VOICE_MALE if text.startswith("m") else VOICE_FEMALE
 
 
 # The audio thread is the only writer. The service thread only enqueues items.
@@ -248,6 +255,9 @@ class PlaybackItem:
 SPEECH_ENCODING = AudioEncoding(2, 1, 44100)
 CLOUD_SPEECH_ENCODING = AudioEncoding(2, 1, 16000)
 CHUNKS_PER_SECOND = 50
+#: How many cancelled answer ids are remembered. A clause request of a
+#: cancelled answer can arrive late; the turn id is what rejects it.
+CANCELLED_TURN_MEMORY = 64
 FRAMES_PER_CHUNK = SPEECH_ENCODING.frames_per_second // CHUNKS_PER_SECOND
 BYTES_PER_FRAME = SPEECH_ENCODING.bytes_per_sample * SPEECH_ENCODING.num_channels
 BYTES_PER_CHUNK = BYTES_PER_FRAME * FRAMES_PER_CHUNK
@@ -289,6 +299,9 @@ class AudioPlayerNode(Node):
         bind_playback_queue(playback_queue)
         self.counter = 0
         self.counter_lock = Lock()
+        # Answers cancelled by a barge-in; a clause request of one of them can
+        # still be queued in this node's service and must not speak afterwards.
+        self._cancelled_turn_ids: list = []
 
         play_audio_callback_group = MutuallyExclusiveCallbackGroup()
         clear_callback_group = MutuallyExclusiveCallbackGroup()
@@ -435,6 +448,15 @@ class AudioPlayerNode(Node):
 
         order = self.counter_next()
         speech = request.speech or ""
+        turn_id = getattr(request, "turn_id", "") or ""
+        # A cancelled answer must never speak again, even when its clause
+        # requests were dispatched before the clear and are only admitted now.
+        if self._turn_is_cancelled(turn_id):
+            self.get_logger().info(
+                "play_audio_from_speech: turn %s was cancelled; dropping request"
+                % (turn_id,)
+            )
+            return response
         if not speech.strip():
             # A barrier, so the caller can wait until earlier clauses finish.
             if PlaybackItem.order_is_stale(order):
@@ -464,6 +486,7 @@ class AudioPlayerNode(Node):
         # the same reason: the key store is not consulted per clause.
         self._cloud_tts_fallback_noted = False
         self._cloud_tts_turn_token = None
+        self._cloud_tts_turn_voice = None
 
         pieces = clauses_to_synthesize(speech)
         last_item = None
@@ -494,6 +517,12 @@ class AudioPlayerNode(Node):
                 self.get_logger().info(
                     "play_audio_from_speech: admission fence dropped post-synthesis clause (order=%s piece_index=%s)"
                     % (order, index)
+                )
+                return response
+            if self._turn_is_cancelled(turn_id):
+                self.get_logger().info(
+                    "play_audio_from_speech: turn %s was cancelled during synthesis; dropping clause (order=%s piece_index=%s)"
+                    % (turn_id, order, index)
                 )
                 return response
             data = self._fence_pcm_iterable(data, order)
@@ -574,6 +603,13 @@ class AudioPlayerNode(Node):
             "language": cloud_language_code(request.language),
             "voice": cloud_voice(request.gender),
         }
+        if self._cloud_tts_turn_voice != body["voice"]:
+            # Once per turn, so a wrong voice is visible in the log without per-clause noise.
+            self._cloud_tts_turn_voice = body["voice"]
+            self.get_logger().info(
+                f"cloud speech voice={body['voice']} language={body['language']} "
+                f"gender={getattr(request, 'gender', None)!r}"
+            )
         headers = {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
@@ -657,6 +693,34 @@ class AudioPlayerNode(Node):
                 return
             yield chunk
 
+    def _cancelled_turns(self) -> list:
+        """Answers that were cancelled and must never be spoken again.
+
+        Kept per process, bounded: a clause request of one of these turns can
+        still be sitting in the service queue when the clear arrives, and it
+        must not start a second answer on top of the new one.
+        """
+        turns = getattr(self, "_cancelled_turn_ids", None)
+        if turns is None:
+            turns = []
+            self._cancelled_turn_ids = turns
+        return turns
+
+    def _turn_is_cancelled(self, turn_id: str) -> bool:
+        if not turn_id:
+            return False
+        return turn_id in self._cancelled_turns()
+
+    def _remember_cancelled_turn(self, turn_id: str) -> None:
+        if not turn_id:
+            return
+        with self.counter_lock:
+            turns = self._cancelled_turns()
+            if turn_id in turns:
+                return
+            turns.append(turn_id)
+            del turns[:-CANCELLED_TURN_MEMORY]
+
     def _enqueue_current(self, item: PlaybackItem) -> bool:
         # Same lock order as clear: counter -> threshold -> queue. No engine or
         # device work is performed under this admission lock.
@@ -689,11 +753,15 @@ class AudioPlayerNode(Node):
         self.voice_using_fallback_publisher.publish(message)
 
     def clear_playback_queue(
-        self, _: ClearPlaybackQueue.Request, response: ClearPlaybackQueue.Response
+        self, request: ClearPlaybackQueue.Request, response: ClearPlaybackQueue.Response
     ) -> ClearPlaybackQueue.Response:
 
+        turn_id = getattr(request, "turn_id", "") or ""
+        if turn_id:
+            self._remember_cancelled_turn(turn_id)
         self.get_logger().info(
-            "clear_playback_queue: accepting cancellation (ACK is not proof device stopped)"
+            "clear_playback_queue: accepting cancellation for turn %r (ACK is not proof device stopped)"
+            % (turn_id,)
         )
         with self.counter_lock:
             with PlaybackItem.clear_threshold_lock:
@@ -709,7 +777,8 @@ class AudioPlayerNode(Node):
                 drained += 1
 
         self.get_logger().info(
-            "clear_playback_queue: ACK threshold=%s drained=%s" % (threshold, drained)
+            "clear_playback_queue: ACK threshold=%s drained=%s turn=%r"
+            % (threshold, drained, turn_id)
         )
         return response
 

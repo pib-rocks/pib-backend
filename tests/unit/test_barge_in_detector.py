@@ -208,8 +208,8 @@ def test_voice_assistant_hardware_vad_triggers_barge_in_with_preroll_and_no_star
     node.record_audio = lambda before, after, on_stop, on_text: events.append(
         ("record_audio", before, after)
     )
-    node.clear_playback_queue = lambda on_cleared: (
-        events.append(("clear_queue",)),
+    node.clear_playback_queue = lambda on_cleared, turn_id="": (
+        events.append(("clear_queue", turn_id)),
         on_cleared(),
     )
 
@@ -221,7 +221,9 @@ def test_voice_assistant_hardware_vad_triggers_barge_in_with_preroll_and_no_star
 
     # Verify stop_chat, clear_queue, NO play_file (no start beep!), and record_audio(0.0, 1.0)
     assert ("stop_chat", "chat-barge-1") in events
-    assert ("clear_queue",) in events
+    # The clear names the interrupted answer, so its late clauses stay silent.
+    cleared = [e for e in events if e[0] == "clear_queue"]
+    assert cleared and cleared[0][1].startswith("chat-barge-1#")
     assert not any(e[0] == "play_file" for e in events)
     assert ("record_audio", 0.0, 1.0) in events
     assert ("listening", "chat-barge-1", True) in events

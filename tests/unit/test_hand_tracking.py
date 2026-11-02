@@ -298,12 +298,14 @@ def test_decoder_accepts_the_top2_postprocessing_layout():
 
 
 def test_fast_branch_stays_inside_the_palm_warp_limit():
-    assert (FAST_BRANCH_WIDTH, FAST_BRANCH_HEIGHT) == (256, 144)
+    # The branch the reference implementation proved (1152x640 preview) is the
+    # ceiling; the ISP frame itself is refused.
+    assert validate_fast_branch_size(1152, 648) == pytest.approx(9.0)
     assert validate_fast_branch_size(256, 144) == pytest.approx(2.0)
     with pytest.raises(ValueError, match="WARP_SWCH_ERR_CACHE_TOO_SMALL"):
         validate_fast_branch_size(2104, 1560)
-    with pytest.raises(ValueError, match="within 2:1"):
-        validate_fast_branch_size(1152, 648)
+    with pytest.raises(ValueError, match="must stay within"):
+        validate_fast_branch_size(1920, 1080)
 
 
 # Callables present on device lpb.NNData. Host-only names such as getTensor are absent.
@@ -477,6 +479,9 @@ def test_fast_script_letterboxes_256x144_and_stays_on_the_device():
 def _fast_payload(**overrides):
     crop = np.tile([112.0, 112.0, 22.4], 21).tolist()
     crop[3:5] = [224.0, 112.0]
+    # The same 21 points on the letterboxed square: centre, then the right edge.
+    square = np.tile([0.5, 0.5], 21).tolist()
+    square[2:4] = [0.75, 0.5]
     payload = {
         "lm_score": [0.91],
         "handedness": [0.2],
@@ -486,6 +491,7 @@ def _fast_payload(**overrides):
         "rect_center_y": [0.5],
         "rect_size": [0.5],
         "rrn_lms": [crop],
+        "sqn_lms": [square],
     }
     payload.update(overrides)
     return payload
@@ -515,3 +521,38 @@ def test_fast_result_drops_a_landmark_below_the_score_gate():
     import marshal
 
     assert parse_fast_script_result(marshal.dumps(_fast_payload(lm_score=[0.1]))) == []
+
+
+def test_fast_result_ignores_the_tracking_rect_for_the_drawn_position():
+    """The tracker regresses its rect every frame; that must not move the hand.
+
+    The device sends the landmarks on the letterboxed square, so a rect that
+    the single-hand tracker shifted upwards cannot pull the drawn hand with it.
+    """
+    import marshal
+
+    centred = map_fast_hand(
+        parse_fast_script_result(marshal.dumps(_fast_payload()))[0],
+        1280,
+        720,
+        256,
+        144,
+    )
+    shifted = map_fast_hand(
+        parse_fast_script_result(
+            marshal.dumps(_fast_payload(rect_center_y=[0.30], rect_size=[0.42]))
+        )[0],
+        1280,
+        720,
+        256,
+        144,
+    )
+
+    assert shifted.keypoint_x == pytest.approx(centred.keypoint_x)
+    assert shifted.keypoint_y == pytest.approx(centred.keypoint_y)
+
+
+def test_fast_script_sends_the_square_landmarks():
+    script = build_fast_tracker_script(256, 144)
+    assert '"sqn_lms"' in script
+    assert 'hand_landmarks["sqn_lms"].append(sqn_lms)' in script

@@ -1398,6 +1398,17 @@ if ! verify_pib_sdk; then
 fi
 
 check_cancel
+write_status "installing" "Installing the robot model"
+# Without it the 3D tab answers 404. A failed download is only fatal when no model is installed
+# at all - an older one still lets the console work.
+if ! bash "$BACKEND_DIR/setup/installation_scripts/install_robot_model.sh"; then
+    if ! docker exec pib-backend-flask-app-1 test -f /data/robot-model/model.json 2>/dev/null; then
+        fail "robot model missing and could not be installed"
+    fi
+    print WARN "robot model update skipped; keeping the installed version"
+fi
+
+check_cancel
 write_status "verifying" "Verifying API, containers, and checked-out revisions"
 if ! verify_result; then
     rollback_once

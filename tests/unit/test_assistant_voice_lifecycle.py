@@ -476,3 +476,45 @@ def test_subprocess_fallback_notice_only_once(assistant_node):
     node._speak_subprocess_fallback_notice()
     node.executor.run()
     node.play_audio_from_speech.assert_called_once()
+
+
+def _call_real_refresh(node) -> None:
+    """Run the real refresh method; the fixture stubs it and the harness lacks one helper."""
+    method = type(node)._refresh_personality_turn_taking
+    method.__globals__.setdefault(
+        "pause_threshold_now",
+        lambda current, fresh: current if fresh is None else fresh,
+    )
+    method(node)
+
+
+def test_an_edited_voice_applies_to_the_next_turn(assistant_node):
+    """The dialog's Voice dropdown writes gender; it must reach the running assistant.
+
+    The refresh used to read only the pause threshold and the filler, so a changed voice
+    stayed inaudible until a restart and looked like the setting had no effect.
+    """
+    from voice_assistant import assistant as assistant_stub
+
+    node = assistant_node
+    node.personality.gender = "Female"
+    fresh = SimpleNamespace(pause_threshold=0.5, thinking_filler="", gender="Male")
+    assistant_stub.voice_assistant_client.get_personality = lambda _pid: (True, fresh)
+
+    # The fixture stubs the method on the instance; call the real one.
+    _call_real_refresh(node)
+
+    assert node.personality.gender == "Male"
+
+
+def test_a_missing_stored_voice_keeps_the_current_one(assistant_node):
+    from voice_assistant import assistant as assistant_stub
+
+    node = assistant_node
+    node.personality.gender = "Male"
+    fresh = SimpleNamespace(pause_threshold=0.5, thinking_filler="", gender=None)
+    assistant_stub.voice_assistant_client.get_personality = lambda _pid: (True, fresh)
+
+    _call_real_refresh(node)
+
+    assert node.personality.gender == "Male"

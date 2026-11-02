@@ -3333,8 +3333,16 @@ class TestHandTrackingFast(unittest.TestCase):
             ],
         )
         script, palm_manip, palm_nn, decoder_nn, landmark_manip, landmark_nn = created
-        self.assertEqual(node.hand_fast_source_size, (HAND_NN_WIDTH, HAND_NN_HEIGHT))
-        self.assertEqual(node.camRgb.requestOutput.call_args.args[0], (256, 144))
+        # The palm detector needs the published-aspect branch, not the 256x144
+        # hand branch: at 256x144 a hand carries ~36 px of detail.
+        self.assertEqual(
+            node.hand_fast_source_size,
+            (COLOUR_BRANCH_WIDTH, COLOUR_BRANCH_HEIGHT),
+        )
+        self.assertEqual(
+            node.camRgb.requestOutput.call_args.args[0],
+            (COLOUR_BRANCH_WIDTH, COLOUR_BRANCH_HEIGHT),
+        )
         palm_nn.setNumShavesPerInferenceThread.assert_called_once_with(4)
         decoder_nn.setNumShavesPerInferenceThread.assert_called_once_with(1)
         landmark_nn.setNumShavesPerInferenceThread.assert_called_once_with(4)
@@ -3399,6 +3407,7 @@ class TestHandTrackingFast(unittest.TestCase):
                 "rect_center_y": [0.5],
                 "rect_size": [0.5],
                 "rrn_lms": [[112.0, 112.0, 22.4] * 21],
+                "sqn_lms": [[0.5, 0.5] * 21],
             }
         )
         node.hand_fast_queue = MagicMock()

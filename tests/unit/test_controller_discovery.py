@@ -149,15 +149,22 @@ def test_update_detected_assignments_accepts_valid_and_skips_malformed():
     assert stored["expectedCount"] == 5
 
 
-def test_detected_assignments_ttl_drops_stale_entries(monkeypatch, tmp_path):
+def test_detected_assignments_survive_any_age(monkeypatch, tmp_path):
+    """A detection is a stable hardware fact, not telemetry with a shelf life.
+
+    The API used to drop a reported assignment after 120 s. That made "Use detected
+    assignments" usable only inside a two minute window after a motors restart, because
+    the scan may only refresh its report once the controller addresses are stored - the
+    very value the button fills in (PR-2199).
+    """
     controller_service.update_detected_assignments(
-        [{"serial": "5BSTALE01", "controllerNumber": 1, "matchCount": 1}]
+        [{"serial": "5BOLD001", "controllerNumber": 2, "matchCount": 4}]
     )
-    controller_service._detected_assignments["5BSTALE01"]["updated_at"] = 0.0
-    monkeypatch.setattr(controller_service.time, "time", lambda: 10_000.0)
+    controller_service._detected_assignments["5BOLD001"]["updated_at"] = 0.0
+    monkeypatch.setattr(controller_service.time, "time", lambda: 10_000_000.0)
 
     entries = [
-        ("usb-1a86_USB_Single_Serial_5BSTALE01-if00", "ttyACM9"),
+        ("usb-1a86_USB_Single_Serial_5BOLD001-if00", "ttyACM9"),
     ]
     dev = tmp_path / "dev"
     dev.mkdir()
@@ -169,8 +176,9 @@ def test_detected_assignments_ttl_drops_stale_entries(monkeypatch, tmp_path):
         (by_id / link_name).symlink_to(Path("..") / "dev" / tty)
 
     controllers = controller_service.get_connected_serial_controllers(by_id)
-    assert controllers[0]["assignedControllerNumber"] is None
-    assert "5BSTALE01" not in controller_service._detected_assignments
+    assert controllers[0]["assignedControllerNumber"] == 2
+    assert controllers[0]["matchCount"] == 4
+    assert "5BOLD001" in controller_service._detected_assignments
 
 
 def test_get_connected_serial_controllers_enriched_from_assignment(tmp_path):

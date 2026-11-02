@@ -124,6 +124,10 @@ COMPRESSED_IMAGE_TOPIC = "/oak/rgb/image_raw/compressed"
 COMPRESSED_IMAGE_FRAME_ID = "oak_rgb_camera_optical_frame"
 DEFAULT_QUALITY_FACTOR = 80
 DEFAULT_TIMER_PERIOD_SECONDS = 0.1
+#: The device hand chain produces its own results at camera rate. Polling it on
+#: the stream timer (10 Hz) capped hand tracking at 10 detections/s whatever the
+#: device managed, so the chain gets its own poll.
+HAND_FAST_POLL_PERIOD_SECONDS = 1.0 / 30.0
 MIN_TIMER_PERIOD_SECONDS = 1.0 / 30.0
 MAX_STREAM_FPS = 30
 # Full-field branch at that aspect, nine tenths of the preview. Model inputs
@@ -438,6 +442,9 @@ class CameraNode(
         )
         self._start_mjpeg_server()
         self.timer = self.create_timer(self.timer_period, self.timer_callback)
+        self.hand_fast_timer = self.create_timer(
+            HAND_FAST_POLL_PERIOD_SECONDS, self._poll_hand_tracking_fast
+        )
         self.imu_timer = self.create_timer(IMU_POLL_PERIOD_SECONDS, self._process_imu)
         self.models_status_timer = self.create_timer(1.0, self.publish_model_statuses)
 
@@ -1068,10 +1075,6 @@ class CameraNode(
             self._process_hand_mp()
         except Exception as exc:  # pragma: no cover - defensive, verified by E2E
             self._warn_hand_once(f"hand_mp processing failed: {exc!r}")
-        try:
-            self._process_hand_tracking_fast()
-        except Exception as exc:  # pragma: no cover - defensive, verified by E2E
-            self._warn_hand_once(f"hand_tracking_fast processing failed: {exc!r}")
         self._process_imitation()
         try:
             self._process_face_crop()
