@@ -27,8 +27,30 @@ _STUB_MODULE_NAMES = (
     "tinkerforge.ip_connection",
 )
 
-# Ensure rclpy and diagnostic_msgs are mocked if not installed in host environment
-if "rclpy" not in sys.modules:
+# Ensure rclpy and diagnostic_msgs are mocked if not installed in host environment.
+# Presence alone is not enough: another module earlier in the session can leave a
+# partial rclpy stand-in behind whose Node lacks create_timer, and then MotorCurrent
+# fails with AttributeError instead of a clear import error (measured on the robot,
+# PR-2176). Replace such a stub with this file's complete one.
+_REQUIRED_NODE_METHODS = (
+    "create_publisher",
+    "create_subscription",
+    "create_timer",
+    "create_client",
+    "create_service",
+)
+
+
+def _node_supports_everything() -> bool:
+    existing = sys.modules.get("rclpy")
+    node_module = getattr(existing, "node", None) if existing is not None else None
+    node_class = getattr(node_module, "Node", None) if node_module is not None else None
+    if node_class is None:
+        return False
+    return all(hasattr(node_class, name) for name in _REQUIRED_NODE_METHODS)
+
+
+if not _node_supports_everything():
     mock_rclpy = types.ModuleType("rclpy")
     mock_node_mod = types.ModuleType("rclpy.node")
 
@@ -182,9 +204,13 @@ def mock_motor_setup(stubbed_tinkerforge, monkeypatch):
     for name, module in _datatypes_stubs().items():
         monkeypatch.setitem(sys.modules, name, module)
 
+    # delitem, not pop: monkeypatch puts the modules back afterwards, so a later test
+    # that holds a reference to a pib_motors symbol keeps the same module object. A
+    # bare pop left two instances of the module alive and made enum identity checks in
+    # test_port_recovery fail once this module had run (PR-2176).
     for name in list(sys.modules):
         if name.startswith("pib_motors") or name.startswith("motors"):
-            sys.modules.pop(name, None)
+            monkeypatch.delitem(sys.modules, name, raising=False)
 
     mock_bricklet = MagicMock()
     mock_bricklet.set_servo_current_configuration = MagicMock()

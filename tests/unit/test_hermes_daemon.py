@@ -2435,7 +2435,14 @@ def _reset_prewarm_state():
 
 def test_prewarm_skipped_when_smart_chats_disabled(monkeypatch, caplog):
     _reset_prewarm_state()
+    caplog.set_level(logging.INFO)
     monkeypatch.setenv("PIB_SMART_CHATS", "0")
+    # Read the setting from the environment for THIS call: another module that ran
+    # earlier can leave the channel helper cached, and then the "disabled" branch is
+    # never taken and the log line never appears (PR-2176).
+    monkeypatch.setattr(
+        "pib_hermes_config.channel.smart_chats_enabled", lambda: False, raising=False
+    )
     warmed = MagicMock()
     monkeypatch.setattr(hd, "_construct_warm_agent_for_personality", warmed)
 
@@ -2459,8 +2466,14 @@ def test_prewarm_warms_explicit_personality_once(monkeypatch):
 
 def test_prewarm_skips_direct_only_personality_list(monkeypatch, caplog):
     _reset_prewarm_state()
+    caplog.set_level(logging.INFO)
     monkeypatch.delenv("PIB_SMART_CHATS", raising=False)
     monkeypatch.delenv(hd.PREWARM_PERSONALITY_ENV, raising=False)
+    # Same reason as above: pin the setting for this call instead of inheriting
+    # whatever the run's environment (PR-2176).
+    monkeypatch.setattr(
+        "pib_hermes_config.channel.smart_chats_enabled", lambda: True, raising=False
+    )
     construct = MagicMock()
     monkeypatch.setattr(hd, "_construct_warm_agent_for_personality", construct)
 

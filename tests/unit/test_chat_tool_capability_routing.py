@@ -31,6 +31,9 @@ for _path in (
 
 from provider_registry import PIB_CLOUD_API_NAME  # noqa: E402
 
+# SOUL.md is asserted verbatim below: keep the live motion model out of it (PR-2176).
+pytestmark = pytest.mark.usefixtures("no_live_motion_model")
+
 TEXT_TYPE_SENTENCE = 0
 TEXT_TYPE_CODE_VISUAL = 1
 #: What provider_name_for resolves the pib.Cloud model to.
