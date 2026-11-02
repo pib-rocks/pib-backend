@@ -1,9 +1,9 @@
-"""Live Playwright E2E suite for Joint Control (/joint-control) and Camera (/camera).
+"""Live Playwright E2E suite for Movement (/movement) and Vision (/vision).
 
 Covers the real end-to-end paths that the legacy Robot Framework frontend tests
 (joint_control.robot, camera.robot) only inspected superficially:
 
-1. Joint Control (/joint-control/head):
+1. Movement (/movement/head):
    - Opens the Head joint view, clicks the touchpoint for turn_head_motor,
      enters a target angle in the slider bubble input, and verifies both:
      (a) the /apply_joint_trajectory ROS service call succeeds over rosbridge, and
@@ -11,7 +11,7 @@ Covers the real end-to-end paths that the legacy Robot Framework frontend tests
    - Opens the Motor Settings modal, toggles Extended Values, and verifies that
      velocity/acceleration/pulse-width controls render with live motor settings.
 
-2. Camera (/camera):
+2. Vision (/vision):
    - Opens the Camera view, ensures the camera stream is enabled, and verifies
      that img#camera-stream decodes real non-empty frames (naturalWidth > 0,
      naturalHeight > 0, not the placeholder or error asset).
@@ -154,7 +154,7 @@ class TestJointControlAndCameraE2E:
 
             try:
                 page.goto(
-                    f"{ROBOT_URL}/joint-control/head",
+                    f"{ROBOT_URL}/movement/head",
                     wait_until="domcontentloaded",
                     timeout=30000,
                 )
@@ -243,7 +243,7 @@ class TestJointControlAndCameraE2E:
 
             try:
                 page.goto(
-                    f"{ROBOT_URL}/camera",
+                    f"{ROBOT_URL}/vision",
                     wait_until="domcontentloaded",
                     timeout=30000,
                 )
