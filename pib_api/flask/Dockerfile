@@ -20,6 +20,10 @@ RUN printf '%s\n' "${APP_VERSION:-dev}" > /etc/pib_version \
 COPY ./pib_api/flask/requirements.txt /app
 RUN pip install -r requirements.txt
 
+# The kinematics endpoint is a thin wrapper around pib-sdk's solver, so the API image needs the
+# same pinned SDK the ROS side carries. Pinocchio arrives as the `pin` wheel - no system deps.
+RUN pip install "pib-sdk==${PIB_SDK_VERSION}"
+
 # hermes_constants and hermes_cli are import-safe (stdlib only). --no-deps
 # keeps this from re-resolving Flask's pinned set; hermes-agent pins a newer
 # requests than this image. The voice image installs the same version with
