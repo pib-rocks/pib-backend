@@ -141,6 +141,7 @@ class AudioRecorderNode(Node):
         )
         # None until the array publishes. After that, its VAD owns end-of-turn.
         self._hardware_vad: Optional[bool] = None
+        self._hardware_vad_monotonic: float = 0.0
         self._array_vad_warning = ArrayVadWarningState()
         self.create_subscription(Bool, "/voice_activity", self._on_voice_activity, 10)
 
@@ -263,6 +264,7 @@ class AudioRecorderNode(Node):
     def _on_voice_activity(self, msg: Bool) -> None:
         """The array's hardware VAD. The live uplink does not use this topic."""
         self._hardware_vad = bool(msg.data)
+        self._hardware_vad_monotonic = time.monotonic()
 
     def _amplitude_is_silent(self, data_chunk: bytes) -> bool:
         as_ints = np.frombuffer(data_chunk, dtype=np.int16)
@@ -272,13 +274,16 @@ class AudioRecorderNode(Node):
         """
         Silence for the turn-based recorder.
 
-        Once /voice_activity has arrived, that signal decides. Loud audio
-        without voice activity is not speech. Amplitude is only the fallback
-        before the first sample.
-
-        A run of loud chunks while that signal stays false is logged once.
-        The log does not change this decision or the recording window.
+        Once /voice_activity has arrived, that signal decides while fresh.
+        If /voice_activity stops arriving for > 1.5 s (USB control pipe error),
+        expire the stale sample back to None so amplitude fallback resumes.
         """
+        if (
+            self._hardware_vad is not None
+            and getattr(self, "_hardware_vad_monotonic", 0.0) > 0.0
+            and (time.monotonic() - self._hardware_vad_monotonic) > 1.5
+        ):
+            self._hardware_vad = None
         amplitude_silent = self._amplitude_is_silent(data_chunk)
         message, self._array_vad_warning = array_vad_silent_warning(
             self._hardware_vad,
