@@ -19,6 +19,7 @@ from ros_audio_io.device_retry import (
     DeviceNotFoundError,
     describe_open_failure,
     next_retry_delay,
+    reset_respeaker_usb_device,
 )
 from ros_audio_io.desired_state import (
     DesiredStateApplyError,
@@ -466,6 +467,7 @@ class MicrophoneArrayNode(Node):
         """Dispose a dead USB handle after disconnect/reset and schedule retry_open_device."""
         if self.dev is None and self.retry_timer is not None:
             return
+        self._usb_disconnect_streak = getattr(self, "_usb_disconnect_streak", 0) + 1
         for attr in (
             "timer",
             "vad_timer",
@@ -489,6 +491,13 @@ class MicrophoneArrayNode(Node):
                 usb.util.dispose_resources(dev)
             except Exception:
                 pass
+        if (
+            getattr(self, "_usb_disconnect_streak", 0) >= 3
+            and getattr(self, "_usb_disconnect_streak", 0) % 3 == 0
+        ):
+            ok, msg = reset_respeaker_usb_device(prefer_port_cycle=True)
+            log_fn = self.get_logger().info if ok else self.get_logger().warning
+            log_fn(f"ReSpeaker USB port recovery after repeated pipe errors: {msg}")
         if self.retry_timer is None:
             delay = next_retry_delay(max(1, self.open_attempts))
             self.get_logger().warning(
@@ -521,6 +530,7 @@ class MicrophoneArrayNode(Node):
             if disconnect_exc is not None:
                 self._close_and_schedule_reopen(disconnect_exc)
         self._vad_read_warning_active = False
+        self._usb_disconnect_streak = 0
         self.voice_publisher.publish(Bool(data=voice_activity))
 
     def publish_state(self):
