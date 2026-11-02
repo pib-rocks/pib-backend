@@ -6,3 +6,12 @@ services:
     ports: !override []
   rosbridge-ws:
     ports: !override []
+
+# docker-compose.yaml pins `name: pib-network`, so without this the test stack joins
+# the production network: its flask-app is a second DNS entry for `flask-app` there and
+# `_container_ip` looked for a project-prefixed network that never existed, which made
+# every deployment test time out after 180 s (PR-2176). Overriding the network name
+# gives each project its own bridge and makes the prefix assumption true again.
+networks:
+  pib-network:
+    name: ${COMPOSE_PROJECT_NAME:-pib}_pib-network

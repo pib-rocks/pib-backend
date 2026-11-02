@@ -333,3 +333,58 @@ def test_clear_during_file_read_rejects_late_file(player, tmp_path):
     release.set()
     worker.join(2)
     assert not worker.is_alive() and node.playback_queue.empty()
+
+
+def test_clear_interrupts_trailing_pause_within_forty_millis(player):
+    node, mod = player
+    assert mod.CHUNKS_PER_SECOND == 50
+    item = mod.PlaybackItem(
+        [b"\x00\x00" * 320],
+        mod.CLOUD_SPEECH_ENCODING,
+        pause_seconds=2.0,
+        order=0,
+    )
+    mod.PlaybackItem.clear_threshold = 0
+
+    class FakeStream:
+        def write(self, chunk):
+            pass
+
+        def stop_stream(self):
+            pass
+
+        def close(self):
+            pass
+
+    class FakePyAudio:
+        def get_format_from_width(self, w):
+            return 8
+
+        def get_device_count(self):
+            return 0
+
+        def open(self, **kw):
+            return FakeStream()
+
+        def terminate(self):
+            pass
+
+    mod.pyaudio = SimpleNamespace(PyAudio=FakePyAudio)
+    try:
+        t0 = time.monotonic()
+        worker = Thread(target=item.play, daemon=True)
+        worker.start()
+        time.sleep(0.03)
+        # Clear while item is inside the 2.0 s trailing pause
+        with mod.PlaybackItem.clear_threshold_lock:
+            mod.PlaybackItem.clear_threshold = 1
+        worker.join(timeout=0.2)
+        elapsed = time.monotonic() - t0
+        assert (
+            not worker.is_alive()
+        ), "PlaybackItem.play() did not exit trailing pause on clear"
+        assert (
+            elapsed < 0.15
+        ), f"Trailing pause took {elapsed:.3f}s instead of exiting within 40ms"
+    finally:
+        mod.pyaudio = None

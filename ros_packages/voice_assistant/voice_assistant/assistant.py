@@ -27,6 +27,7 @@ from voice_assistant.chat_turn import (
 )
 from pib_api_client import voice_assistant_client
 from pib_api_client.voice_assistant_client import Personality
+from pib_hermes_config.barge_in import BargeInDetector
 from pib_hermes_config.live_interaction import typed_text_joins_live
 from pib_hermes_config.live_session import (
     VOICE_MODE_LIVE,
@@ -153,6 +154,7 @@ class VoiceAssistantNode(AssistantTurnCallbacksMixin, AssistantLatencyMixin, Nod
         self._sentence_flushed = False
         self._turn_trace_max_seconds = _turn_trace_max_seconds()
         self._text_turn_registry = TextTurnRegistry()
+        self._barge_in_detector = BargeInDetector()
 
         # services ----------------------------------------------------------------------
 
@@ -198,6 +200,18 @@ class VoiceAssistantNode(AssistantTurnCallbacksMixin, AssistantLatencyMixin, Nod
             Bool,
             VOICE_USING_FALLBACK_TOPIC,
             self._on_engine_fallback,
+            10,
+        )
+        self.create_subscription(
+            Bool,
+            "/voice_activity",
+            self._on_hardware_voice_activity,
+            10,
+        )
+        self.create_subscription(
+            Bool,
+            "/speech_detected",
+            self._on_hardware_speech_detected,
             10,
         )
         # A failed local transcription is spoken, never passed off as silence.
@@ -436,6 +450,9 @@ class VoiceAssistantNode(AssistantTurnCallbacksMixin, AssistantLatencyMixin, Nod
     def play_audio_from_file(
         self, filepath: str, on_stopped_playing: Callable[[], None] = None
     ) -> None:
+        detector = getattr(self, "_barge_in_detector", None)
+        if detector is not None:
+            detector.mute_for_earcon(now_ms())
         request = PlayAudioFromFile.Request()
         request.filepath = filepath
         request.join = on_stopped_playing is not None
@@ -487,6 +504,8 @@ class VoiceAssistantNode(AssistantTurnCallbacksMixin, AssistantLatencyMixin, Nod
         language: str,
         on_stopped_playing: Callable[[], None] = None,
     ) -> None:
+        if speech:
+            self._note_spoken_answer(speech)
         request = PlayAudioFromSpeech.Request()
         request.speech = speech
         request.gender = gender

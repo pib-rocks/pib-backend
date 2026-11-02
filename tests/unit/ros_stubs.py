@@ -81,6 +81,12 @@ def install_ros_stubs():
         def create_service(self, *args, **kwargs):
             return MagicMock()
 
+        def create_timer(self, *args, **kwargs):
+            return MagicMock()
+
+        def destroy_timer(self, *args, **kwargs):
+            pass
+
         def destroy_node(self):
             pass
 

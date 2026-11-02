@@ -25,7 +25,8 @@ ROSBRIDGE_URL = os.environ.get(
     "PIB_MODEL_E2E_ROSBRIDGE_URL",
     f"ws://{ROBOT_HOST}:9090" if ROBOT_HOST else "",
 )
-REQUEST_TIMEOUT = 10
+# A Pi that runs the rest of the suite answers slower than 10 s (measured, PR-2176).
+REQUEST_TIMEOUT = int(os.environ.get("PIB_ON_DEVICE_E2E_TIMEOUT_S", "45"))
 MODEL_TIMEOUT = 90
 PROGRAM_TIMEOUT = 120
 

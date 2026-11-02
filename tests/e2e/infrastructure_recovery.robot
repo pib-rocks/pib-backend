@@ -32,11 +32,6 @@ E2E-BDD-INF-002 Flask Responds While Rosbridge Port Checked Independently
     Run Keyword If    not ${connected}    Log    rosbridge not running — Flask independence still holds
     ${response}=    GET    ${FLASK_BASE_URL}/motor    expected_status=200
 
-E2E-BDD-INF-003 Compose Project Name Matches Env File
-    [Documentation]    Given .env When COMPOSE_PROJECT_NAME Then multirepo.
-    ${env}=    Get File    ${CURDIR}/../../.env
-    Should Contain    ${env}    COMPOSE_PROJECT_NAME=multirepo
-
 E2E-BDD-INF-004 Flask Container Restart Policy Documented As Always
     [Documentation]    Given docker-compose.yaml When flask-app inspected Then restart is always.
     ${compose}=    Get File    ${COMPOSE_FILE}

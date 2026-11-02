@@ -37,6 +37,8 @@ jobs:
           python -m pip install -r tests/requirements-unit.txt
           python -m pip install pytest==8.3.4 "numpy>=1.26,<3" mcp==2.3.0 websocket-client==1.9.2 pyyaml
           python -m pip install -r tests/requirements-camera.txt
+          # The kinematics endpoint wraps pib-sdk; the tests that solve for real need it.
+          python -m pip install "pib-sdk==$(cat pib_sdk_version.txt)"
       - name: Install model release asset
         # Blobs are not in git. Tests read models/<model_id>/<model_id>.blob.
         # Tag, name and sha256 are the defaults in setup/setup-pib.sh

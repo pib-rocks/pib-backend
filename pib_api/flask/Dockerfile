@@ -16,9 +16,18 @@ ARG PIB_SDK_VERSION=0.9.0
 RUN printf '%s\n' "${APP_VERSION:-dev}" > /etc/pib_version \
     && printf '%s\n' "${PIB_SDK_VERSION}" > /etc/pib_required_pib_sdk_version
 
+# Pinocchio (pib-sdk's kinematics backend) links against the GNU OpenMP runtime, which the slim
+# base image does not carry. Without it the solver fails at import time, not at build time.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
 # The pinned third-party set first, in one resolve.
 COPY ./pib_api/flask/requirements.txt /app
-RUN pip install -r requirements.txt
+# pib-sdk carries the inverse solver the kinematics endpoint wraps; pinned to the same version as
+# the ROS side. Same resolve as the rest of the third-party set - the `pin` wheel vendors
+# pinocchio, only libgomp1 above has to come from the base image.
+RUN pip install -r requirements.txt "pib-sdk==${PIB_SDK_VERSION}"
 
 # hermes_constants and hermes_cli are import-safe (stdlib only). --no-deps
 # keeps this from re-resolving Flask's pinned set; hermes-agent pins a newer

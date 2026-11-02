@@ -29,11 +29,33 @@ Results are written to `tests/results/run-<timestamp>/`.
 
 ## Pytest
 
+The suite needs four requirement files, not one: the camera and unit files carry
+imports the collection step hits before any test runs (`cv2` in
+`tests/unit/test_stereo_camera_optimization.py`, for example). Skipping them turns
+into a collection ERROR that reads like a broken test.
+
 ```bash
-pip install -r tests/integration/requirements.txt
-pip install -r tests/infrastructure/requirements.txt
-pytest tests/ -q
+cd <repo-root>
+python3 -m venv .test-venv
+source .test-venv/bin/activate
+pip install --prefer-binary \
+  -r tests/integration/requirements.txt \
+  -r tests/infrastructure/requirements.txt \
+  -r tests/requirements-camera.txt \
+  -r tests/requirements-unit.txt \
+  playwright lark
+pip install -e ./pib_hermes_config -e ./pib_mcp_server -e ./public_api_client
+playwright install chromium        # skipped on arm64; the tests then use system chromium
+
+# The live suites read PIB_ROBOT_URL and refuse to guess localhost.
+export PIB_ROBOT_URL=http://localhost
+PYTHONPATH="$PWD:$PWD/pib_api/flask:$PWD/pib_api/client:$PWD/pib_hermes_config:$PWD/pib_mcp_server:$PWD/public_api_client" \
+  python -m pytest tests -q -m "not docker" --ignore=tests/blockly_generator
 ```
+
+`tests/run_all_tests.sh` does all of this for you and now fails fast when one of
+the required imports is missing, naming the module instead of letting pytest
+report a collection error later.
 
 Live Docker deployment tests (slow, builds images):
 

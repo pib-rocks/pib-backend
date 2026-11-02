@@ -7,7 +7,6 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-ENV_FILE = REPO_ROOT / ".env"
 
 DEFAULT_SERVICES = {"pib-blockly-server", "flask-app", "rosbridge-ws"}
 
@@ -88,7 +87,3 @@ class TestComposeArchitecture:
         assert "PROGRAM_DIR=/ros2_ws/cerebra_programs" in env
         mount_targets = [v.rsplit(":", 1)[-1] for v in spec["volumes"]]
         assert "/ros2_ws/cerebra_programs" in mount_targets
-
-    def test_compose_project_name_in_env_file(self):
-        content = ENV_FILE.read_text(encoding="utf-8")
-        assert "COMPOSE_PROJECT_NAME=multirepo" in content

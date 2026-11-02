@@ -21,6 +21,7 @@ from controller import (
     system_controller,
     version_controller,
     robot_model_controller,
+    kinematics_controller,
 )
 
 app.register_blueprint(program_controller.bp, url_prefix="/program", name="program")
@@ -53,6 +54,9 @@ app.register_blueprint(
     key_store_controller.bp, url_prefix="/system/key-store", name="key_store"
 )
 app.register_blueprint(pose_controller.bp, url_prefix="/pose", name="pose")
+app.register_blueprint(
+    kinematics_controller.bp, url_prefix="/kinematics", name="kinematics"
+)
 app.register_blueprint(ip_controller.bp, url_prefix="/host-ip", name="host-ip")
 app.register_blueprint(
     button_program_controller.bp, url_prefix="/button-programs", name="button-programs"

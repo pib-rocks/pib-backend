@@ -32,6 +32,10 @@ from public_api_client.hermes_agent_client import _ensure_mcp_servers_pib
 import os
 import subprocess
 from unittest.mock import patch
+import pytest
+
+# SOUL.md is asserted verbatim below: keep the live motion model out of it (PR-2176).
+pytestmark = pytest.mark.usefixtures("no_live_motion_model")
 
 # The MCP tool names as the module publishes them. These must NOT appear in a
 # generated SOUL any more; they are asserted against the removed section below.

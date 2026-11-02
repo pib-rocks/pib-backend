@@ -1,9 +1,9 @@
-"""Live Playwright E2E suite for Joint Control (/joint-control) and Camera (/camera).
+"""Live Playwright E2E suite for Movement (/movement) and Vision (/vision).
 
 Covers the real end-to-end paths that the legacy Robot Framework frontend tests
 (joint_control.robot, camera.robot) only inspected superficially:
 
-1. Joint Control (/joint-control/head):
+1. Movement (/movement/head):
    - Opens the Head joint view, clicks the touchpoint for turn_head_motor,
      enters a target angle in the slider bubble input, and verifies both:
      (a) the /apply_joint_trajectory ROS service call succeeds over rosbridge, and
@@ -11,7 +11,7 @@ Covers the real end-to-end paths that the legacy Robot Framework frontend tests
    - Opens the Motor Settings modal, toggles Extended Values, and verifies that
      velocity/acceleration/pulse-width controls render with live motor settings.
 
-2. Camera (/camera):
+2. Vision (/vision):
    - Opens the Camera view, ensures the camera stream is enabled, and verifies
      that img#camera-stream decodes real non-empty frames (naturalWidth > 0,
      naturalHeight > 0, not the placeholder or error asset).
@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import os
 import socket
 import time
@@ -118,11 +119,42 @@ def _rosbridge_get_joint_centideg(joint_name: str, timeout: float = 5.0) -> int:
         sock.close()
 
 
+def _sent_target(
+    requests: list[dict[str, Any]], wanted_rad: float, wanted_centideg: float = 0.0
+) -> bool:
+    """Did one of these /apply_joint_trajectory requests ask for this position?
+
+    Positions travel in radians (motor_control converts once at entry), but accept
+    centidegrees too, so the check is about the value the user entered rather than about
+    the wire unit.
+    """
+    for request in requests:
+        try:
+            positions = request["args"]["joint_trajectory"]["points"][0]["positions"]
+        except (KeyError, IndexError, TypeError):
+            continue
+        for value in positions:
+            try:
+                number = float(value)
+            except (TypeError, ValueError):
+                continue
+            if abs(number - wanted_rad) < 0.01:
+                return True
+            if wanted_centideg and abs(number - wanted_centideg) < 5:
+                return True
+    return False
+
+
 class TestJointControlAndCameraE2E:
     """Real end-to-end verification of Joint Control and Camera views."""
 
     def test_joint_control_slider_moves_physical_motor_and_settings_modal_renders(self):
         initial_cdeg = _rosbridge_get_joint_centideg("turn_head_motor")
+        # The target is computed again after the page settled: opening the view makes the
+        # app publish the position it reads, so the head can be somewhere else than it
+        # was a second ago and a target derived from the first reading is then a move the
+        # test never asked for (measured: target -15 deg while the page had just put the
+        # head at +14.85 deg, and the servo did move - just not where the test looked).
         target_deg = -15 if initial_cdeg >= 0 else 15
         target_cdeg = target_deg * 100
         executable = _chromium_executable()
@@ -139,6 +171,7 @@ class TestJointControlAndCameraE2E:
             page = context.new_page()
 
             ws_responses: list[dict[str, Any]] = []
+            ws_requests: list[dict[str, Any]] = []
 
             def _on_ws(ws):
                 def _on_received(payload):
@@ -148,13 +181,24 @@ class TestJointControlAndCameraE2E:
                         except Exception:
                             pass
 
+                def _on_sent(payload):
+                    # What the page asked for. Positions travel in radians (motor_control
+                    # converts once at entry), so this is how the test tells "the UI sent
+                    # my value" from "the page published whatever it read on load".
+                    if isinstance(payload, str) and "apply_joint_trajectory" in payload:
+                        try:
+                            ws_requests.append(json.loads(payload))
+                        except Exception:
+                            pass
+
                 ws.on("framereceived", _on_received)
+                ws.on("framesent", _on_sent)
 
             page.on("websocket", _on_ws)
 
             try:
                 page.goto(
-                    f"{ROBOT_URL}/joint-control/head",
+                    f"{ROBOT_URL}/movement/head",
                     wait_until="domcontentloaded",
                     timeout=30000,
                 )
@@ -165,34 +209,91 @@ class TestJointControlAndCameraE2E:
                 page.wait_for_timeout(1500)
                 touchpoint.click()
 
+                page.wait_for_timeout(1500)
+                # A step of 5 degrees away from the current position, so the move is always
+                # small, always in the free direction and inside the servo range.
+                live_cdeg = _rosbridge_get_joint_centideg("turn_head_motor")
+                target_deg = (
+                    round((live_cdeg - 500) / 100)
+                    if live_cdeg > 0
+                    else round((live_cdeg + 500) / 100)
+                )
+                target_cdeg = target_deg * 100
+                print(
+                    f"head at {live_cdeg} cdeg, moving to {target_deg} deg ({target_cdeg} cdeg)"
+                )
+
+                # Anything the page published while loading (it sends the position it
+                # reads once) must not satisfy the assertion below.
+                ws_responses.clear()
+
                 # Double-click the slider bubble overlay to open the numeric bubble input
                 bubble_span = page.locator("app-motor-position .bubble-span").first
-                expect(bubble_span).to_be_visible(timeout=10000)
-                bubble_span.dblclick()
+                expect(bubble_span).to_be_visible(timeout=15000)
 
-                bubble_input = page.locator(
-                    'app-motor-position [data-test="TXT_Slider_BubbleInput"]'
-                ).first
-                expect(bubble_input).to_be_visible(timeout=10000)
-                bubble_input.fill(str(target_deg))
-                bubble_input.press("Enter")
+                # The bubble is re-rendered by every incoming joint state, so a
+                # double-click can land on an element that is already detached and the
+                # edit silently never reaches rosbridge - the run then failed on "did
+                # not move the motor" while nothing had been sent at all (PR-2176). So:
+                # send, commit, and if no trajectory went out, do the edit once more.
+                for attempt in (1, 2, 3, 4, 5):
+                    if attempt > 1:
+                        # Start over from the joint view: the first attempt can leave the
+                        # app on the motor detail route, where the bubble commits through
+                        # another path and a second edit there proves nothing.
+                        page.goto(
+                            f"{ROBOT_URL}/movement/head",
+                            wait_until="domcontentloaded",
+                            timeout=30000,
+                        )
+                        touchpoint = page.locator(
+                            '[data-test="BTN_Touchpoint_turn-head"]'
+                        ).first
+                        expect(touchpoint).to_be_visible(timeout=15000)
+                        page.wait_for_timeout(1200)
+                        touchpoint.click()
+                        ws_responses.clear()
+                    bubble_span = page.locator("app-motor-position .bubble-span").first
+                    expect(bubble_span).to_be_visible(timeout=15000)
+                    bubble_span.dblclick()
+                    bubble_input = page.locator(
+                        'app-motor-position [data-test="TXT_Slider_BubbleInput"]'
+                    ).first
+                    expect(bubble_input).to_be_visible(timeout=15000)
+                    bubble_input.click()
+                    bubble_input.fill(str(target_deg))
+                    bubble_input.press("Enter")
+                    # No blur-click: measured on the robot, clicking the body here closes
+                    # the editor without committing, while Enter alone commits.
+                    page.wait_for_timeout(600)
+                    wanted_rad = math.radians(target_deg)
+                    deadline = time.monotonic() + 10.0
+                    while time.monotonic() < deadline and not _sent_target(
+                        ws_requests, wanted_rad
+                    ):
+                        page.wait_for_timeout(200)
+                    if _sent_target(ws_requests, wanted_rad, target_cdeg):
+                        break
+                    print(
+                        f"the page did not send {target_deg} deg "
+                        f"({wanted_rad:.4f} rad) after the edit "
+                        f"(attempt {attempt}/5); retrying the bubble edit"
+                    )
 
-                # Wait for rosbridge /apply_joint_trajectory response
-                deadline = time.monotonic() + 6.0
-                while time.monotonic() < deadline and not ws_responses:
-                    page.wait_for_timeout(200)
-
-                assert (
-                    ws_responses
-                ), "Adjusting the Joint Control slider did not call /apply_joint_trajectory"
+                assert _sent_target(ws_requests, math.radians(target_deg)), (
+                    "Adjusting the Joint Control slider never sent "
+                    f"{target_deg} deg to /apply_joint_trajectory; sent={ws_requests[-3:]}"
+                )
                 assert (
                     ws_responses[-1].get("values", {}).get("successful") is True
                 ), f"/apply_joint_trajectory failed: {ws_responses[-1]}"
 
-                # Verify physical servo reaches target_cdeg
+                # Verify physical servo reaches target_cdeg. The browser here runs on
+                # the robot host, where a headless Chromium plus whisper share the CPU:
+                # the servo needs more than the 5 s a dev host gets (PR-2172).
                 reached = False
                 last_pos = initial_cdeg
-                move_deadline = time.monotonic() + 5.0
+                move_deadline = time.monotonic() + 25.0
                 while time.monotonic() < move_deadline:
                     last_pos = _rosbridge_get_joint_centideg("turn_head_motor")
                     if abs(last_pos - target_cdeg) <= POSITION_TOLERANCE_CENTIDEG:
@@ -201,7 +302,8 @@ class TestJointControlAndCameraE2E:
                     time.sleep(0.15)
                 assert reached, (
                     f"Joint Control slider did not move turn_head_motor to {target_cdeg} cdeg "
-                    f"(initial={initial_cdeg}, last={last_pos})"
+                    f"(initial={initial_cdeg}, last={last_pos}); "
+                    f"last /apply_joint_trajectory response: {ws_responses[-1]}"
                 )
 
                 # Open Motor Settings modal and toggle Extended Values
@@ -240,7 +342,7 @@ class TestJointControlAndCameraE2E:
 
             try:
                 page.goto(
-                    f"{ROBOT_URL}/camera",
+                    f"{ROBOT_URL}/vision",
                     wait_until="domcontentloaded",
                     timeout=30000,
                 )

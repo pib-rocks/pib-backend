@@ -175,8 +175,54 @@ def should_attempt_usb_reset(attempt, reason, device_name=""):
     return "respeaker" in label or "arrayuac10" in label
 
 
-def reset_respeaker_usb_device(*, usb_core_module=None):
-    """Reset the ReSpeaker USB device when pyusb can reach it."""
+def _sysfs_power_cycle_respeaker_port() -> tuple[bool, str]:
+    """Power-cycle the USB hub port holding 2886:0018 when EP0 is wedged (-EPIPE)."""
+    import glob
+    import time
+
+    for vendor_file in sorted(glob.glob("/sys/bus/usb/devices/*/idVendor")):
+        dev_dir = os.path.dirname(vendor_file)
+        try:
+            with open(vendor_file, encoding="utf-8") as vf:
+                vid = vf.read().strip().lower()
+            with open(os.path.join(dev_dir, "idProduct"), encoding="utf-8") as pf:
+                pid = pf.read().strip().lower()
+        except OSError:
+            continue
+        if vid != f"{RESPEAKER_USB_VID:04x}" or pid != f"{RESPEAKER_USB_PID:04x}":
+            continue
+        dev_name = os.path.basename(dev_dir)
+        if "." in dev_name:
+            hub_prefix, port_num = dev_name.rsplit(".", 1)
+            disable_candidates = glob.glob(
+                f"/sys/bus/usb/devices/{hub_prefix}/{hub_prefix}:*/{hub_prefix}-port{port_num}/disable"
+            )
+            for disable_path in disable_candidates:
+                try:
+                    with open(disable_path, "w", encoding="utf-8") as df:
+                        df.write("1")
+                    time.sleep(1.5)
+                    with open(disable_path, "w", encoding="utf-8") as df:
+                        df.write("0")
+                    time.sleep(2.0)
+                    return (
+                        True,
+                        f"ReSpeaker USB hub port {hub_prefix}-port{port_num} power-cycled",
+                    )
+                except OSError:
+                    continue
+    return False, ""
+
+
+def reset_respeaker_usb_device(
+    *, usb_core_module=None, prefer_port_cycle: bool = False
+):
+    """Reset the ReSpeaker USB device when pyusb can reach it, or cycle its hub port."""
+
+    if prefer_port_cycle and usb_core_module is None:
+        cycled, msg = _sysfs_power_cycle_respeaker_port()
+        if cycled:
+            return True, msg
 
     if usb_core_module is None:
         try:
@@ -191,6 +237,9 @@ def reset_respeaker_usb_device(*, usb_core_module=None):
     except Exception as exc:
         return False, f"usb.core.find failed: {exc}"
     if device is None:
+        cycled, msg = _sysfs_power_cycle_respeaker_port()
+        if cycled:
+            return True, msg
         return False, "ReSpeaker USB device 2886:0018 not found"
     reset = getattr(device, "reset", None)
     if not callable(reset):
@@ -198,6 +247,9 @@ def reset_respeaker_usb_device(*, usb_core_module=None):
     try:
         reset()
     except Exception as exc:
+        cycled, msg = _sysfs_power_cycle_respeaker_port()
+        if cycled:
+            return True, msg
         usb_error = getattr(usb_core_module, "USBError", None)
         if usb_error is not None and isinstance(exc, usb_error):
             return False, f"USB reset failed: {exc}"

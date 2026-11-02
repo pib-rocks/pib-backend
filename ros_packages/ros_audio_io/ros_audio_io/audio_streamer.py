@@ -376,7 +376,42 @@ class AudioStreamer(Node):
 
         except Exception as e:
             self.get_logger().error(f"Audio read/publish error: {e}")
-            # Optional: attempt a soft recover on I/O errors. For now, just continue.
+            err_text = str(e)
+            if (
+                getattr(e, "errno", None) in (-9988, -9999)
+                or "-9988" in err_text
+                or "-9999" in err_text
+                or "Stream closed" in err_text
+                or "Unanticipated host error" in err_text
+            ):
+                self._recover_broken_stream(e)
+
+    def _recover_broken_stream(self, exc):
+        if self.timer is not None:
+            try:
+                self.timer.cancel()
+                self.destroy_timer(self.timer)
+            except Exception:
+                pass
+            self.timer = None
+        if self.audio_stream is not None:
+            try:
+                self.audio_stream.stop_stream()
+            except Exception:
+                pass
+            try:
+                self.audio_stream.close()
+            except Exception:
+                pass
+            self.audio_stream = None
+        if self.py_audio is not None:
+            try:
+                self.py_audio.terminate()
+            except Exception:
+                pass
+            self.py_audio = None
+        self._microphone_was_unavailable = True
+        self._attempt_open_device()
 
     def destroy_node(self):
         try:

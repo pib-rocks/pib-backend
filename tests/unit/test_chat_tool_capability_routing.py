@@ -31,6 +31,9 @@ for _path in (
 
 from provider_registry import PIB_CLOUD_API_NAME  # noqa: E402
 
+# SOUL.md is asserted verbatim below: keep the live motion model out of it (PR-2176).
+pytestmark = pytest.mark.usefixtures("no_live_motion_model")
+
 TEXT_TYPE_SENTENCE = 0
 TEXT_TYPE_CODE_VISUAL = 1
 #: What provider_name_for resolves the pib.Cloud model to.
@@ -172,6 +175,12 @@ def _install_ros_stubs() -> None:
         vac.create_chat_message = MagicMock()
         vac.update_chat_message = MagicMock()
         vac.record_first_token_latency = MagicMock(return_value=False)
+    # voice_assistant.robot_context imports this client at module load time, so the
+    # stand-in has to carry it even though this test never builds robot context
+    # (PR-2169).
+    if "pib_api_client.motion_model_client" not in sys.modules:
+        mmc = ensure("pib_api_client.motion_model_client")
+        mmc.get_motion_model = MagicMock(return_value=(False, None))
 
     if "public_api_client.public_voice_client" not in sys.modules:
         pvc = ensure("public_api_client.public_voice_client")
