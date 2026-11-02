@@ -28,7 +28,7 @@ def _assistant():
 
 
 class AssistantTurnCallbacksMixin:
-    def on_start_signal_played(self) -> None:
+    def on_start_signal_played(self, *, from_barge_in: bool = False) -> None:
         if self.gemini_loop.is_listening:
             return
 
@@ -43,8 +43,9 @@ class AssistantTurnCallbacksMixin:
             return
 
         self._refresh_personality_turn_taking()
+        silent_before = 0.0 if from_barge_in else _assistant().MAX_SILENT_SECONDS_BEFORE
         self.record_audio(
-            _assistant().MAX_SILENT_SECONDS_BEFORE,
+            silent_before,
             self.personality.pause_threshold,
             self.if_cycle_not_changed(self.on_stopped_recording, require_voice_on=True),
             self.if_cycle_not_changed(
@@ -187,6 +188,10 @@ class AssistantTurnCallbacksMixin:
         # open again (PC-40).
         self._cancel_pending_drain_watchdog()
         self._answer_audio_pending = False
+        self.state.speaking = False
+        detector = getattr(self, "_barge_in_detector", None)
+        if detector is not None:
+            detector.reset()
         self._playback_epoch += 1
         self._close_latency_turn(incomplete=False)
         if not self.state.turned_on or self.turning_off:
@@ -319,20 +324,79 @@ class AssistantTurnCallbacksMixin:
         if stop_chat is not None:
             stop_chat()
 
-    def barge_in(self, chat_id: Optional[str] = None) -> bool:
+    def _can_barge_in_now(self) -> bool:
+        """True when robot speech or an active spoken turn can be interrupted by the user."""
+        if not getattr(self.state, "turned_on", False) or getattr(
+            self, "turning_off", False
+        ):
+            return False
+        if getattr(self.gemini_loop, "is_listening", False):
+            return False
+        chat_id = getattr(self.state, "chat_id", "") or ""
+        if not chat_id:
+            return False
+        if self.chat_id_to_is_listening.get(chat_id, False):
+            return False
+        if getattr(self, "waiting_for_transcribed_text", False):
+            return False
+        return bool(
+            getattr(self, "_answer_audio_pending", False)
+            or getattr(self.state, "speaking", False)
+            or getattr(self, "_turn_has_playback", False)
+        )
+
+    def _on_hardware_speech_detected(self, msg: Bool) -> None:
+        """Receive 10 Hz /speech_detected from XVF3000 hardware AEC/ASR detector."""
+        detector = getattr(self, "_barge_in_detector", None)
+        if detector is None:
+            return
+        detector.observe_speech_detected(
+            bool(getattr(msg, "data", False)), now_ms=_assistant().now_ms()
+        )
+
+    def _on_hardware_voice_activity(self, msg: Bool) -> None:
+        """Receive 20 Hz /voice_activity from XVF3000 and trigger barge-in when confirmed."""
+        detector = getattr(self, "_barge_in_detector", None)
+        if detector is None:
+            return
+        decision = detector.observe_voice_activity(
+            bool(getattr(msg, "data", False)),
+            now_ms=_assistant().now_ms(),
+            can_interrupt=self._can_barge_in_now(),
+        )
+        if not decision.triggered:
+            return
+        chat_id = getattr(self.state, "chat_id", "") or ""
+        self.get_logger().info(
+            f"[PERF_TRACE] BARGE_IN_TRIGGERED chat={chat_id} "
+            f"vad_ms={decision.sustained_ms:.1f} "
+            f"speech_detected={decision.speech_detected} reason={decision.reason}"
+        )
+        self.barge_in(chat_id, from_vad=True)
+
+    def barge_in(
+        self, chat_id: Optional[str] = None, *, from_vad: bool = False
+    ) -> bool:
         """Interrupt active playback and stream cleanly so the next turn can start."""
         effective_chat_id = chat_id or self.state.chat_id
         if not effective_chat_id:
             return False
+        detector = getattr(self, "_barge_in_detector", None)
+        if detector is not None:
+            detector.reset()
         self.cycle += 1
         self._invalidate_voice_async_work()
+        self._close_latency_turn(incomplete=True)
         self.stop_chat(effective_chat_id)
         self.final_chat_response_received = False
         self.state.speaking = False
 
         def on_cleared():
             if self.state.turned_on and effective_chat_id == self.state.chat_id:
-                self.on_start_signal_played()
+                try:
+                    self.on_start_signal_played(from_barge_in=from_vad)
+                except TypeError:
+                    self.on_start_signal_played()
             else:
                 self.set_is_listening(effective_chat_id, True)
 
