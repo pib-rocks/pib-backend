@@ -59,6 +59,25 @@ def skip_account_live_model_pin(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(live_model_service, "pin_unlocked_providers", lambda: None)
 
 
+@pytest.fixture()
+def no_live_motion_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A reachable robot API must not change what a profile's SOUL.md contains.
+
+    ``motion_model_prompt_for_profile`` asks the API for the motion model and
+    ``ensure_profile_home`` appends it to SOUL.md. On the robot that API answers on
+    localhost, so the written file carried the motor ranges and every test that
+    compares SOUL.md against ``build_default_soul_text`` failed there while passing
+    on a dev host (PR-2176).
+
+    Deliberately *not* autouse: importing ``pib_api_client`` here would change
+    ``sys.modules`` for the daemon tests that assert on a missing import. The three
+    SOUL-comparing modules ask for this fixture with ``usefixtures``.
+    """
+    from pib_api_client import motion_model_client
+
+    monkeypatch.setattr(motion_model_client, "get_motion_model", lambda: (False, None))
+
+
 @pytest.fixture(autouse=True)
 def sandboxed_hermes_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Point every Hermes path at the sandbox before a test can forget to.

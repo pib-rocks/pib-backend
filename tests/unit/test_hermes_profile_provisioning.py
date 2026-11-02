@@ -17,6 +17,9 @@ from public_api_client.hermes_agent_client import (
     profile_dir_for,
 )
 
+# SOUL.md is asserted verbatim below: keep the live motion model out of it (PR-2176).
+pytestmark = pytest.mark.usefixtures("no_live_motion_model")
+
 BASE_ENV = "OPENROUTER_API_KEY=sk-base-key\n"
 BASE_CONFIG = "model: anthropic/claude-opus-5\n"
 
