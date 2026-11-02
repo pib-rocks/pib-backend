@@ -1,1 +1,2 @@
+string turn_id # answer whose clauses must never be played again; empty cancels the queue only
 ---
