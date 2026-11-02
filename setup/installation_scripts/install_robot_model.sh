@@ -15,6 +15,11 @@ set -uo pipefail
 
 APP_DIR="${APP_DIR:-$HOME/app}"
 CONTAINER="${PIB_FLASK_CONTAINER:-pib-backend-flask-app-1}"
+# Setup runs this right after the stack starts, and the update service runs it
+# while a container may still be coming up. Failing on the first `docker ps`
+# used to report "FAILED rc=1 0s" with no hint that the model was never
+# downloaded.
+CONTAINER_WAIT_SECONDS="${PIB_ROBOT_MODEL_CONTAINER_WAIT:-60}"
 DEST_IN_CONTAINER="/data/robot-model"
 LOG_PREFIX="${LOG_PREFIX:-robot-model}"
 
@@ -51,8 +56,28 @@ installed_version() {
         python3 -c 'import json,sys; print(json.load(sys.stdin).get("version",""))' 2>/dev/null
 }
 
-if ! docker ps --format '{{.Names}}' | grep -qx "$CONTAINER"; then
-    log "container ${CONTAINER} is not running - model not installed"
+if ! docker info >/dev/null 2>&1; then
+    log "docker is not usable for $(id -un) - is the docker group active for this session?"
+    exit 2
+fi
+
+wait_for_container() {
+    local waited=0
+    while ! docker ps --format '{{.Names}}' | grep -qx "$CONTAINER"; do
+        if [ "$waited" -ge "$CONTAINER_WAIT_SECONDS" ]; then
+            return 1
+        fi
+        if [ "$waited" -eq 0 ]; then
+            log "waiting up to ${CONTAINER_WAIT_SECONDS}s for ${CONTAINER} to start"
+        fi
+        sleep 2
+        waited=$((waited + 2))
+    done
+    return 0
+}
+
+if ! wait_for_container; then
+    log "container ${CONTAINER} is not running after ${CONTAINER_WAIT_SECONDS}s - model not installed"
     exit 1
 fi
 
