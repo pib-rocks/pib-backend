@@ -175,17 +175,17 @@ def test_cloud_speech_posts_the_contract_shape_and_queues_the_wav(monkeypatch):
 @pytest.mark.parametrize(
     "gender, expected",
     [
-        ("Female", "F3"),
+        ("Female", "F2"),
         ("Male", "M3"),
-        ("female", "F3"),
+        ("female", "F2"),
         ("male", "M3"),
         ("Maennlich", "M3"),
-        ("", "F3"),
-        (None, "F3"),
+        ("", "F2"),
+        (None, "F2"),
     ],
 )
 def test_the_voice_dropdown_decides_the_cloud_voice(gender, expected):
-    """The dialog offers Female and Male; Female speaks as F3 (Bella), Male as M3 (Adam).
+    """The dialog offers Female and Male; Female speaks as F2 (Domi), Male as M3 (Adam).
 
     The robot sends the endpoint's own voice name, never a provider id - a raw id is
     rejected by /v1/audio/speech with 400.
@@ -237,7 +237,7 @@ def test_english_and_female_voice_are_sent_as_en_and_f1(monkeypatch):
     spoken.language = "English"
     node.play_audio_from_speech(spoken, SimpleNamespace())
     assert calls[0]["language"] == "en"
-    assert calls[0]["voice"] == "F3"
+    assert calls[0]["voice"] == "F2"
 
 
 @pytest.mark.parametrize(
