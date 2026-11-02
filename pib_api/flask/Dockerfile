@@ -18,11 +18,10 @@ RUN printf '%s\n' "${APP_VERSION:-dev}" > /etc/pib_version \
 
 # The pinned third-party set first, in one resolve.
 COPY ./pib_api/flask/requirements.txt /app
-RUN pip install -r requirements.txt
-
-# The kinematics endpoint is a thin wrapper around pib-sdk's solver, so the API image needs the
-# same pinned SDK the ROS side carries. Pinocchio arrives as the `pin` wheel - no system deps.
-RUN pip install "pib-sdk==${PIB_SDK_VERSION}"
+# pib-sdk carries the inverse solver the kinematics endpoint wraps; pinned to the same version as
+# the ROS side. Same resolve as the rest of the third-party set - pinocchio arrives as the `pin`
+# wheel, no system deps.
+RUN pip install -r requirements.txt "pib-sdk==${PIB_SDK_VERSION}"
 
 # hermes_constants and hermes_cli are import-safe (stdlib only). --no-deps
 # keeps this from re-resolving Flask's pinned set; hermes-agent pins a newer
