@@ -333,7 +333,10 @@ class AudioRecorderNode(Node):
         # Read thresholds (in seconds) from the goal
         max_silent_before_secs = request.max_silent_seconds_before
         max_silent_after_secs = request.max_silent_seconds_after
-        is_barge_in = max_silent_before_secs <= BARGE_IN_SILENT_BEFORE_SENTINEL
+        preroll_ring = getattr(self, "preroll_chunks", None)
+        is_barge_in = bool(
+            getattr(request, "include_preroll", False) or max_silent_before_secs <= 0.0
+        )
 
         # Prepare to accumulate silence time
         silent_time_accum = 0.0
@@ -346,11 +349,12 @@ class AudioRecorderNode(Node):
         with self.audio_chunks_lock:
             self.audio_chunks.clear()
             self.audio_chunk_event.clear()
-            if is_barge_in and self.preroll_chunks:
-                chunks = list(self.preroll_chunks)
+            if is_barge_in and preroll_ring:
+                chunks = list(preroll_ring)
             else:
                 chunks = []
-            self.preroll_chunks.clear()
+            if preroll_ring is not None:
+                preroll_ring.clear()
             self._recording_active = True
 
         # Number of bytes per single frame (sample × channels)

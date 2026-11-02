@@ -24,8 +24,8 @@ def test_audio_recorder_maintains_preroll_when_idle_and_drains_on_barge_in():
     assert "PREROLL_DURATION_SECONDS = 0.5" in source
     assert "BARGE_IN_SILENT_BEFORE_SENTINEL = 0.05" in source
     assert "self.preroll_chunks = deque(maxlen=8)" in source
-    assert "if is_barge_in and self.preroll_chunks:" in source
-    assert "chunks = list(self.preroll_chunks)" in source
+    assert "if is_barge_in and preroll_ring:" in source
+    assert "chunks = list(preroll_ring)" in source
 
 
 def test_preroll_ring_caps_at_eight_chunks_and_switches_to_active_queue():
