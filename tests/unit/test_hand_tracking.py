@@ -298,12 +298,14 @@ def test_decoder_accepts_the_top2_postprocessing_layout():
 
 
 def test_fast_branch_stays_inside_the_palm_warp_limit():
-    assert (FAST_BRANCH_WIDTH, FAST_BRANCH_HEIGHT) == (256, 144)
+    # The branch the reference implementation proved (1152x640 preview) is the
+    # ceiling; the ISP frame itself is refused.
+    assert validate_fast_branch_size(1152, 648) == pytest.approx(9.0)
     assert validate_fast_branch_size(256, 144) == pytest.approx(2.0)
     with pytest.raises(ValueError, match="WARP_SWCH_ERR_CACHE_TOO_SMALL"):
         validate_fast_branch_size(2104, 1560)
-    with pytest.raises(ValueError, match="within 2:1"):
-        validate_fast_branch_size(1152, 648)
+    with pytest.raises(ValueError, match="must stay within"):
+        validate_fast_branch_size(1920, 1080)
 
 
 # Callables present on device lpb.NNData. Host-only names such as getTensor are absent.

@@ -84,6 +84,7 @@ EXPECTED_CAMERA_NODE_METHODS = {
     "_plane_point",
     "_point_xy",
     "_poll_colour_branch_capture",
+    "_poll_hand_tracking_fast",
     "_process_face_crop",
     "_process_hand_mp",
     "_process_hand_tracking",

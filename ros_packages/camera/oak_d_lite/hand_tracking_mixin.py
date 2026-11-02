@@ -940,6 +940,17 @@ class HandTrackingMixin:
             publisher.publish(message)
         self.pipeline_manager.record_packet(FAST_MODEL_ID)
 
+    def _poll_hand_tracking_fast(self) -> None:
+        """Drain the device hand chain on its own timer, not the stream timer.
+
+        The chain produces a result per camera frame; polling it from the
+        10 Hz stream timer capped it at 10 detections/s.
+        """
+        try:
+            self._process_hand_tracking_fast()
+        except Exception as exc:  # pragma: no cover - defensive, verified by E2E
+            self._warn_hand_once(f"hand_tracking_fast processing failed: {exc!r}")
+
     def _process_hand_tracking_fast(self):
         queue = getattr(self, "hand_fast_queue", None)
         if queue is None or not self._has_active_frame():
