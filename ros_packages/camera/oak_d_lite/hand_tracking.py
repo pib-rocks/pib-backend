@@ -458,6 +458,7 @@ _FAST_RESULT_KEYS = (
     "rect_center_y",
     "rect_size",
     "rrn_lms",
+    "sqn_lms",
 )
 
 _FAST_TRACKER_SCRIPT = r"""
@@ -493,7 +494,7 @@ def send_result(result):
     buffer.getData()[:] = result_serial
     node.io['${result_output}'].send(buffer)
 
-def send_hands(lm_score, handedness, palm_score, rotation, rect_center_x, rect_center_y, rect_size, rrn_lms):
+def send_hands(lm_score, handedness, palm_score, rotation, rect_center_x, rect_center_y, rect_size, rrn_lms, sqn_lms):
     send_result(dict([
         ("lm_score", lm_score),
         ("handedness", handedness),
@@ -503,6 +504,9 @@ def send_hands(lm_score, handedness, palm_score, rotation, rect_center_x, rect_c
         ("rect_center_y", rect_center_y),
         ("rect_size", rect_size),
         ("rrn_lms", rrn_lms),
+        # Landmarks on the letterboxed square, so the host does not have to
+        # rebuild them from the tracking rect.
+        ("sqn_lms", sqn_lms),
     ]))
 
 def normalize_radians(angle):
@@ -561,7 +565,7 @@ while True:
                     sqn_rr_center_y = box_y - 0.5 * box_size * cos(rotation)
                     hands.append([sqn_rr_size, rotation, sqn_rr_center_x, sqn_rr_center_y, float(pd_score)])
         if len(hands) == 0:
-            send_hands([], [], [], [], [], [], [], [])
+            send_hands([], [], [], [], [], [], [], [], [])
             send_new_frame_to_branch = 1
             single_hand_count = 0
             continue
@@ -576,6 +580,7 @@ while True:
         ("rect_center_y", []),
         ("rect_size", []),
         ("rrn_lms", []),
+        ("sqn_lms", []),
     ])
     updated_detect_hands = []
     last_hand = len(detected_hands) - 1
@@ -621,6 +626,7 @@ while True:
             hand_landmarks["rect_center_y"].append(sqn_rr_center_y)
             hand_landmarks["rect_size"].append(sqn_rr_size)
             hand_landmarks["rrn_lms"].append(rrn_raw)
+            hand_landmarks["sqn_lms"].append(sqn_lms)
             x0 = sqn_lms[0]
             y0 = sqn_lms[1]
             x1 = 0.25 * (sqn_lms[2*id_index_mcp] + sqn_lms[2*id_ring_mcp]) + 0.5 * sqn_lms[2*id_middle_mcp]
@@ -688,7 +694,7 @@ while True:
     else:
         single_hand_count = 0
 
-    send_hands(hand_landmarks["lm_score"], hand_landmarks["handedness"], hand_landmarks["palm_score"], hand_landmarks["rotation"], hand_landmarks["rect_center_x"], hand_landmarks["rect_center_y"], hand_landmarks["rect_size"], hand_landmarks["rrn_lms"])
+    send_hands(hand_landmarks["lm_score"], hand_landmarks["handedness"], hand_landmarks["palm_score"], hand_landmarks["rotation"], hand_landmarks["rect_center_x"], hand_landmarks["rect_center_y"], hand_landmarks["rect_size"], hand_landmarks["rrn_lms"], hand_landmarks["sqn_lms"])
 
     if nb_hands == 0:
         send_new_frame_to_branch = 1
@@ -867,6 +873,9 @@ class FastHand:
     landmark_score: float
     handedness: float
     palm_score: float
+    #: 21 (x, y) pairs in the letterboxed square, computed by the device. They
+    #: are what the hand actually is; the crop rect above is tracking state.
+    square_landmarks: Tuple[float, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -920,7 +929,7 @@ def parse_fast_script_result(payload) -> List[FastHand]:
     count = len(scores)
     columns = {}
     for key in _FAST_RESULT_KEYS:
-        if key == "rrn_lms":
+        if key in ("rrn_lms", "sqn_lms"):
             continue
         values = list(result[key])
         if len(values) != count:
@@ -929,6 +938,9 @@ def parse_fast_script_result(payload) -> List[FastHand]:
     landmarks = list(result["rrn_lms"])
     if len(landmarks) != count:
         raise ValueError("fast hand result rrn_lms does not match lm_score")
+    square_landmarks = list(result["sqn_lms"])
+    if len(square_landmarks) != count:
+        raise ValueError("fast hand result sqn_lms does not match lm_score")
 
     hands = []
     for index, score in enumerate(scores):
@@ -946,6 +958,9 @@ def parse_fast_script_result(payload) -> List[FastHand]:
                 landmark_score=landmark_score,
                 handedness=_finite_float(columns["handedness"][index], "handedness"),
                 palm_score=_finite_float(columns["palm_score"][index], "palm score"),
+                square_landmarks=tuple(
+                    float(value) for value in square_landmarks[index]
+                ),
             )
         )
     return hands
@@ -1009,13 +1024,24 @@ def map_fast_hand(
         roi_size=hand.roi_size,
         rotation=hand.rotation,
     )
-    square_points = map_landmarks_to_frame(
-        hand.crop_landmarks,
-        palm,
-        side,
-        side,
-        FAST_LANDMARK_INPUT_SIZE,
-    )
+    if len(hand.square_landmarks) == 2 * LANDMARK_COUNT:
+        # The device already placed the landmarks on the square. Using them
+        # keeps the drawn hand where the hand is, independent of the rect the
+        # tracker chose for this frame (the crop rect drifts while tracking and
+        # is reset by every fresh palm detection).
+        square_points = [
+            (hand.square_landmarks[2 * index] * side,
+             hand.square_landmarks[2 * index + 1] * side)
+            for index in range(LANDMARK_COUNT)
+        ]
+    else:
+        square_points = map_landmarks_to_frame(
+            hand.crop_landmarks,
+            palm,
+            side,
+            side,
+            FAST_LANDMARK_INPUT_SIZE,
+        )
     if len(square_points) != LANDMARK_COUNT:
         raise ValueError("fast hand result must contain 21 landmarks")
     points = [

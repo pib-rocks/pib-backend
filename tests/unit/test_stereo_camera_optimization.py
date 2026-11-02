@@ -3407,6 +3407,7 @@ class TestHandTrackingFast(unittest.TestCase):
                 "rect_center_y": [0.5],
                 "rect_size": [0.5],
                 "rrn_lms": [[112.0, 112.0, 22.4] * 21],
+                "sqn_lms": [[0.5, 0.5] * 21],
             }
         )
         node.hand_fast_queue = MagicMock()
