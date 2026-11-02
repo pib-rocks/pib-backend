@@ -412,7 +412,7 @@ class AudioPlayerNode(Node):
                 )
                 return response
 
-            playback_item = PlaybackItem(data, encoding, 0.0, order)
+            playback_item = PlaybackItem(data, encoding, 0.18, order)
             if not self._enqueue_current(playback_item):
                 return response
 
