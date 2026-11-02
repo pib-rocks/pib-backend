@@ -26,12 +26,17 @@ E2E-BDD-SYS-002 Motor Trajectory Clamped To Global Envelope
     [Documentation]    Given apply_joint_trajectory requests 12000 When clamp applied Then effective is 9000.
     Then Motor Position Should Be Clamped    turn_head_motor    ${12000}    ${-9000}    ${9000}
 
-E2E-BDD-SYS-003 Tilt Forward Motor Clamped To Seeded Range
-    [Documentation]    Given tilt_forward_motor range -4500..4500 When 5000 requested Then clamped to 4500.
+E2E-BDD-SYS-003 Tilt Forward Motor Clamped To Its Configured Range
+    [Documentation]    Given tilt_forward_motor's live rotation range When a position beyond it is requested Then it is clamped to that boundary.
+    ...    The axis is mechanically asymmetric on the current robot generation
+    ...    (-2000..4500, see tests/unit/test_motion_model_service.py), and a robot
+    ...    may be recalibrated, so the boundary is read from the robot instead of
+    ...    asserting a seeded constant.
     ${min}    ${max}=    Get Motor Rotation Range    tilt_forward_motor
-    Should Be Equal As Integers    ${min}    ${-4500}
-    Should Be Equal As Integers    ${max}    ${4500}
-    Then Motor Position Should Be Clamped    tilt_forward_motor    ${5000}    ${min}    ${max}
+    Should Be True    ${min} < 0    tilt_forward_motor has no negative travel: ${min}..${max}
+    Should Be True    ${max} > 0    tilt_forward_motor has no positive travel: ${min}..${max}
+    ${beyond}=    Evaluate    ${max} + 500
+    Then Motor Position Should Be Clamped    tilt_forward_motor    ${beyond}    ${min}    ${max}
 
 E2E-BDD-SYS-004 Startup Pose Available For Motor Boot Sequence
     [Documentation]    Given Startup/Resting pose When fetched by name Then deletable is false.

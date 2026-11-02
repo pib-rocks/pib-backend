@@ -189,10 +189,12 @@ class TestJointControlAndCameraE2E:
                     ws_responses[-1].get("values", {}).get("successful") is True
                 ), f"/apply_joint_trajectory failed: {ws_responses[-1]}"
 
-                # Verify physical servo reaches target_cdeg
+                # Verify physical servo reaches target_cdeg. The browser here runs on
+                # the robot host, where a headless Chromium plus whisper share the CPU:
+                # the servo needs more than the 5 s a dev host gets (PR-2172).
                 reached = False
                 last_pos = initial_cdeg
-                move_deadline = time.monotonic() + 5.0
+                move_deadline = time.monotonic() + 15.0
                 while time.monotonic() < move_deadline:
                     last_pos = _rosbridge_get_joint_centideg("turn_head_motor")
                     if abs(last_pos - target_cdeg) <= POSITION_TOLERANCE_CENTIDEG:
@@ -201,7 +203,8 @@ class TestJointControlAndCameraE2E:
                     time.sleep(0.15)
                 assert reached, (
                     f"Joint Control slider did not move turn_head_motor to {target_cdeg} cdeg "
-                    f"(initial={initial_cdeg}, last={last_pos})"
+                    f"(initial={initial_cdeg}, last={last_pos}); "
+                    f"last /apply_joint_trajectory response: {ws_responses[-1]}"
                 )
 
                 # Open Motor Settings modal and toggle Extended Values

@@ -119,6 +119,29 @@ check_flask() {
     return 0
 }
 
+# A venv that pip resolved without one of these turns into a collection ERROR in
+# the middle of a long run: the traceback names a test module, not the missing
+# package (measured on the robot, where 'cv2' was absent and the failure read like
+# a broken test). Name the package here instead, before the run starts.
+check_test_dependencies() {
+    section "Test dependencies"
+    local missing
+    missing="$("${VENV_DIR}/bin/python" - <<'PY' 2>&1
+import importlib
+required = ["pytest", "marshmallow", "playwright", "cv2", "yaml", "requests"]
+missing = [name for name in required if importlib.util.find_spec(name) is None]
+print(" ".join(missing))
+PY
+)"
+    if [[ -n "${missing}" ]]; then
+        echo -e "${RED}FAILED:${NC} missing test dependencies: ${missing}" >&2
+        echo "Rebuild the venv: rm -rf ${VENV_DIR} && ./run_all_tests.sh" >&2
+        return 1
+    fi
+    echo -e "${GREEN}OK:${NC} test dependencies present"
+    return 0
+}
+
 run_pytest_integration() {
     cd "${REPO_ROOT}"
     rm -rf /tmp/pytest-of-* /tmp/pytest-* 2>/dev/null || true
@@ -221,6 +244,7 @@ main() {
     cd "${SCRIPT_DIR}"
 
     ensure_venv
+    run_step "Test dependencies" check_test_dependencies
     check_flask
 
     run_step "Pytest (integration + compose)" run_pytest_integration

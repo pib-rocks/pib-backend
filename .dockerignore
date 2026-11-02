@@ -1,0 +1,26 @@
+# Build context hygiene for every image in this repository.
+#
+# The Flask image runs `flask --app run db upgrade` at build time and copies its
+# service directory wholesale. A SQLite file left behind in a working checkout
+# (pib_api/flask/pibdata.db, gitignored) travelled into the image and made that
+# upgrade fail with "table assistant_model already exists" - green in CI, red on
+# every machine that had ever run the app (measured on the robot).
+**/*.db
+**/*.db-journal
+**/*.sqlite
+**/*.sqlite3
+
+# Local test environment and artefacts: a .test-venv is hundreds of megabytes and
+# must never be part of a build context.
+.test-venv/
+**/.pytest_cache/
+tests/results/
+**/__pycache__/
+**/*.pyc
+
+# Repository metadata and local editor state.
+.git/
+.gitignore
+.dockerignore
+**/.DS_Store
+**/*.log
