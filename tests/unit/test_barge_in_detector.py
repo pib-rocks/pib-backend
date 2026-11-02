@@ -15,9 +15,6 @@ for p in (HERMES_CFG, VOICE_PKG):
         sys.path.insert(0, str(p))
 
 from pib_hermes_config.barge_in import BargeInDetector
-from ros_stubs import install_ros_stubs
-
-install_ros_stubs()
 
 
 def test_barge_in_triggers_at_200ms_when_speech_detected_is_true():
@@ -108,10 +105,32 @@ def test_voice_assistant_hardware_vad_triggers_barge_in_with_preroll_and_no_star
     speech, VoiceAssistantNode cancels the active chat turn, clears the playback
     queue, skips START_SIGNAL_FILE, and starts record_audio with silent_before=0.0
     so audio_recorder prepends the 500 ms pre-roll buffer."""
+    import ast
     import types
-    from voice_assistant.assistant_turn_callbacks_mixin import (
-        AssistantTurnCallbacksMixin,
+
+    mixin_path = (
+        ROOT
+        / "ros_packages"
+        / "voice_assistant"
+        / "voice_assistant"
+        / "assistant_turn_callbacks_mixin.py"
     )
+    tree = ast.parse(mixin_path.read_text(encoding="utf-8"))
+    cls = next(
+        n
+        for n in tree.body
+        if isinstance(n, ast.ClassDef) and n.name == "AssistantTurnCallbacksMixin"
+    )
+    module = ast.Module(
+        body=[
+            ast.ImportFrom(
+                module="__future__", names=[ast.alias(name="annotations")], level=0
+            ),
+            cls,
+        ],
+        type_ignores=[],
+    )
+    ast.fix_missing_locations(module)
 
     clock = {"ms": 10000.0}
     assistant_stub = types.ModuleType("voice_assistant.assistant")
@@ -120,7 +139,17 @@ def test_voice_assistant_hardware_vad_triggers_barge_in_with_preroll_and_no_star
     assistant_stub.STOP_SIGNAL_FILE = "/stop.wav"
     assistant_stub.FALLBACK_REPLY = "fallback"
     assistant_stub.now_ms = lambda: clock["ms"]
-    monkeypatch.setitem(sys.modules, "voice_assistant.assistant", assistant_stub)
+    ns = {
+        "_assistant": lambda: assistant_stub,
+        "ChatIsListening": SimpleNamespace,
+        "VOICE_MODE_LIVE": "live",
+        "channel_turn_on_allowed": lambda *a: True,
+        "live_session_ends_on_handover": lambda *a: False,
+        "transcript_opens_turn": lambda text: bool(text and text.strip()),
+        "answer_uses_fallback": lambda text, fb: False,
+    }
+    exec(compile(module, str(mixin_path), "exec"), ns)
+    AssistantTurnCallbacksMixin = ns["AssistantTurnCallbacksMixin"]
 
     class DummyNode(AssistantTurnCallbacksMixin):
         pass
