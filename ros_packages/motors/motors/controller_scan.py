@@ -19,9 +19,10 @@ from pib_motors.feetech_actuator import (
 #: when hardware does, and /joint_states arrives ten times per second.
 _STATUS_EVALUATION_INTERVAL_SEC = 5.0
 
-#: The API drops a reported scan result after DETECTED_ASSIGNMENTS_TTL_SEC (120 s), so the
-#: unchanged picture has to be re-sent well inside that window. Re-sending costs no bus
-#: access and no scan - it is the same numbers from /joint_states.
+#: The API keeps the last reported result, so this refresh is not about expiry: it is how a
+#: restarted API (or a scan that ran before the API was reachable) gets the picture back
+#: without touching the bus. Re-sending costs no bus access and no scan - it is the same
+#: numbers from /joint_states.
 _REPORT_REFRESH_SEC = 60.0
 SERVO_MATCH_MIN = 1
 _STARTUP_SCAN_DELAY_SEC = 1.0
