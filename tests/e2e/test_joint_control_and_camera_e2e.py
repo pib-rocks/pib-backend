@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import os
 import socket
 import time
@@ -118,11 +119,42 @@ def _rosbridge_get_joint_centideg(joint_name: str, timeout: float = 5.0) -> int:
         sock.close()
 
 
+def _sent_target(
+    requests: list[dict[str, Any]], wanted_rad: float, wanted_centideg: float = 0.0
+) -> bool:
+    """Did one of these /apply_joint_trajectory requests ask for this position?
+
+    Positions travel in radians (motor_control converts once at entry), but accept
+    centidegrees too, so the check is about the value the user entered rather than about
+    the wire unit.
+    """
+    for request in requests:
+        try:
+            positions = request["args"]["joint_trajectory"]["points"][0]["positions"]
+        except (KeyError, IndexError, TypeError):
+            continue
+        for value in positions:
+            try:
+                number = float(value)
+            except (TypeError, ValueError):
+                continue
+            if abs(number - wanted_rad) < 0.01:
+                return True
+            if wanted_centideg and abs(number - wanted_centideg) < 5:
+                return True
+    return False
+
+
 class TestJointControlAndCameraE2E:
     """Real end-to-end verification of Joint Control and Camera views."""
 
     def test_joint_control_slider_moves_physical_motor_and_settings_modal_renders(self):
         initial_cdeg = _rosbridge_get_joint_centideg("turn_head_motor")
+        # The target is computed again after the page settled: opening the view makes the
+        # app publish the position it reads, so the head can be somewhere else than it
+        # was a second ago and a target derived from the first reading is then a move the
+        # test never asked for (measured: target -15 deg while the page had just put the
+        # head at +14.85 deg, and the servo did move - just not where the test looked).
         target_deg = -15 if initial_cdeg >= 0 else 15
         target_cdeg = target_deg * 100
         executable = _chromium_executable()
@@ -139,6 +171,7 @@ class TestJointControlAndCameraE2E:
             page = context.new_page()
 
             ws_responses: list[dict[str, Any]] = []
+            ws_requests: list[dict[str, Any]] = []
 
             def _on_ws(ws):
                 def _on_received(payload):
@@ -148,7 +181,18 @@ class TestJointControlAndCameraE2E:
                         except Exception:
                             pass
 
+                def _on_sent(payload):
+                    # What the page asked for. Positions travel in radians (motor_control
+                    # converts once at entry), so this is how the test tells "the UI sent
+                    # my value" from "the page published whatever it read on load".
+                    if isinstance(payload, str) and "apply_joint_trajectory" in payload:
+                        try:
+                            ws_requests.append(json.loads(payload))
+                        except Exception:
+                            pass
+
                 ws.on("framereceived", _on_received)
+                ws.on("framesent", _on_sent)
 
             page.on("websocket", _on_ws)
 
@@ -164,6 +208,20 @@ class TestJointControlAndCameraE2E:
                 expect(touchpoint).to_be_visible(timeout=15000)
                 page.wait_for_timeout(1500)
                 touchpoint.click()
+
+                page.wait_for_timeout(1500)
+                # A step of 5 degrees away from the current position, so the move is always
+                # small, always in the free direction and inside the servo range.
+                live_cdeg = _rosbridge_get_joint_centideg("turn_head_motor")
+                target_deg = (
+                    round((live_cdeg - 500) / 100)
+                    if live_cdeg > 0
+                    else round((live_cdeg + 500) / 100)
+                )
+                target_cdeg = target_deg * 100
+                print(
+                    f"head at {live_cdeg} cdeg, moving to {target_deg} deg ({target_cdeg} cdeg)"
+                )
 
                 # Anything the page published while loading (it sends the position it
                 # reads once) must not satisfy the assertion below.
@@ -205,22 +263,27 @@ class TestJointControlAndCameraE2E:
                     bubble_input.click()
                     bubble_input.fill(str(target_deg))
                     bubble_input.press("Enter")
-                    # Commit on blur as well: the bubble closes on Enter in the joint
-                    # view and on blur in the motor view, and this test may be on either.
-                    page.locator("body").click(position={"x": 5, "y": 5})
+                    # No blur-click: measured on the robot, clicking the body here closes
+                    # the editor without committing, while Enter alone commits.
+                    page.wait_for_timeout(600)
+                    wanted_rad = math.radians(target_deg)
                     deadline = time.monotonic() + 10.0
-                    while time.monotonic() < deadline and not ws_responses:
+                    while time.monotonic() < deadline and not _sent_target(
+                        ws_requests, wanted_rad
+                    ):
                         page.wait_for_timeout(200)
-                    if ws_responses:
+                    if _sent_target(ws_requests, wanted_rad, target_cdeg):
                         break
                     print(
-                        f"no /apply_joint_trajectory after the edit "
+                        f"the page did not send {target_deg} deg "
+                        f"({wanted_rad:.4f} rad) after the edit "
                         f"(attempt {attempt}/5); retrying the bubble edit"
                     )
 
-                assert (
-                    ws_responses
-                ), "Adjusting the Joint Control slider did not call /apply_joint_trajectory"
+                assert _sent_target(ws_requests, math.radians(target_deg)), (
+                    "Adjusting the Joint Control slider never sent "
+                    f"{target_deg} deg to /apply_joint_trajectory; sent={ws_requests[-3:]}"
+                )
                 assert (
                     ws_responses[-1].get("values", {}).get("successful") is True
                 ), f"/apply_joint_trajectory failed: {ws_responses[-1]}"
