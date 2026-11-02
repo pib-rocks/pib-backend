@@ -49,10 +49,21 @@ def _container_ip(client: Any, project: str, service: str) -> str:
     assert matches, f"running container for {service} not found in project {project}"
     container = matches[0]
     networks = container.attrs["NetworkSettings"]["Networks"]
-    assert network_name in networks, f"{container.name} not attached to {network_name}"
-    ip = networks[network_name]["IPAddress"]
-    assert ip, f"no IP for {container.name} on {network_name}"
-    return ip
+    addresses = {
+        name: config.get("IPAddress")
+        for name, config in networks.items()
+        if config.get("IPAddress")
+    }
+    # The compose file pins the network name, so it is not necessarily project-prefixed.
+    # Fall back to whatever network the container got an address on instead of asserting
+    # on a name and turning the mistake into a 180 s readiness timeout (PR-2176).
+    if network_name in addresses:
+        return addresses[network_name]
+    assert addresses, (
+        f"no IP for {container.name}; networks={sorted(networks)} "
+        f"(expected {network_name})"
+    )
+    return addresses[sorted(addresses)[0]]
 
 
 def _wait_for_flask(project: str, timeout_sec: float = 180) -> str:
