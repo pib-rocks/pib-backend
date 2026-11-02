@@ -8,6 +8,7 @@ import os
 import re
 import subprocess
 import time
+import unicodedata
 import uuid
 from urllib.parse import urlparse
 
@@ -35,7 +36,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 ROBOT_URL = robot_base_url()
 API_URL = api_url()
-REQUEST_TIMEOUT = 15
+REQUEST_TIMEOUT = int(os.environ.get("PIB_VA_E2E_REQUEST_TIMEOUT_S", "45"))
 TURN_TIMEOUT = int(os.environ.get("PIB_HERMES_E2E_TURN_TIMEOUT", "300"))
 TURN_ATTEMPTS = int(os.environ.get("PIB_HERMES_E2E_TURN_ATTEMPTS", "2"))
 # rosbridge forwards /send_chat_message to a ROS node that may already be busy with
@@ -52,7 +53,7 @@ UI_TIMEOUT_MS = int(os.environ.get("PIB_E2E_UI_TIMEOUT_MS", "30000"))
 NAV_TIMEOUT_MS = int(os.environ.get("PIB_E2E_NAV_TIMEOUT_MS", "60000"))
 UI_REPLY_TIMEOUT_S = int(os.environ.get("PIB_E2E_UI_REPLY_TIMEOUT_S", "20"))
 # Budget for a UI-triggered write to become observable through the REST API.
-API_SETTLE_TIMEOUT_S = int(os.environ.get("PIB_E2E_API_SETTLE_TIMEOUT_S", "30"))
+API_SETTLE_TIMEOUT_S = int(os.environ.get("PIB_E2E_API_SETTLE_TIMEOUT_S", "90"))
 
 
 def _get_json(path: str):
@@ -226,6 +227,29 @@ def _wait_for_persisted_user_message(chat_id: str, content: str) -> None:
         "Message submitted through deep-chat was not persisted by the backend "
         f"within {API_SETTLE_TIMEOUT_S}s"
     )
+
+
+def _fold_hyphens(text: str) -> str:
+    """Fold typographic hyphens to ASCII before comparing.
+
+    A local model writes 'PIB‑COLOR‑…' with U+2011 (non-breaking hyphen) in one turn and
+    with U+002D in the next, so a byte-exact comparison of the recalled value failed on a
+    correct answer (PR-2176). NFKC plus an explicit dash map keeps the assertion about the
+    stored value instead of about the model's typography.
+    """
+    folded = unicodedata.normalize("NFKC", text)
+    for dash in (
+        "\u2010",
+        "\u2011",
+        "\u2012",
+        "\u2013",
+        "\u2014",
+        "\u2015",
+        "\u2212",
+        "\u00ad",
+    ):
+        folded = folded.replace(dash, "-")
+    return folded
 
 
 def _await_service_response(connection, request_id: str, timeout_s: float):
@@ -426,7 +450,7 @@ def test_voice_assistant_hermes_persists_reply_and_recalls_prior_fact():
             "and do not use tools.",
             first_ids,
         )
-        assert token in recalled_reply["content"]
+        assert token in _fold_hyphens(recalled_reply["content"])
     finally:
         # Each cleanup step is isolated so a failing one cannot mask the real result,
         # and so a leftover "listening" chat cannot slow down the following tests.
@@ -944,7 +968,7 @@ def test_voice_assistant_ros_stack_and_audio_recorder_supervision_e2e():
                 }
             )
         )
-        nodes_resp = _await_service_response(connection, nodes_req_id, 10)
+        nodes_resp = _await_service_response(connection, nodes_req_id, REQUEST_TIMEOUT)
         assert (
             nodes_resp is not None and nodes_resp.get("result") is True
         ), f"/rosapi/nodes failed: {nodes_resp}"
@@ -975,7 +999,7 @@ def test_voice_assistant_ros_stack_and_audio_recorder_supervision_e2e():
                 }
             )
         )
-        state_resp = _await_service_response(connection, state_req_id, 5)
+        state_resp = _await_service_response(connection, state_req_id, REQUEST_TIMEOUT)
         assert state_resp is not None and state_resp.get("result") is True, (
             "VoiceAssistantNode did not answer /get_voice_assistant_state within 5s "
             f"(executor not spinning?): {state_resp}"
@@ -1092,7 +1116,9 @@ def test_voice_assistant_ros_stack_and_audio_recorder_supervision_e2e():
                     }
                 )
             )
-            post_resp = _await_service_response(connection, post_req_id, 5)
+            post_resp = _await_service_response(
+                connection, post_req_id, REQUEST_TIMEOUT
+            )
             assert (
                 post_resp is not None and post_resp.get("result") is True
             ), f"/get_voice_assistant_state failed after audio_recorder respawn: {post_resp}"

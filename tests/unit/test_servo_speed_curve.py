@@ -112,14 +112,17 @@ def test_rad_per_sec_conversion_round_trips() -> None:
 
 
 def test_merged_curve_adds_low_speed_points_when_measured(monkeypatch) -> None:
-    from pib_motors.servo_speed_curve import merged_measured_curve
+    # Patch through the module object that also provides merged_measured_curve, and not
+    # through a symbol imported at collection time: when two instances of pib_motors are
+    # alive the test then patches one dict and the function reads the other (PR-2176).
+    from pib_motors import servo_speed_curve
 
     monkeypatch.setitem(
-        LOW_SPEED_CURVE_BY_FAMILY,
+        servo_speed_curve.LOW_SPEED_CURVE_BY_FAMILY,
         SERVO_FAMILY_STS3095,
         ((50, 400.0), (200, None)),
     )
-    merged = merged_measured_curve(SERVO_FAMILY_STS3095)
+    merged = servo_speed_curve.merged_measured_curve(SERVO_FAMILY_STS3095)
     assert (50, 400.0) in merged
     # a None row is skipped instead of poisoning the curve
     assert all(rate is not None for _setting, rate in merged)

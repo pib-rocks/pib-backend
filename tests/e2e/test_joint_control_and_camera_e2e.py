@@ -165,22 +165,58 @@ class TestJointControlAndCameraE2E:
                 page.wait_for_timeout(1500)
                 touchpoint.click()
 
+                # Anything the page published while loading (it sends the position it
+                # reads once) must not satisfy the assertion below.
+                ws_responses.clear()
+
                 # Double-click the slider bubble overlay to open the numeric bubble input
                 bubble_span = page.locator("app-motor-position .bubble-span").first
-                expect(bubble_span).to_be_visible(timeout=10000)
-                bubble_span.dblclick()
+                expect(bubble_span).to_be_visible(timeout=15000)
 
-                bubble_input = page.locator(
-                    'app-motor-position [data-test="TXT_Slider_BubbleInput"]'
-                ).first
-                expect(bubble_input).to_be_visible(timeout=10000)
-                bubble_input.fill(str(target_deg))
-                bubble_input.press("Enter")
-
-                # Wait for rosbridge /apply_joint_trajectory response
-                deadline = time.monotonic() + 6.0
-                while time.monotonic() < deadline and not ws_responses:
-                    page.wait_for_timeout(200)
+                # The bubble is re-rendered by every incoming joint state, so a
+                # double-click can land on an element that is already detached and the
+                # edit silently never reaches rosbridge - the run then failed on "did
+                # not move the motor" while nothing had been sent at all (PR-2176). So:
+                # send, commit, and if no trajectory went out, do the edit once more.
+                for attempt in (1, 2, 3, 4, 5):
+                    if attempt > 1:
+                        # Start over from the joint view: the first attempt can leave the
+                        # app on the motor detail route, where the bubble commits through
+                        # another path and a second edit there proves nothing.
+                        page.goto(
+                            f"{ROBOT_URL}/movement/head",
+                            wait_until="domcontentloaded",
+                            timeout=30000,
+                        )
+                        touchpoint = page.locator(
+                            '[data-test="BTN_Touchpoint_turn-head"]'
+                        ).first
+                        expect(touchpoint).to_be_visible(timeout=15000)
+                        page.wait_for_timeout(1200)
+                        touchpoint.click()
+                        ws_responses.clear()
+                    bubble_span = page.locator("app-motor-position .bubble-span").first
+                    expect(bubble_span).to_be_visible(timeout=15000)
+                    bubble_span.dblclick()
+                    bubble_input = page.locator(
+                        'app-motor-position [data-test="TXT_Slider_BubbleInput"]'
+                    ).first
+                    expect(bubble_input).to_be_visible(timeout=15000)
+                    bubble_input.click()
+                    bubble_input.fill(str(target_deg))
+                    bubble_input.press("Enter")
+                    # Commit on blur as well: the bubble closes on Enter in the joint
+                    # view and on blur in the motor view, and this test may be on either.
+                    page.locator("body").click(position={"x": 5, "y": 5})
+                    deadline = time.monotonic() + 10.0
+                    while time.monotonic() < deadline and not ws_responses:
+                        page.wait_for_timeout(200)
+                    if ws_responses:
+                        break
+                    print(
+                        f"no /apply_joint_trajectory after the edit "
+                        f"(attempt {attempt}/5); retrying the bubble edit"
+                    )
 
                 assert (
                     ws_responses
@@ -194,7 +230,7 @@ class TestJointControlAndCameraE2E:
                 # the servo needs more than the 5 s a dev host gets (PR-2172).
                 reached = False
                 last_pos = initial_cdeg
-                move_deadline = time.monotonic() + 15.0
+                move_deadline = time.monotonic() + 25.0
                 while time.monotonic() < move_deadline:
                     last_pos = _rosbridge_get_joint_centideg("turn_head_motor")
                     if abs(last_pos - target_cdeg) <= POSITION_TOLERANCE_CENTIDEG:

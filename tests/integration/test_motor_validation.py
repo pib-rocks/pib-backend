@@ -48,10 +48,14 @@ for path in (
 
 
 @pytest.fixture()
-def motor_class(stubbed_tinkerforge):
+def motor_class(stubbed_tinkerforge, monkeypatch):
+    # delitem, not pop: the theme of PR-2176. A bare pop left a second instance of
+    # pib_motors alive for the rest of the run, and the unit suites that compare module
+    # level symbols by identity (port_recovery's RecoveryAction, servo_speed_curve's
+    # LOW_SPEED_CURVE_BY_FAMILY dict) then patched one instance and read the other.
     for name in list(sys.modules):
         if name.startswith("pib_motors"):
-            sys.modules.pop(name, None)
+            monkeypatch.delitem(sys.modules, name, raising=False)
     empty = (True, {"motors": []})
     bricklets = (True, {"bricklets": []})
     with (

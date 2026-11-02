@@ -122,6 +122,93 @@ check_flask() {
     return 0
 }
 
+# rosapi answers the parameter and service calls that every live UI suite depends on
+# (the microphone page reads /doa_publisher:preset through it, poses and the voice
+# assistant call services). Measured on the robot: after a few hours rosapi stops
+# answering while /rosbridge_websocket keeps accepting connections and topics keep
+# flowing, so thirteen suites failed with 10-90 s timeouts that read like broken
+# features (PR-2176). Restart the bridge before the run instead of debugging it after.
+check_ros_bridge() {
+    section "ROS bridge preflight"
+    local probe
+    probe="$("${VENV_DIR}/bin/python" - <<'PY' 2>&1
+import sys
+
+try:
+    import roslibpy
+except ImportError:
+    print("SKIP roslibpy missing")
+    sys.exit(0)
+
+client = roslibpy.Ros(host="localhost", port=9090)
+try:
+    client.run(timeout=10)
+except Exception as exc:  # noqa: BLE001
+    print(f"DOWN websocket: {type(exc).__name__}: {exc}")
+    sys.exit(1)
+if not client.is_connected:
+    print("DOWN websocket not connected")
+    sys.exit(1)
+
+service = roslibpy.Service(client, "/rosapi/nodes", "rosapi_msgs/Nodes")
+try:
+    # Only "the service answers" counts: right after a bridge restart rosapi replies
+    # with an empty node list while the graph is still populating, and requiring nodes
+    # here turned a healthy bridge into a failed preflight step (PR-2176).
+    service.call(roslibpy.ServiceRequest(), timeout=20)
+except Exception as exc:  # noqa: BLE001
+    print(f"DOWN rosapi: {type(exc).__name__}: {exc}")
+    sys.exit(1)
+finally:
+    client.terminate()
+
+print("OK rosapi answering")
+PY
+)"
+    case "${probe}" in
+        OK*)
+            echo -e "${GREEN}OK:${NC} rosapi answering"
+            return 0
+            ;;
+        SKIP*)
+            echo -e "${YELLOW}WARN:${NC} rosapi not probed (${probe#SKIP })"
+            return 0
+            ;;
+    esac
+    local container
+    container="$(docker ps --filter "name=rosbridge" --format '{{.Names}}' 2>/dev/null | head -1)"
+    if [[ -z "${container}" ]]; then
+        echo -e "${YELLOW}WARN:${NC} ${probe} — no rosbridge container to restart"
+        return 0
+    fi
+    echo -e "${YELLOW}WARN:${NC} ${probe} — restarting ${container}"
+    docker restart "${container}" >/dev/null
+    local waited=0
+    while (( waited < 120 )); do
+        sleep 5
+        waited=$(( waited + 5 ))
+        if "${VENV_DIR}/bin/python" - <<'PY' >/dev/null 2>&1
+import sys
+
+import roslibpy
+
+client = roslibpy.Ros(host="localhost", port=9090)
+client.run(timeout=10)
+try:
+    service = roslibpy.Service(client, "/rosapi/nodes", "rosapi_msgs/Nodes")
+    service.call(roslibpy.ServiceRequest(), timeout=15)
+finally:
+    client.terminate()
+PY
+        then
+            echo -e "${GREEN}OK:${NC} rosapi answering again after ${waited}s"
+            return 0
+        fi
+    done
+    echo -e "${RED}FAILED:${NC} rosapi still not answering after restarting ${container}" >&2
+    return 1
+}
+
 # A venv that pip resolved without one of these turns into a collection ERROR in
 # the middle of a long run: the traceback names a test module, not the missing
 # package (measured on the robot, where 'cv2' was absent and the failure read like
@@ -248,6 +335,10 @@ main() {
     ensure_venv
     run_step "Test dependencies" check_test_dependencies
     check_flask
+    # Only meaningful where the live suites run: they read the robot over rosbridge.
+    if [[ ${SKIP_ROBOT} -eq 0 && -n "${PIB_ROBOT_URL:-}" ]]; then
+        run_step "ROS bridge preflight" check_ros_bridge
+    fi
 
     run_step "Pytest (integration + compose)" run_pytest_integration
 

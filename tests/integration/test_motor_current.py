@@ -50,7 +50,7 @@ def _node_supports_everything() -> bool:
     return all(hasattr(node_class, name) for name in _REQUIRED_NODE_METHODS)
 
 
-if not _node_supports_everything():
+def _build_rclpy_stub():
     mock_rclpy = types.ModuleType("rclpy")
     mock_node_mod = types.ModuleType("rclpy.node")
 
@@ -86,10 +86,17 @@ if not _node_supports_everything():
 
     mock_node_mod.Node = FakeNode
     mock_rclpy.node = mock_node_mod
-    sys.modules["rclpy"] = mock_rclpy
-    sys.modules["rclpy.node"] = mock_node_mod
+    return mock_rclpy, mock_node_mod
 
-if "diagnostic_msgs" not in sys.modules or "diagnostic_msgs.msg" not in sys.modules:
+
+MOCK_RCLPY, MOCK_RCLPY_NODE = _build_rclpy_stub()
+
+if not _node_supports_everything():
+    sys.modules["rclpy"] = MOCK_RCLPY
+    sys.modules["rclpy.node"] = MOCK_RCLPY_NODE
+
+
+def _build_diagnostic_msgs_stub():
     mock_diag_msgs = types.ModuleType("diagnostic_msgs")
     mock_diag_msg_sub = types.ModuleType("diagnostic_msgs.msg")
 
@@ -105,8 +112,14 @@ if "diagnostic_msgs" not in sys.modules or "diagnostic_msgs.msg" not in sys.modu
     mock_diag_msg_sub.DiagnosticStatus = FakeDiagnosticStatus
     mock_diag_msg_sub.KeyValue = FakeKeyValue
     mock_diag_msgs.msg = mock_diag_msg_sub
-    sys.modules["diagnostic_msgs"] = mock_diag_msgs
-    sys.modules["diagnostic_msgs.msg"] = mock_diag_msg_sub
+    return mock_diag_msgs, mock_diag_msg_sub
+
+
+MOCK_DIAG_MSGS, MOCK_DIAG_MSGS_MSG = _build_diagnostic_msgs_stub()
+
+if "diagnostic_msgs" not in sys.modules or "diagnostic_msgs.msg" not in sys.modules:
+    sys.modules["diagnostic_msgs"] = MOCK_DIAG_MSGS
+    sys.modules["diagnostic_msgs.msg"] = MOCK_DIAG_MSGS_MSG
 
 # Ensure tinkerforge modules are mocked consistently
 _ip_connection = types.ModuleType("tinkerforge.ip_connection")
@@ -204,6 +217,18 @@ def mock_motor_setup(stubbed_tinkerforge, monkeypatch):
     for name, module in _datatypes_stubs().items():
         monkeypatch.setitem(sys.modules, name, module)
 
+    # Install this file's complete ROS stand-ins for the duration of the test: an
+    # earlier module can leave a partial rclpy behind (Node without create_timer), and
+    # MotorCurrent is imported fresh below, so it binds to whatever Node is current now
+    # (PR-2176).
+    for name, module in (
+        ("rclpy", MOCK_RCLPY),
+        ("rclpy.node", MOCK_RCLPY_NODE),
+        ("diagnostic_msgs", MOCK_DIAG_MSGS),
+        ("diagnostic_msgs.msg", MOCK_DIAG_MSGS_MSG),
+    ):
+        monkeypatch.setitem(sys.modules, name, module)
+
     # delitem, not pop: monkeypatch puts the modules back afterwards, so a later test
     # that holds a reference to a pib_motors symbol keeps the same module object. A
     # bare pop left two instances of the module alive and made enum identity checks in
@@ -247,6 +272,18 @@ def mock_motor_setup(stubbed_tinkerforge, monkeypatch):
         ),
     ):
         from motors.motor_current import MotorCurrent
+
+        # Fail with the reason instead of 'AttributeError: no attribute create_timer':
+        # MotorCurrent inherits whatever Node class the current rclpy.node offers, and a
+        # partial stand-in from another module lacks these methods (PR-2176).
+        missing = [
+            name for name in _REQUIRED_NODE_METHODS if not hasattr(MotorCurrent, name)
+        ]
+        assert not missing, (
+            f"MotorCurrent lacks {missing}; "
+            f"mro={[f'{c.__module__}.{c.__name__}' for c in MotorCurrent.__mro__]}; "
+            f"rclpy.node={sys.modules.get('rclpy.node')!r}"
+        )
 
         node = MotorCurrent()
         node.setup_callbacks(mock_motors)
