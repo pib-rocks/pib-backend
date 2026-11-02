@@ -164,12 +164,34 @@ def test_cloud_speech_posts_the_contract_shape_and_queues_the_wav(monkeypatch):
     assert kwargs["json"] == {
         "input": "Ein Satz.",
         "language": "de",
-        "voice": "M1",
+        "voice": "M3",
     }
     assert "timeout" in kwargs
     assert queued_pcm(node) == [CLOUD_PCM]
     assert local_calls == []
     assert not log.warning.called
+
+
+@pytest.mark.parametrize(
+    "gender, expected",
+    [
+        ("Female", "F3"),
+        ("Male", "M3"),
+        ("female", "F3"),
+        ("male", "M3"),
+        ("Maennlich", "M3"),
+        ("", "F3"),
+        (None, "F3"),
+    ],
+)
+def test_the_voice_dropdown_decides_the_cloud_voice(gender, expected):
+    """The dialog offers Female and Male; Female speaks as F3 (Bella), Male as M3 (Adam).
+
+    The robot sends the endpoint's own voice name, never a provider id - a raw id is
+    rejected by /v1/audio/speech with 400.
+    """
+    _, ns, _, _ = build_player(post=None)
+    assert ns["cloud_voice"](gender) == expected
 
 
 def test_the_base_url_without_v1_still_reaches_the_speech_path(monkeypatch):
@@ -215,7 +237,7 @@ def test_english_and_female_voice_are_sent_as_en_and_f1(monkeypatch):
     spoken.language = "English"
     node.play_audio_from_speech(spoken, SimpleNamespace())
     assert calls[0]["language"] == "en"
-    assert calls[0]["voice"] == "F1"
+    assert calls[0]["voice"] == "F3"
 
 
 @pytest.mark.parametrize(
