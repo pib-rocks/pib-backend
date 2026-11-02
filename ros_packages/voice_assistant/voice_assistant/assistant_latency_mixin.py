@@ -63,9 +63,7 @@ class AssistantLatencyMixin:
         # what a barge-in hands to the player so late clauses stay silent.
         from voice_assistant.util import speech_turn_id
 
-        self._speech_turn_id = speech_turn_id(
-            self.state.chat_id, self._playback_epoch
-        )
+        self._speech_turn_id = speech_turn_id(self.state.chat_id, self._playback_epoch)
         self._cancel_filler_timer()
         self._streaming_speech = _assistant().StreamingSpeech()
         self._turn_has_playback = False
