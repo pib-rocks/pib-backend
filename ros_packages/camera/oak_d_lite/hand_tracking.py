@@ -1030,8 +1030,10 @@ def map_fast_hand(
         # tracker chose for this frame (the crop rect drifts while tracking and
         # is reset by every fresh palm detection).
         square_points = [
-            (hand.square_landmarks[2 * index] * side,
-             hand.square_landmarks[2 * index + 1] * side)
+            (
+                hand.square_landmarks[2 * index] * side,
+                hand.square_landmarks[2 * index + 1] * side,
+            )
             for index in range(LANDMARK_COUNT)
         ]
     else:

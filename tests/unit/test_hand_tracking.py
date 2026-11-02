@@ -522,6 +522,7 @@ def test_fast_result_drops_a_landmark_below_the_score_gate():
 
     assert parse_fast_script_result(marshal.dumps(_fast_payload(lm_score=[0.1]))) == []
 
+
 def test_fast_result_ignores_the_tracking_rect_for_the_drawn_position():
     """The tracker regresses its rect every frame; that must not move the hand.
 
@@ -539,9 +540,7 @@ def test_fast_result_ignores_the_tracking_rect_for_the_drawn_position():
     )
     shifted = map_fast_hand(
         parse_fast_script_result(
-            marshal.dumps(
-                _fast_payload(rect_center_y=[0.30], rect_size=[0.42])
-            )
+            marshal.dumps(_fast_payload(rect_center_y=[0.30], rect_size=[0.42]))
         )[0],
         1280,
         720,
@@ -557,4 +556,3 @@ def test_fast_script_sends_the_square_landmarks():
     script = build_fast_tracker_script(256, 144)
     assert '"sqn_lms"' in script
     assert 'hand_landmarks["sqn_lms"].append(sqn_lms)' in script
-
