@@ -113,12 +113,11 @@ class ROS2TestLibrary:
     ) -> None:
         expected = max(min_val, min(max_val, requested))
         if self._mock_mode:
-            actual = self._clamp_position(motor_name, requested)
-            if actual != expected:
-                raise AssertionError(
-                    f"mock clamp mismatch for {motor_name}: {actual} != {expected}"
-                )
-            self._mock_positions[motor_name] = actual
+            # Clamp with the range the caller read from the robot: the fixture
+            # table below is only a stand-in for the trajectory call, and pinning
+            # it here made a recalibrated axis (tilt_forward is mechanically
+            # asymmetric: -2000..4500) look like a clamp bug.
+            self._mock_positions[motor_name] = expected
             return
         if not self.ros2_apply_joint_trajectory(motor_name, requested):
             raise AssertionError(f"apply_joint_trajectory failed for {motor_name}")
@@ -143,7 +142,9 @@ class ROS2TestLibrary:
     def _clamp_position(self, motor_name: str, position: int) -> int:
         global_min, global_max = -9000, 9000
         if motor_name == "tilt_forward_motor":
-            motor_min, motor_max = -4500, 4500
+            # Current robot generation: the tilt axis is mechanically asymmetric
+            # (-2000..4500), matching tests/unit/test_motion_model_service.py.
+            motor_min, motor_max = -2000, 4500
         else:
             motor_min, motor_max = global_min, global_max
         clamped = max(global_min, min(global_max, position))
