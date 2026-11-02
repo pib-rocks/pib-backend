@@ -1272,3 +1272,194 @@ def test_doa_publisher_survives_usb_disconnect_in_conversation_led_and_reopens(
     assert node.dev is second_dev
     assert node.retry_timer is None
     sys.modules.pop("ros_audio_io.doa_publisher", None)
+
+
+def test_audio_streamer_recovers_when_publish_audio_hits_stream_closed(monkeypatch):
+    """Regression guard for PR-2164 (#673): when PipeWire/Pulse restarts and
+    stream.read() raises [Errno -9988] Stream closed, AudioStreamer must close
+    the dead stream and re-open the device instead of looping forever on -9988."""
+    import importlib
+    import sys
+    import types
+
+    stream_instances = []
+
+    class FakeStream:
+        def __init__(self, should_fail=False):
+            self.should_fail = should_fail
+            self.stopped = False
+            self.closed = False
+
+        def read(self, chunk_size, exception_on_overflow=False):
+            if self.should_fail:
+                err = OSError(-9988, "Stream closed")
+                err.errno = -9988
+                raise err
+            return b"\x00\x00" * (chunk_size * 6)
+
+        def stop_stream(self):
+            self.stopped = True
+
+        def close(self):
+            self.closed = True
+
+    class FakePyAudio:
+        paInt16 = 8
+
+        def get_host_api_count(self):
+            return 1
+
+        def get_host_api_info_by_index(self, idx):
+            return {"index": 0, "name": "ALSA"}
+
+        def get_device_count(self):
+            return 1
+
+        def get_device_info_by_index(self, idx):
+            return {
+                "index": 0,
+                "name": "default",
+                "hostApi": 0,
+                "maxInputChannels": 6,
+                "defaultSampleRate": 16000.0,
+            }
+
+        def get_default_input_device_info(self):
+            return self.get_device_info_by_index(0)
+
+        def open(self, **kwargs):
+            s = FakeStream(should_fail=(len(stream_instances) == 0))
+            stream_instances.append(s)
+            return s
+
+        def terminate(self):
+            pass
+
+    pyaudio_mod = types.ModuleType("pyaudio")
+    pyaudio_mod.paInt16 = 8
+    pyaudio_mod.PyAudio = FakePyAudio
+
+    rclpy = types.ModuleType("rclpy")
+    rclpy_node = types.ModuleType("rclpy.node")
+
+    class FakeNode:
+        def __init__(self, name):
+            self._timers = []
+
+        def create_publisher(self, *args, **kwargs):
+            return types.SimpleNamespace(publish=lambda msg: None)
+
+        def create_service(self, *args, **kwargs):
+            return None
+
+        def create_timer(self, period, cb):
+            t = types.SimpleNamespace(period=period, cb=cb, cancel=lambda: None)
+            self._timers.append(t)
+            return t
+
+        def destroy_timer(self, t):
+            pass
+
+        def get_logger(self):
+            return types.SimpleNamespace(
+                info=lambda *a, **k: None,
+                warning=lambda *a, **k: None,
+                error=lambda *a, **k: None,
+            )
+
+    rclpy_node.Node = FakeNode
+    datatypes = types.ModuleType("datatypes")
+    datatypes_srv = types.ModuleType("datatypes.srv")
+    datatypes_srv.GetMicConfiguration = types.SimpleNamespace
+    std_msgs = types.ModuleType("std_msgs")
+    std_msgs_msg = types.ModuleType("std_msgs.msg")
+    std_msgs_msg.Float32MultiArray = lambda: types.SimpleNamespace(data=[])
+    std_msgs_msg.Int16MultiArray = lambda: types.SimpleNamespace(data=[])
+    std_msgs_msg.String = lambda: types.SimpleNamespace(data="")
+
+    for mod_name, mod_obj in {
+        "pyaudio": pyaudio_mod,
+        "rclpy": rclpy,
+        "rclpy.node": rclpy_node,
+        "datatypes": datatypes,
+        "datatypes.srv": datatypes_srv,
+        "std_msgs": std_msgs,
+        "std_msgs.msg": std_msgs_msg,
+    }.items():
+        monkeypatch.setitem(sys.modules, mod_name, mod_obj)
+    monkeypatch.delitem(sys.modules, "ros_audio_io.audio_streamer", raising=False)
+
+    audio_streamer = importlib.import_module("ros_audio_io.audio_streamer")
+    node = audio_streamer.AudioStreamer()
+    assert len(stream_instances) == 1
+    first_stream = stream_instances[0]
+
+    # First publish_audio raises [Errno -9988] Stream closed -> must close first_stream and re-open second_stream
+    node.publish_audio()
+    assert first_stream.closed is True
+    assert len(stream_instances) == 2
+    assert node.audio_stream is stream_instances[1]
+
+    # Second publish_audio succeeds on the recovered stream
+    node.publish_audio()
+    assert len(stream_instances) == 2
+    sys.modules.pop("ros_audio_io.audio_streamer", None)
+
+
+def test_reset_respeaker_usb_device_falls_back_to_sysfs_hub_port_power_cycle(
+    monkeypatch, tmp_path
+):
+    """Regression guard for PR-2164 (#673): when EP0 is wedged with -EPIPE and
+    pyusb reset() raises USBError, reset_respeaker_usb_device power-cycles the
+    sysfs hub port disable file (1 -> 0)."""
+    from ros_audio_io import device_retry
+
+    writes = []
+
+    def fake_power_cycle():
+        writes.append(("1", "0"))
+        return True, "ReSpeaker USB hub port 3-2.1-port4 power-cycled"
+
+    monkeypatch.setattr(
+        device_retry, "_sysfs_power_cycle_respeaker_port", fake_power_cycle
+    )
+
+    class BrokenDevice:
+        def reset(self):
+            raise OSError(32, "Pipe error")
+
+    class FakeUsbCore:
+        USBError = OSError
+
+        @staticmethod
+        def find(**kwargs):
+            return BrokenDevice()
+
+    ok, msg = device_retry.reset_respeaker_usb_device(usb_core_module=FakeUsbCore)
+    assert ok is True
+    assert "3-2.1-port4 power-cycled" in msg
+    assert writes == [("1", "0")]
+
+    # Also verify prefer_port_cycle=True directly invokes the hub port cycle
+    writes.clear()
+    ok2, msg2 = device_retry.reset_respeaker_usb_device(prefer_port_cycle=True)
+    assert ok2 is True
+    assert writes == [("1", "0")]
+
+
+def test_audio_recorder_expires_stale_hardware_vad_after_timeout():
+    """Regression guard for PR-2164 (#673): if /voice_activity stops arriving
+    for > 1.5 s due to a USB control pipe error, AudioRecorderNode.is_silent()
+    expires _hardware_vad back to None so amplitude fallback resumes."""
+    from pathlib import Path
+
+    recorder_src = (
+        Path(__file__).resolve().parents[2]
+        / "ros_packages"
+        / "voice_assistant"
+        / "voice_assistant"
+        / "audio_recorder.py"
+    ).read_text(encoding="utf-8")
+    assert "_hardware_vad_monotonic" in recorder_src
+    assert "> 1.5" in recorder_src
+    assert "self._hardware_vad = None" in recorder_src

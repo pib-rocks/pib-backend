@@ -62,6 +62,8 @@ BYTES_PER_SAMPLE = 2
 # TODO: this value should not be hardcoded, as the optimal value
 # depends on the level of background noise.
 SILENCE_VOLUME_THRESHOLD = 500
+PREROLL_DURATION_SECONDS = 0.5
+BARGE_IN_SILENT_BEFORE_SENTINEL = 0.05
 
 VOICE_ASSISTANT_DIRECTORY = os.getenv(
     "VOICE_ASSISTANT_DIR", "/home/pib/ros_working_dir/src/voice_assistant"
@@ -130,10 +132,12 @@ class AudioRecorderNode(Node):
             String, "public_api_token", self.get_public_api_token_listener, 10
         )
 
-        # buffer for incoming audio stream frames
+        # buffer for incoming audio stream frames + 500 ms continuous pre-roll ring
         self.audio_chunks = deque()
+        self.preroll_chunks = deque(maxlen=8)
         self.audio_chunks_lock = Lock()
         self.audio_chunk_event = Event()
+        self._recording_active = False
 
         # subscribe to ROS2 audio_stream topic
         self.ros_audio_stream_subscription = self.create_subscription(
@@ -245,8 +249,11 @@ class AudioRecorderNode(Node):
                 return
         chunk_bytes = samples.astype(np.int16, copy=False).tobytes()
         with self.audio_chunks_lock:
-            self.audio_chunks.append(chunk_bytes)
-            self.audio_chunk_event.set()
+            if self._recording_active:
+                self.audio_chunks.append(chunk_bytes)
+                self.audio_chunk_event.set()
+            else:
+                self.preroll_chunks.append(chunk_bytes)
 
     def get_next_chunk(self) -> bytes:
         """
@@ -326,19 +333,25 @@ class AudioRecorderNode(Node):
         # Read thresholds (in seconds) from the goal
         max_silent_before_secs = request.max_silent_seconds_before
         max_silent_after_secs = request.max_silent_seconds_after
+        is_barge_in = max_silent_before_secs <= BARGE_IN_SILENT_BEFORE_SENTINEL
 
         # Prepare to accumulate silence time
         silent_time_accum = 0.0
-        speech_started = False
-        max_silent_target = max_silent_before_secs  # initially, measure "before" speech
+        speech_started = bool(is_barge_in)
+        max_silent_target = (
+            max_silent_after_secs if is_barge_in else max_silent_before_secs
+        )
 
-        # Clear any buffered audio from previous runs
+        # Drain 500 ms pre-roll on barge-in; clear buffered audio on normal turns
         with self.audio_chunks_lock:
             self.audio_chunks.clear()
             self.audio_chunk_event.clear()
-
-        # Collect incoming chunks into this list
-        chunks = []
+            if is_barge_in and self.preroll_chunks:
+                chunks = list(self.preroll_chunks)
+            else:
+                chunks = []
+            self.preroll_chunks.clear()
+            self._recording_active = True
 
         # Number of bytes per single frame (sample × channels)
         bytes_per_frame = BYTES_PER_SAMPLE * self.mic_channels
@@ -347,6 +360,8 @@ class AudioRecorderNode(Node):
         while True:
             if goal_handle.is_cancel_requested:
                 # If the client canceled the goal, stop immediately
+                with self.audio_chunks_lock:
+                    self._recording_active = False
                 goal_handle.canceled()
                 return self.create_result("")
 
@@ -380,6 +395,9 @@ class AudioRecorderNode(Node):
 
                 # Continue collecting until we accumulate enough silence after speech
                 continue
+
+        with self.audio_chunks_lock:
+            self._recording_active = False
 
         # Recording phase has ended; notify client that we are transcribing.
         # end_of_speech is this decision, one pause threshold after the last

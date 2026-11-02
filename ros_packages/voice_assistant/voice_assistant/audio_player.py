@@ -222,7 +222,11 @@ class PlaybackItem:
                     if chunk:
                         _note_pcm_written()
 
-                time.sleep(self.pause_seconds)
+                remaining = max(0.0, float(self.pause_seconds))
+                while remaining > 0.0 and not self.is_cleared():
+                    step = min(0.02, remaining)
+                    time.sleep(step)
+                    remaining -= step
         except Exception as e:
             print(f"failed to playback audio: {e}", file=sys.stderr)
         finally:
@@ -243,7 +247,7 @@ class PlaybackItem:
 
 SPEECH_ENCODING = AudioEncoding(2, 1, 44100)
 CLOUD_SPEECH_ENCODING = AudioEncoding(2, 1, 16000)
-CHUNKS_PER_SECOND = 10
+CHUNKS_PER_SECOND = 50
 FRAMES_PER_CHUNK = SPEECH_ENCODING.frames_per_second // CHUNKS_PER_SECOND
 BYTES_PER_FRAME = SPEECH_ENCODING.bytes_per_sample * SPEECH_ENCODING.num_channels
 BYTES_PER_CHUNK = BYTES_PER_FRAME * FRAMES_PER_CHUNK
