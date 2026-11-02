@@ -41,6 +41,7 @@ PARAMETERS = {
     "STATNOISEONOFF": ("int", 1, 0),
     "NONSTATNOISEONOFF": ("int", 1, 0),
     "ECHOONOFF": ("int", 1, 0),
+    "NLATTENONOFF": ("int", 1, 0),
     "STATNOISEONOFF_SR": ("int", 1, 0),
     "NONSTATNOISEONOFF_SR": ("int", 1, 0),
 }
@@ -70,6 +71,7 @@ PRESETS: Dict[str, Dict[str, Any]] = {
         "STATNOISEONOFF": 0,
         "NONSTATNOISEONOFF": 0,
         "ECHOONOFF": 0,
+        "NLATTENONOFF": 0,
         "HPFONOFF": 0,
         "STATNOISEONOFF_SR": 0,
         "NONSTATNOISEONOFF_SR": 0,

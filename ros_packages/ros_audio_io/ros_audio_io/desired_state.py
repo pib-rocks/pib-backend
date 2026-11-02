@@ -58,15 +58,19 @@ def validate_desired_state(document: Any) -> Dict[str, Any]:
     if unknown_parameters:
         unknown = sorted(unknown_parameters)[0]
         raise DesiredStateValidationError(f"unknown parameter: {unknown}")
-    missing_parameters = set(PARAMETER_SPECS) - set(parameters)
+    optional_with_default = {"NLATTENONOFF"}
+    missing_parameters = (
+        set(PARAMETER_SPECS) - set(parameters)
+    ) - optional_with_default
     if missing_parameters:
         missing = sorted(missing_parameters)[0]
         raise DesiredStateValidationError(f"missing parameter: {missing}")
 
     normalized_parameters = {}
     for name in PARAMETER_SPECS:
+        raw_val = parameters[name] if name in parameters else PARAMETER_SPECS[name][3]
         try:
-            normalized_parameters[name] = validate_parameter(name, parameters[name])
+            normalized_parameters[name] = validate_parameter(name, raw_val)
         except ValueError as exc:
             raise DesiredStateValidationError(str(exc)) from exc
 
