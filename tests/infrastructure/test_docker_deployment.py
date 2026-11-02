@@ -17,14 +17,26 @@ COMPOSE_FILE = REPO_ROOT / "docker-compose.yaml"
 COMPOSE_PORTS_FILE = Path(__file__).resolve().parent / "docker-compose.test-ports.yaml"
 
 
-def docker_available() -> bool:
-    try:
-        import docker
+def docker_unavailable_reason() -> str:
+    """Why the Docker tests cannot run here - empty when Docker is usable.
 
+    "Docker daemon not available" was printed for a venv without the docker package
+    too, which sent the reader to the daemon while the actual problem was a missing
+    requirement (measured on the robot, where the venv had been rebuilt without it).
+    """
+    try:
+        import docker  # noqa: F401
+    except ImportError as exc:
+        return f"the docker package is not installed in this interpreter ({exc})"
+    try:
         docker.from_env().ping()
-        return True
-    except Exception:
-        return False
+    except Exception as exc:  # noqa: BLE001
+        return f"the Docker daemon is not reachable ({type(exc).__name__}: {exc})"
+    return ""
+
+
+def docker_available() -> bool:
+    return not docker_unavailable_reason()
 
 
 def _compose_cmd(*args: str) -> list[str]:
@@ -96,7 +108,7 @@ def compose_project_name() -> str:
 @pytest.fixture(scope="module")
 def compose_stack(compose_project_name):
     if not docker_available():
-        pytest.skip("Docker daemon not available")
+        pytest.skip(f"live Docker tests skipped: {docker_unavailable_reason()}")
     if os.getenv("RUN_DOCKER_TESTS", "0") != "1":
         pytest.skip("Set RUN_DOCKER_TESTS=1 to run live Docker deployment tests")
 
@@ -211,7 +223,7 @@ class TestDockerDeployment:
 class TestComposeConfigValid:
     def test_docker_compose_config_succeeds(self):
         if not docker_available():
-            pytest.skip("Docker daemon not available")
+            pytest.skip(f"live Docker tests skipped: {docker_unavailable_reason()}")
         result = subprocess.run(
             _compose_cmd("config"),
             cwd=REPO_ROOT,

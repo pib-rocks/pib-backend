@@ -17,14 +17,21 @@ def compose_dict() -> dict:
         return yaml.safe_load(handle)
 
 
-def docker_available() -> bool:
+def docker_unavailable_reason() -> str:
+    """Why the Docker tests cannot run here - empty when Docker is usable."""
     try:
-        import docker
-
+        import docker  # noqa: F401
+    except ImportError as exc:
+        return f"the docker package is not installed in this interpreter ({exc})"
+    try:
         docker.from_env().ping()
-        return True
-    except Exception:
-        return False
+    except Exception as exc:  # noqa: BLE001
+        return f"the Docker daemon is not reachable ({type(exc).__name__}: {exc})"
+    return ""
+
+
+def docker_available() -> bool:
+    return not docker_unavailable_reason()
 
 
 def pytest_configure(config):
