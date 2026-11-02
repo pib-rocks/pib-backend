@@ -101,6 +101,26 @@ class TestAnswer:
         assert response.status_code == 200
         assert response.get_json()["reach"]["ok"] is True
 
+    def test_a_hard_target_answers_inside_the_drag_budget(self, client):
+        # This target used to converge never and burn 4.5 s inside pib-sdk's 50x200 search, long
+        # after the console had given up. With the drag budget it has to answer quickly.
+        started = time.perf_counter()
+        response = _post(
+            client,
+            {
+                "side": "right",
+                "xyzM": [-0.66, 0.10, 0.79],
+                "restarts": 2,
+                "maxIterations": 60,
+            },
+        )
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+        assert response.status_code == 200
+        assert elapsed_ms < 500.0, elapsed_ms
+        body = response.get_json()
+        assert body["reach"]["ok"] is False
+        assert body["reach"]["blockedBy"] in {"workspace", "behind_body", "joint_limit", "convergence"}
+
     def test_thirty_solves_stay_inside_the_drag_budget(self, client):
         xyz_m = [c / 1000.0 for c in ZERO_RIGHT_MM]
         started = time.perf_counter()

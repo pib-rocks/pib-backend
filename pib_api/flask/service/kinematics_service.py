@@ -51,19 +51,32 @@ def _failure_types() -> tuple[type[BaseException], ...]:
     )
 
 
-def _solve(side: str, xyz_mm: Sequence[float], seed_rad: Sequence[float] | None):
-    """One solve. Returns (joints_rad, stats). Raises the pib-sdk errors unchanged."""
+def _solve(
+    side: str,
+    xyz_mm: Sequence[float],
+    seed_rad: Sequence[float] | None,
+    restarts: int = 50,
+    max_iterations: int = 200,
+):
+    """One solve. Returns (joints_rad, stats). Raises the pib-sdk errors unchanged.
+
+    `restarts` and `max_iterations` are the budget: the drag loop asks for a fast answer
+    (few restarts), a one-off call can afford the patient one. A target that does not converge
+    used to run the full 50 x 200 search - 4.5 s on the robot, long after the console's timeout.
+    """
     chain = _chain(side)
     joints = chain.inverse(
         xyz=xyz_mm,
         initial_guess_rad=seed_rad,
         respect_limits=True,
+        restarts=restarts,
+        max_iterations=max_iterations,
     )
     stats = getattr(chain, "last_inverse_stats", {}) or {}
     return [float(v) for v in joints], stats
 
 
-def _closest_reachable(side: str, xyz_mm: Sequence[float], seed_rad):
+def _closest_reachable(side: str, xyz_mm: Sequence[float], seed_rad, restarts: int = 2):
     """Walk the ray from the base to the target and keep the last reachable point.
 
     The UI shows this as "the hand stops at the edge" instead of a rejection. A coarse scan finds
@@ -72,11 +85,12 @@ def _closest_reachable(side: str, xyz_mm: Sequence[float], seed_rad):
     enough - a scan is honest about that.
     """
     best_joints, best_point, best_f = None, None, None
-    for step in range(20, 0, -1):
-        fraction = step / 20
+    # Eight samples, three refinements: each call costs a solve, and a drag cannot wait.
+    for step in range(8, 0, -1):
+        fraction = step / 8
         point = [c * fraction for c in xyz_mm]
         try:
-            joints, _stats = _solve(side, point, seed_rad)
+            joints, _stats = _solve(side, point, seed_rad, restarts=restarts, max_iterations=60)
         except _failure_types():
             continue
         best_joints, best_point, best_f = joints, point, fraction
@@ -84,12 +98,12 @@ def _closest_reachable(side: str, xyz_mm: Sequence[float], seed_rad):
 
     if best_point is None:
         return None, None
-    lo, hi = float(best_f or 0.0), min(1.0, float(best_f or 0.0) + 0.05)
-    for _ in range(4):
+    lo, hi = float(best_f or 0.0), min(1.0, float(best_f or 0.0) + 1 / 8)
+    for _ in range(3):
         mid = (lo + hi) / 2
         point = [c * mid for c in xyz_mm]
         try:
-            joints, _stats = _solve(side, point, seed_rad)
+            joints, _stats = _solve(side, point, seed_rad, restarts=restarts, max_iterations=60)
         except _failure_types():
             hi = mid
             continue
@@ -103,6 +117,8 @@ def inverse(
     xyz_m: Sequence[float],
     rpy_rad: Sequence[float] | None = None,
     seed_rad: Sequence[float] | None = None,
+    restarts: int = 50,
+    max_iterations: int = 200,
 ) -> dict[str, Any]:
     """Solve one target. Always returns a dict with a ``reach`` report."""
     if len(xyz_m) != 3:
@@ -111,7 +127,7 @@ def inverse(
     started = time.perf_counter()
 
     try:
-        joints, stats = _solve(side, xyz_mm, seed_rad)
+        joints, stats = _solve(side, xyz_mm, seed_rad, restarts, max_iterations)
         return _answer(
             side,
             joints,
@@ -122,7 +138,7 @@ def inverse(
             started=started,
         )
     except _failure_types() as error:
-        mapped = _map_failure(side, error, xyz_mm, seed_rad)
+        mapped = _map_failure(side, error, xyz_mm, seed_rad, restarts)
         if mapped is None or mapped.get("joints") is None:
             # Nothing on the ray is reachable (the target is behind the body or inside the torso).
             # Hand back no joints at all: the console keeps the current pose instead of inventing
@@ -158,7 +174,7 @@ def _blocked_by(error: Exception) -> str:
     return "workspace"
 
 
-def _map_failure(side: str, error: Exception, xyz_mm, seed_rad):
+def _map_failure(side: str, error: Exception, xyz_mm, seed_rad, restarts: int = 2):
     k = _sdk_errors()
     if isinstance(
         error, (k.InverseKinematicsWorkspaceError, k.InverseKinematicsBehindBodyError)
@@ -168,20 +184,22 @@ def _map_failure(side: str, error: Exception, xyz_mm, seed_rad):
             if isinstance(error, k.InverseKinematicsBehindBodyError)
             else "workspace"
         )
-        joints, point = _closest_reachable(side, xyz_mm, seed_rad)
+        joints, point = _closest_reachable(side, xyz_mm, seed_rad, restarts)
         if joints is None or point is None:
             return None
         distance = sum((a - b) ** 2 for a, b in zip(xyz_mm, point)) ** 0.5
         return {"joints": joints, "distance_mm": distance, "blocked_by": blocked}
     if isinstance(error, k.InverseKinematicsJointLimitError):
-        return _constraint_failure(side, xyz_mm, seed_rad, "joint_limit")
+        return _constraint_failure(side, xyz_mm, seed_rad, "joint_limit", restarts)
     if isinstance(error, k.InverseKinematicsConvergenceError):
-        return _constraint_failure(side, xyz_mm, seed_rad, "convergence")
+        return _constraint_failure(side, xyz_mm, seed_rad, "convergence", restarts)
     return None
 
 
-def _constraint_failure(side: str, xyz_mm, seed_rad, blocked_by: str):
-    joints, point = _closest_reachable(side, xyz_mm, seed_rad)
+def _constraint_failure(
+    side: str, xyz_mm, seed_rad, blocked_by: str, restarts: int = 2
+):
+    joints, point = _closest_reachable(side, xyz_mm, seed_rad, restarts)
     if joints is None or point is None:
         return None
     distance = sum((a - b) ** 2 for a, b in zip(xyz_mm, point)) ** 0.5

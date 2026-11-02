@@ -25,6 +25,8 @@ def inverse():
             xyz_m=data["xyzM"],
             rpy_rad=data["rpyRad"],
             seed_rad=data["seedRad"],
+            restarts=data["restarts"],
+            max_iterations=data["maxIterations"],
         )
     except kinematics_service.KinematicsRequestError as error:
         return jsonify({"error": str(error)}), 400
