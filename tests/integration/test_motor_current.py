@@ -151,9 +151,37 @@ for p in (
         sys.path.insert(0, p)
 
 
+# motors.motor_current imports 'from datatypes.msg import SolidStateRelayState'.
+# 'datatypes' is built by colcon inside the ROS images, so a plain host venv has
+# either no such package or a partial namespace one. Install the stand-in inside
+# the fixture - right before the import that needs it - so another module's
+# sys.modules bookkeeping cannot remove it first, and monkeypatch restores the
+# real entries afterwards so this stand-in does not leak (PR-2171).
+def _datatypes_stubs() -> dict[str, types.ModuleType]:
+    try:
+        from datatypes.msg import SolidStateRelayState  # noqa: F401
+    except Exception:  # noqa: BLE001 - absent or incomplete colcon build
+        pass
+    else:
+        return {}
+
+    module = types.ModuleType("datatypes")
+    message = types.ModuleType("datatypes.msg")
+
+    class FakeSolidStateRelayState:
+        pass
+
+    message.SolidStateRelayState = FakeSolidStateRelayState
+    module.msg = message
+    return {"datatypes": module, "datatypes.msg": message}
+
+
 @pytest.fixture()
-def mock_motor_setup(stubbed_tinkerforge):
+def mock_motor_setup(stubbed_tinkerforge, monkeypatch):
     """Mock motor and bricklet setup for MotorCurrent testing."""
+    for name, module in _datatypes_stubs().items():
+        monkeypatch.setitem(sys.modules, name, module)
+
     for name in list(sys.modules):
         if name.startswith("pib_motors") or name.startswith("motors"):
             sys.modules.pop(name, None)

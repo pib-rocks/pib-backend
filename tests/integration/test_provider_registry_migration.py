@@ -150,13 +150,16 @@ def test_upgrade_copies_assistant_model_ids_onto_the_provider_registry(tmp_path)
         "claude-sonnet-5-5": "Anthropic",
         "pib-cloud": "pib.Cloud",
     }
-    assert provider_columns == {
+    # Required columns only: the provider table also carries columns an upgrade
+    # adds later (e.g. ``probe`` from c4e9a1b73f28_add_provider_probe), so an
+    # exact set comparison would fail on every schema evolution (PR-2167).
+    assert {
         "id",
         "name",
         "endpoint_base",
         "credential_ref",
         "capabilities",
-    }
+    } <= provider_columns
     assert {
         "id",
         "api_name",
@@ -164,8 +167,11 @@ def test_upgrade_copies_assistant_model_ids_onto_the_provider_registry(tmp_path)
         "capabilities",
         "provider_id",
     } <= model_columns
-    assert set(providers) == supported
-    assert set(assistant_models) == supported
+    # The catalogue grows (``gemini-3.5-flash-lite`` is a first-class model since
+    # the Hermes lite route), so these are membership checks, not set equality
+    # (PR-2167).
+    assert supported <= set(providers)
+    assert supported <= set(assistant_models)
     # Google owns both Gemini models. The other accounts own one each.
     assert len(accounts) == 4
     models_per_account: dict[int, int] = {}

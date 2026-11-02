@@ -3,6 +3,13 @@ import json
 from unittest.mock import patch, MagicMock
 from app.app import app
 
+# docker_admin_service.is_allowed_container_name() answers 403 for anything outside
+# ALLOWED_CONTAINER_PREFIXES / ALLOWED_CONTAINER_NAMES, so these tests must use a
+# name the API actually manages - 'pib-backend' alone is not one of them (PR-2165).
+MANAGED_CONTAINER = "pib-backend-ros-motors-1"
+MISSING_MANAGED_CONTAINER = "pib-backend-no-such-container-1"
+UNMANAGED_CONTAINER = "nginx"
+
 
 @pytest.fixture
 def client():
@@ -50,7 +57,7 @@ def test_start_container_success(client):
         "service.docker_admin_service._docker_request",
         return_value=(204, b""),
     ):
-        response = client.post("/docker/containers/pib-backend/start")
+        response = client.post(f"/docker/containers/{MANAGED_CONTAINER}/start")
         assert response.status_code == 200
         data = response.get_json()
         assert data["status"] == "success"
@@ -62,10 +69,26 @@ def test_start_container_not_found(client):
         "service.docker_admin_service._docker_request",
         return_value=(404, b"No such container"),
     ):
-        response = client.post("/docker/containers/nonexistent/start")
+        response = client.post(f"/docker/containers/{MISSING_MANAGED_CONTAINER}/start")
         assert response.status_code == 404
         data = response.get_json()
         assert data["status"] == "error"
+
+
+def test_unmanaged_container_is_refused_with_403(client):
+    """The allowlist guard answers 403 before Docker is asked anything."""
+    with patch(
+        "service.docker_admin_service._docker_request",
+        side_effect=AssertionError(
+            "an unmanaged name must not reach the Docker socket"
+        ),
+    ):
+        for action in ("start", "stop", "restart"):
+            response = client.post(f"/docker/containers/{UNMANAGED_CONTAINER}/{action}")
+            assert response.status_code == 403, action
+            data = response.get_json()
+            assert data["status"] == "error"
+            assert "not managed by pib" in data["message"]
 
 
 def test_stop_container_success(client):
@@ -73,7 +96,7 @@ def test_stop_container_success(client):
         "service.docker_admin_service._docker_request",
         return_value=(204, b""),
     ):
-        response = client.post("/docker/containers/pib-backend/stop")
+        response = client.post(f"/docker/containers/{MANAGED_CONTAINER}/stop")
         assert response.status_code == 200
         data = response.get_json()
         assert data["status"] == "success"
@@ -85,7 +108,7 @@ def test_restart_container_success(client):
         "service.docker_admin_service._docker_request",
         return_value=(204, b""),
     ):
-        response = client.post("/docker/containers/pib-backend/restart")
+        response = client.post(f"/docker/containers/{MANAGED_CONTAINER}/restart")
         assert response.status_code == 200
         data = response.get_json()
         assert data["status"] == "success"
@@ -98,7 +121,7 @@ def test_get_container_logs(client):
         "service.docker_admin_service._docker_request",
         return_value=(200, raw_logs),
     ):
-        response = client.get("/docker/containers/pib-backend/logs?tail=100")
+        response = client.get(f"/docker/containers/{MANAGED_CONTAINER}/logs?tail=100")
         assert response.status_code == 200
         data = response.get_json()
         assert data["status"] == "success"
@@ -113,7 +136,9 @@ def test_clear_container_logs(client):
     ):
         with patch("os.path.exists", return_value=True):
             with patch("builtins.open", MagicMock()):
-                response = client.post("/docker/containers/pib-backend/clear-logs")
+                response = client.post(
+                    f"/docker/containers/{MANAGED_CONTAINER}/clear-logs"
+                )
                 assert response.status_code == 200
                 data = response.get_json()
                 assert data["status"] == "success"

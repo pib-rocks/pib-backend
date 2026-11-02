@@ -29,16 +29,16 @@ BRICKLET_ORDERED_MODULES = (
 )
 
 
-def test_stand_in_modules_do_not_leak_into_a_later_test_module():
-    """Both modules in one process; the later one has to stay green."""
-    result = subprocess.run(
+def _run_pair(modules) -> subprocess.CompletedProcess:
+    return subprocess.run(
         [
             sys.executable,
             "-m",
             "pytest",
-            *ORDERED_MODULES,
+            *modules,
             "-q",
             "--no-header",
+            "-rs",
             "-p",
             "no:cacheprovider",
         ],
@@ -47,32 +47,54 @@ def test_stand_in_modules_do_not_leak_into_a_later_test_module():
         text=True,
     )
 
-    assert result.returncode == 0, (
+
+def _assert_victim_stayed_green(result, victim: str, message: str) -> None:
+    """A leak shows up as a failure in the victim module, not anywhere else.
+
+    The polluter module is allowed to skip itself (it needs the colcon-built
+    'datatypes' package); that must not silently turn this guard into a no-op,
+    so a skipped polluter fails the guard instead (PR-2171).
+    """
+    output = result.stdout
+    leaked = [
+        line
+        for line in output.splitlines()
+        if line.startswith(("FAILED ", "ERROR ")) and victim in line
+    ]
+    assert not leaked, f"{message}\n" + "\n".join(leaked) + "\n" + output[-4000:]
+
+    polluter = "tests/integration/test_motor_current.py"
+    skipped_polluter = [
+        line
+        for line in output.splitlines()
+        if line.startswith("SKIPPED") and polluter in line
+    ]
+    assert not skipped_polluter, (
+        f"{message}: the polluter module {polluter} did not run "
+        f"({skipped_polluter[0]}), so this guard proves nothing\n" + output[-2000:]
+    )
+    assert " passed" in output, f"{message}: no test actually ran\n" + output[-2000:]
+
+
+def test_stand_in_modules_do_not_leak_into_a_later_test_module():
+    """Both modules in one process; the later one has to stay green."""
+    result = _run_pair(ORDERED_MODULES)
+
+    _assert_victim_stayed_green(
+        result,
+        "tests/unit/test_stereo_camera_optimization.py",
         "the second module only fails after the first one ran, so a stand-in "
-        "module leaked into sys.modules:\n" + result.stdout[-4000:]
+        "module leaked into sys.modules",
     )
 
 
 def test_tinkerforge_stand_in_does_not_empty_later_bricklet_enumeration():
     """Bricklet enumeration stays populated after motor_current's stand-in."""
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "pytest",
-            *BRICKLET_ORDERED_MODULES,
-            "-q",
-            "--no-header",
-            "-p",
-            "no:cacheprovider",
-        ],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-    )
+    result = _run_pair(BRICKLET_ORDERED_MODULES)
 
-    assert result.returncode == 0, (
+    _assert_victim_stayed_green(
+        result,
+        "tests/unit/test_bricklet_discovery_service.py",
         "get_connected_bricklets() returns an empty list when this module runs "
-        "after test_motor_current.py installed its tinkerforge stand-in:\n"
-        + result.stdout[-4000:]
+        "after test_motor_current.py installed its tinkerforge stand-in",
     )

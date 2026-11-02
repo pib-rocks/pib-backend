@@ -212,10 +212,16 @@ class TestMicrophoneArrayE2E:
             "input#led-brightness, input[data-test='SLD_LED_Brightness']"
         ).first
         expect(brightness_slider).to_be_visible(timeout=15000)
-        expect(brightness_slider).to_be_enabled(timeout=15000)
 
         initial_mode = _get_doa_param("led_mode")
         initial_brightness = int(_get_doa_param("led_brightness"))
+
+        # Cerebra disables the brightness slider while the ring is off
+        # ([disabled]="saving || tuning.ledMode === 'off' || ledBrightness === undefined"),
+        # so "enabled" is only the right expectation once a mode is active - the
+        # live robot sits in 'off' (PR-2170).
+        if initial_mode != "off":
+            expect(brightness_slider).to_be_enabled(timeout=15000)
 
         target_mode_label = "Spin" if initial_mode == "trace" else "DOA Trace"
         target_mode_val = "spin" if initial_mode == "trace" else "trace"
@@ -263,7 +269,9 @@ class TestMicrophoneArrayE2E:
             if initial_mode in mode_label_map:
                 led_mode_select.select_option(label=mode_label_map[initial_mode])
                 expect(led_mode_select).to_be_enabled(timeout=15000)
-            expect(brightness_slider).to_be_enabled(timeout=15000)
+            if initial_mode != "off":
+                # The slider is disabled by design while the ring is off.
+                expect(brightness_slider).to_be_enabled(timeout=15000)
             brightness_slider.evaluate(f"""el => {{
                     el.value = '{initial_brightness}';
                     el.dispatchEvent(new Event('input', {{ bubbles: true }}));

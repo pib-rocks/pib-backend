@@ -25,7 +25,7 @@
 
 ## Docker Compose Architecture
 
-**Project name:** `multirepo` (from `.env` → `COMPOSE_PROJECT_NAME`)  
+**Project name:** derived from the checkout directory, one compose project per repository — `pib-backend` for this repo, `cerebra` for the frontend. There is no `.env` in the checkout and no shared `COMPOSE_PROJECT_NAME` any more (the retired monorepo setup used `multirepo`); container names therefore carry the `pib-backend-*` prefix, which `docker_admin_service` treats as managed.
 **Network:** `pib-network` (bridge, internal DNS between services)
 
 ### Services Always Started (no profile)
