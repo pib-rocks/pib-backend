@@ -9,7 +9,10 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-VENV_DIR="${REPO_ROOT}/.test-venv"
+# The venv lives inside the repository by default, which means the robot's update
+# runner (git clean) deletes it between runs and every run pays for a rebuild. Set
+# PIB_TEST_VENV_DIR to keep it somewhere the updater leaves alone.
+VENV_DIR="${PIB_TEST_VENV_DIR:-${REPO_ROOT}/.test-venv}"
 RESULTS_DIR="${SCRIPT_DIR}/results/run-$(date +%Y%m%d-%H%M%S)"
 
 SKIP_DOCKER=0
@@ -124,7 +127,6 @@ check_flask() {
 # package (measured on the robot, where 'cv2' was absent and the failure read like
 # a broken test). Name the package here instead, before the run starts.
 check_test_dependencies() {
-    section "Test dependencies"
     local missing
     missing="$("${VENV_DIR}/bin/python" - <<'PY' 2>&1
 import importlib
