@@ -28,7 +28,9 @@ def inverse():
         )
     except kinematics_service.KinematicsRequestError as error:
         return jsonify({"error": str(error)}), 400
-    except ModuleNotFoundError:
-        return jsonify({"error": "pib-sdk is not installed in this backend"}), 503
+    except (ModuleNotFoundError, ImportError) as error:
+        # An image without pib-sdk or without the OpenMP runtime pinocchio needs: say so instead
+        # of letting the drag loop read a generic 500.
+        return jsonify({"error": f"inverse kinematics unavailable: {error}"}), 503
 
     return jsonify(answer)
