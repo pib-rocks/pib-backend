@@ -86,9 +86,14 @@ def player(monkeypatch):
     return node, SimpleNamespace(**ns)
 
 
-def request(text="One sentence.", join=False):
+def request(text="One sentence.", join=False, turn_id=""):
     return SimpleNamespace(
-        speech=text, gender="F1", language="de", tts_engine="supertone", join=join
+        speech=text,
+        gender="F1",
+        language="de",
+        tts_engine="supertone",
+        join=join,
+        turn_id=turn_id,
     )
 
 
@@ -388,3 +393,49 @@ def test_clear_interrupts_trailing_pause_within_forty_millis(player):
         ), f"Trailing pause took {elapsed:.3f}s instead of exiting within 40ms"
     finally:
         mod.pyaudio = None
+
+
+def test_clear_cancels_the_turn_so_its_late_clauses_never_speak(player):
+    """A clause request dispatched before the interruption must stay silent."""
+    node, _ = player
+    node.clear_playback_queue(SimpleNamespace(turn_id="chat-a#7"), SimpleNamespace())
+
+    node.play_audio_from_speech(request(turn_id="chat-a#7"), SimpleNamespace())
+
+    assert node._synthesize_clause.call_count == 0  # not even synthesized
+    assert node.playback_queue.empty()
+    assert node._turn_is_cancelled("chat-a#7")
+
+
+def test_late_clauses_of_the_next_answer_still_play(player):
+    node, _ = player
+    node.clear_playback_queue(SimpleNamespace(turn_id="chat-a#7"), SimpleNamespace())
+
+    node.play_audio_from_speech(request(turn_id="chat-a#8"), SimpleNamespace())
+
+    item = node.playback_queue.get_nowait()
+    assert list(item.data) == [b"\x01\x00"]
+    assert not item.is_cleared()
+
+
+def test_cancelling_one_turn_does_not_silence_a_greeting(player):
+    """Greetings are dispatched without a turn id and survive a turn cancel."""
+    node, _ = player
+    node.clear_playback_queue(SimpleNamespace(turn_id="chat-a#7"), SimpleNamespace())
+
+    node.play_audio_from_speech(request(), SimpleNamespace())
+
+    assert not node.playback_queue.empty()
+
+
+def test_cancelled_turn_memory_keeps_only_the_recent_answers(player):
+    node, mod = player
+    for index in range(mod.CANCELLED_TURN_MEMORY + 5):
+        node.clear_playback_queue(
+            SimpleNamespace(turn_id="chat#%d" % index), SimpleNamespace()
+        )
+
+    remembered = node._cancelled_turns()
+    assert len(remembered) == mod.CANCELLED_TURN_MEMORY
+    assert remembered[-1] == "chat#%d" % (mod.CANCELLED_TURN_MEMORY + 4)
+    assert "chat#0" not in remembered

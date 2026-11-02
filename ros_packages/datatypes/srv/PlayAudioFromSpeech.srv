@@ -3,5 +3,6 @@ string gender # voice gender of the audio that is generated
 string language # voice language of the audio that is generated
 bool join # if this flag is set, the service call waits until auido has finished playing, before returning the result
 string tts_engine # empty selects local Supertone; the personality's local voice
+string turn_id # answer this clause belongs to; empty means it cannot be cancelled by turn
 ---
 # the result is empty and only indicatedm that the file has finished playing

@@ -188,6 +188,9 @@ class AssistantTurnCallbacksMixin:
         # open again (PC-40).
         self._cancel_pending_drain_watchdog()
         self._answer_audio_pending = False
+        # The answer is over; a later greeting or live announcement must not
+        # inherit this id (and with it a cancellation).
+        self._speech_turn_id = ""
         self.state.speaking = False
         detector = getattr(self, "_barge_in_detector", None)
         if detector is not None:
@@ -381,11 +384,20 @@ class AssistantTurnCallbacksMixin:
         effective_chat_id = chat_id or self.state.chat_id
         if not effective_chat_id:
             return False
+        # The interrupted answer keeps this id: clause requests it already
+        # dispatched must never reach the speaker after the clear, otherwise
+        # the old answer talks over the new one.
+        from voice_assistant.util import speech_turn_id
+
+        cancelled_turn_id = getattr(self, "_speech_turn_id", "") or speech_turn_id(
+            effective_chat_id, self._playback_epoch
+        )
         detector = getattr(self, "_barge_in_detector", None)
         if detector is not None:
             detector.reset()
         self.cycle += 1
         self._invalidate_voice_async_work()
+        self._speech_turn_id = ""
         self._close_latency_turn(incomplete=True)
         self.stop_chat(effective_chat_id)
         self.final_chat_response_received = False
@@ -400,7 +412,7 @@ class AssistantTurnCallbacksMixin:
             else:
                 self.set_is_listening(effective_chat_id, True)
 
-        self.clear_playback_queue(on_cleared)
+        self.clear_playback_queue(on_cleared, turn_id=cancelled_turn_id)
         self._publish_voice_state()
         return True
 
@@ -476,6 +488,12 @@ class AssistantTurnCallbacksMixin:
                 current_chat_id = self.state.chat_id
 
                 cleared_epoch = self._playback_epoch
+                from voice_assistant.util import speech_turn_id
+
+                interrupted_turn_id = getattr(self, "_speech_turn_id", "") or (
+                    speech_turn_id(current_chat_id, cleared_epoch)
+                )
+                self._speech_turn_id = ""
 
                 def on_playback_queue_cleared():
                     if self._playback_epoch != cleared_epoch:
@@ -483,7 +501,9 @@ class AssistantTurnCallbacksMixin:
                     self.turning_off = False
                     self.set_is_listening(current_chat_id, True)
 
-                self.clear_playback_queue(on_playback_queue_cleared)
+                self.clear_playback_queue(
+                    on_playback_queue_cleared, turn_id=interrupted_turn_id
+                )
 
                 self.state.turned_on = False
                 self.state.chat_id = effective_chat_id

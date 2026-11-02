@@ -146,6 +146,8 @@ class VoiceAssistantNode(AssistantTurnCallbacksMixin, AssistantLatencyMixin, Nod
         self._answer_audio_pending = False
         # Bumped on teardown/barge-in so stale drain callbacks cannot touch a new turn.
         self._playback_epoch: int = 0
+        # Id of the answer currently being spoken; cleared on a turn boundary.
+        self._speech_turn_id: str = ""
         self._pending_drain_watchdog: Optional[threading.Timer] = None
         self._answer_drain_max_seconds = _answer_drain_max_seconds()
         self._turn_trace = TurnTrace()
@@ -287,15 +289,24 @@ class VoiceAssistantNode(AssistantTurnCallbacksMixin, AssistantLatencyMixin, Nod
     # client accessors ------------------------------------------------------------------
 
     def clear_playback_queue(
-        self, on_playback_queue_cleared: Callable[[], None] = None
+        self,
+        on_playback_queue_cleared: Callable[[], None] = None,
+        turn_id: str = "",
     ):
+        """Stop playback now and, with a turn id, keep that answer silent.
+
+        The id is what makes an interruption final: clause requests of the
+        cancelled answer may still be queued in the player's service and would
+        otherwise start speaking after the clear.
+        """
         self.get_logger().debug(
-            "clear_playback_queue: submitting request (ACK is not proof the device stopped)"
+            "clear_playback_queue: submitting request turn=%r (ACK is not proof the device stopped)"
+            % (turn_id,)
         )
         ack_seen = threading.Event()
-        future = self.clear_playback_queue_client.call_async(
-            ClearPlaybackQueue.Request()
-        )
+        clear_request = ClearPlaybackQueue.Request()
+        clear_request.turn_id = turn_id
+        future = self.clear_playback_queue_client.call_async(clear_request)
 
         def on_service_done(_future: Future) -> None:
             try:
@@ -514,6 +525,7 @@ class VoiceAssistantNode(AssistantTurnCallbacksMixin, AssistantLatencyMixin, Nod
         request.tts_engine = (
             getattr(self.personality, "tts_engine", None) or "supertone"
         )
+        request.turn_id = getattr(self, "_speech_turn_id", "") or ""
         if speech and str(speech).strip():
             self._note_spoken_answer(str(speech))
         future: Future = self.play_audio_from_speech_client.call_async(request)
