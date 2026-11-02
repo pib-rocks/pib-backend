@@ -440,6 +440,10 @@ FAST_BRANCH_HEIGHT = 144
 FAST_PALM_INPUT_SIZE = 128
 FAST_LANDMARK_INPUT_SIZE = 224
 FAST_SINGLE_HAND_TOLERANCE = 10
+#: Largest branch / palm-input ratio the device ImageManip warps in one step.
+#: 1152 / 128 = 9.0 is the reference implementation's preview; 2104x1560
+#: (16.4x) fails with WARP_SWCH_ERR_CACHE_TOO_SMALL.
+FAST_MAX_BRANCH_SCALE = 9.0
 FAST_RESULT_OUTPUT = "detections"
 FAST_PALM_CONFIG_OUTPUT = "pre_pd_manip_cfg"
 FAST_LANDMARK_CONFIG_OUTPUT = "pre_lm_manip_cfg"
@@ -717,19 +721,22 @@ def validate_fast_branch_size(
     source_height: int,
     palm_input: int = FAST_PALM_INPUT_SIZE,
 ) -> float:
-    """Refuse a branch whose long side is more than twice the palm input.
+    """Refuse a branch the palm ImageManip cannot warp in one step.
 
     2104x1560 into 128x128 is the manipulation that fails with
-    ``WARP_SWCH_ERR_CACHE_TOO_SMALL``. The accepted branch stays within 2:1.
+    ``WARP_SWCH_ERR_CACHE_TOO_SMALL``. The branch the reference implementation
+    proved (1152x640 preview into the same 128x128 palm input) is the ceiling;
+    anything larger is refused instead of silently degrading the crop.
     """
     if source_width <= 0 or source_height <= 0 or palm_input <= 0:
         raise ValueError("fast hand branch must have positive dimensions")
     scale = max(int(source_width), int(source_height)) / float(palm_input)
-    if scale > 2.0:
+    if scale > FAST_MAX_BRANCH_SCALE:
         raise ValueError(
             f"Refusing {source_width}x{source_height} to {palm_input}: "
             "one image manipulation from the 2104x1560 ISP frame fails with "
-            "WARP_SWCH_ERR_CACHE_TOO_SMALL; the long side must stay within 2:1"
+            "WARP_SWCH_ERR_CACHE_TOO_SMALL; the branch must stay within "
+            f"{FAST_MAX_BRANCH_SCALE:.1f}x the palm input"
         )
     return scale
 

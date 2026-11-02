@@ -275,8 +275,15 @@ class PipelineBuildersMixin:
         Every other model shares the full-field branch. Both sizes have the
         published frame's aspect; the model's own input is a later stretch.
         """
-        if model_id in ("hand_tracking", FAST_MODEL_ID):
+        if model_id == "hand_tracking":
             return (stereo.HAND_NN_WIDTH, stereo.HAND_NN_HEIGHT)
+        if model_id == FAST_MODEL_ID:
+            # The fast chain runs the palm detector on the device. A 256x144
+            # branch left a hand with ~36 px of real detail (the reference
+            # implementation worked on a 1152x640 preview), so the detector saw
+            # an upscaled blur. Both crops fit the 2:1 warp budget from this
+            # branch because the palm crop is a letterboxed square.
+            return (stereo.COLOUR_BRANCH_WIDTH, stereo.COLOUR_BRANCH_HEIGHT)
         return (stereo.COLOUR_BRANCH_WIDTH, stereo.COLOUR_BRANCH_HEIGHT)
 
     def _require_published_aspect(self, width, height):
