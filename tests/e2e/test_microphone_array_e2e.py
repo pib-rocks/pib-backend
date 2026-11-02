@@ -10,6 +10,10 @@ from playwright.sync_api import sync_playwright, Page, expect
 
 from robot_address import robot_base_url, robot_hostname
 
+# Live UI waits on a Pi that is running the whole suite: 10-15 s was measured to be
+# too short while whisper and headless Chromium compete for the CPU (PR-2176).
+UI_TIMEOUT_MS = int(os.environ.get("PIB_MIC_E2E_TIMEOUT_MS", "45000"))
+
 BASE_URL = robot_base_url()
 ROBOT_HOST = robot_hostname()
 ROSBRIDGE_PORT = int(os.getenv("PIB_ROSBRIDGE_PORT", "9090"))
@@ -84,7 +88,7 @@ def page():
         page = context.new_page()
         page.on("dialog", lambda dialog: dialog.accept())
         page.goto(f"{BASE_URL}/system/diagnostics", wait_until="domcontentloaded")
-        page.wait_for_selector("#system-nav", timeout=15000)
+        page.wait_for_selector("#system-nav", timeout=UI_TIMEOUT_MS)
         yield page
         context.close()
         browser.close()
@@ -102,39 +106,39 @@ class TestMicrophoneArrayE2E:
         """
         # 1. Click System in left navigation
         page.locator("#system-nav").click()
-        page.wait_for_selector("ul.nav-tabs", timeout=15000)
+        page.wait_for_selector("ul.nav-tabs", timeout=UI_TIMEOUT_MS)
 
         # 2. Click Microphone Array tab
         mic_tab = page.locator(
             "a:has-text('Microphone Array'), a:has-text('Microphone')"
         ).first
-        expect(mic_tab).to_be_visible(timeout=10000)
+        expect(mic_tab).to_be_visible(timeout=UI_TIMEOUT_MS)
         mic_tab.click()
 
         # 3. Assert URL is /system/microphone-array
         expect(page).to_have_url(
-            re.compile(r".*/system/microphone-array$"), timeout=10000
+            re.compile(r".*/system/microphone-array$"), timeout=UI_TIMEOUT_MS
         )
 
         # 4. Assert <app-microphone-array> component exists in DOM
         app_mic = page.locator("app-microphone-array")
-        expect(app_mic).to_be_visible(timeout=10000)
+        expect(app_mic).to_be_visible(timeout=UI_TIMEOUT_MS)
 
         # 5. Assert 360° DOA Radar Compass SVG or Image exists
         radar = page.locator(
             "app-microphone-array svg, app-microphone-array img[alt*='compass']"
         ).first
-        expect(radar).to_be_visible(timeout=10000)
+        expect(radar).to_be_visible(timeout=UI_TIMEOUT_MS)
 
         # 6. Assert VAD status text and channel level meters exist
         expect(page.locator("app-microphone-array")).to_contain_text(
-            "VAD:", timeout=10000
+            "VAD:", timeout=UI_TIMEOUT_MS
         )
 
         progressbars = page.locator(
             "app-microphone-array progressbar, app-microphone-array .progress-bar, app-microphone-array [role='progressbar']"
         ).first
-        expect(progressbars).to_be_visible(timeout=10000)
+        expect(progressbars).to_be_visible(timeout=UI_TIMEOUT_MS)
 
     def test_02_preset_selection_and_dsp_sliders(self, page: Page):
         """
@@ -153,13 +157,13 @@ class TestMicrophoneArrayE2E:
         ).first
         mic_tab.click()
         expect(page).to_have_url(
-            re.compile(r".*/system/microphone-array$"), timeout=10000
+            re.compile(r".*/system/microphone-array$"), timeout=UI_TIMEOUT_MS
         )
 
         # The field shows the live tuning, so it stays disabled until that has arrived.
         preset_input = page.locator("input[data-test='SEL_Microphone_Array_Preset']")
-        expect(preset_input).to_be_visible(timeout=15000)
-        expect(preset_input).to_be_enabled(timeout=15000)
+        expect(preset_input).to_be_visible(timeout=UI_TIMEOUT_MS)
+        expect(preset_input).to_be_enabled(timeout=UI_TIMEOUT_MS)
         previous_preset = preset_input.input_value()
 
         target_preset = "Noisy Environment / ASR"
@@ -170,7 +174,7 @@ class TestMicrophoneArrayE2E:
 
         # The preset sets AGCMAXGAIN = 31.6; the slider below is linear (min 1, max 1000, step 0.1).
         agc_slider = page.locator("input[data-test='SLD_AGC_Max_Gain']")
-        expect(agc_slider).to_be_visible(timeout=10000)
+        expect(agc_slider).to_be_visible(timeout=UI_TIMEOUT_MS)
         expected_gain = 31.6
         value = float("nan")
         for _ in range(40):
@@ -205,13 +209,13 @@ class TestMicrophoneArrayE2E:
         led_mode_select = page.locator(
             "select#led-mode, select[data-test='SEL_LED_Mode']"
         ).first
-        expect(led_mode_select).to_be_visible(timeout=15000)
-        expect(led_mode_select).to_be_enabled(timeout=15000)
+        expect(led_mode_select).to_be_visible(timeout=UI_TIMEOUT_MS)
+        expect(led_mode_select).to_be_enabled(timeout=UI_TIMEOUT_MS)
 
         brightness_slider = page.locator(
             "input#led-brightness, input[data-test='SLD_LED_Brightness']"
         ).first
-        expect(brightness_slider).to_be_visible(timeout=15000)
+        expect(brightness_slider).to_be_visible(timeout=UI_TIMEOUT_MS)
 
         initial_mode = _get_doa_param("led_mode")
         initial_brightness = int(_get_doa_param("led_brightness"))
@@ -221,7 +225,7 @@ class TestMicrophoneArrayE2E:
         # so "enabled" is only the right expectation once a mode is active - the
         # live robot sits in 'off' (PR-2170).
         if initial_mode != "off":
-            expect(brightness_slider).to_be_enabled(timeout=15000)
+            expect(brightness_slider).to_be_enabled(timeout=UI_TIMEOUT_MS)
 
         target_mode_label = "Spin" if initial_mode == "trace" else "DOA Trace"
         target_mode_val = "spin" if initial_mode == "trace" else "trace"
@@ -231,14 +235,14 @@ class TestMicrophoneArrayE2E:
             led_mode_select.select_option(label=target_mode_label)
             expect(
                 page.locator("[data-test='MSG_Microphone_Array_Success']")
-            ).to_be_visible(timeout=15000)
-            expect(led_mode_select).to_be_enabled(timeout=15000)
+            ).to_be_visible(timeout=UI_TIMEOUT_MS)
+            expect(led_mode_select).to_be_enabled(timeout=UI_TIMEOUT_MS)
             assert _get_doa_param("led_mode") == target_mode_val, (
                 f"Expected /doa_publisher:led_mode to be {target_mode_val!r}, "
                 f"got {_get_doa_param('led_mode')!r}"
             )
 
-            expect(brightness_slider).to_be_enabled(timeout=15000)
+            expect(brightness_slider).to_be_enabled(timeout=UI_TIMEOUT_MS)
             brightness_slider.evaluate(f"""el => {{
                     el.value = '{target_brightness}';
                     el.dispatchEvent(new Event('input', {{ bubbles: true }}));
@@ -256,7 +260,7 @@ class TestMicrophoneArrayE2E:
                 f"got {live_brightness}"
             )
         finally:
-            expect(led_mode_select).to_be_enabled(timeout=15000)
+            expect(led_mode_select).to_be_enabled(timeout=UI_TIMEOUT_MS)
             mode_label_map = {
                 "off": "Off",
                 "listen": "Listen",
@@ -268,10 +272,10 @@ class TestMicrophoneArrayE2E:
             }
             if initial_mode in mode_label_map:
                 led_mode_select.select_option(label=mode_label_map[initial_mode])
-                expect(led_mode_select).to_be_enabled(timeout=15000)
+                expect(led_mode_select).to_be_enabled(timeout=UI_TIMEOUT_MS)
             if initial_mode != "off":
                 # The slider is disabled by design while the ring is off.
-                expect(brightness_slider).to_be_enabled(timeout=15000)
+                expect(brightness_slider).to_be_enabled(timeout=UI_TIMEOUT_MS)
             brightness_slider.evaluate(f"""el => {{
                     el.value = '{initial_brightness}';
                     el.dispatchEvent(new Event('input', {{ bubbles: true }}));
