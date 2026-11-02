@@ -87,10 +87,17 @@ def cloud_language_code(value: object) -> str:
     return "de"
 
 
+#: The cloud speech codes for the two voices the personality editor offers. ``F3`` is Bella,
+#: ``M3`` is Adam; both are stock ElevenLabs voices the endpoint accepts by name
+#: (``pib_cloud/routes/audio_speech.py:VOICE_IDS``), so the robot never sends a raw voice id.
+VOICE_FEMALE = "F3"
+VOICE_MALE = "M3"
+
+
 def cloud_voice(value: object) -> str:
-    """``F1`` or ``M1``, from the personality's gender or a stored voice id."""
+    """``F3`` or ``M3``, from the personality's gender (the dialog's "Voice" dropdown)."""
     text = value.strip().lower() if isinstance(value, str) else ""
-    return "M1" if text.startswith("m") else "F1"
+    return VOICE_MALE if text.startswith("m") else VOICE_FEMALE
 
 
 # The audio thread is the only writer. The service thread only enqueues items.
@@ -479,6 +486,7 @@ class AudioPlayerNode(Node):
         # the same reason: the key store is not consulted per clause.
         self._cloud_tts_fallback_noted = False
         self._cloud_tts_turn_token = None
+        self._cloud_tts_turn_voice = None
 
         pieces = clauses_to_synthesize(speech)
         last_item = None
@@ -595,6 +603,13 @@ class AudioPlayerNode(Node):
             "language": cloud_language_code(request.language),
             "voice": cloud_voice(request.gender),
         }
+        if self._cloud_tts_turn_voice != body["voice"]:
+            # Once per turn, so a wrong voice is visible in the log without per-clause noise.
+            self._cloud_tts_turn_voice = body["voice"]
+            self.get_logger().info(
+                f"cloud speech voice={body['voice']} language={body['language']} "
+                f"gender={getattr(request, 'gender', None)!r}"
+            )
         headers = {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
