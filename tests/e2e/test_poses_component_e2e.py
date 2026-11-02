@@ -1,4 +1,4 @@
-"""Live E2E suite for the Poses component (/pose) against a real robot (PR-2160).
+"""Live E2E suite for the Poses tab (/movement/pose) against a real robot (PR-2160).
 
 Verifies that clicking the Apply button on a pose in Cerebra:
 1. Sends a valid single-point JointTrajectory over rosbridge to /apply_joint_trajectory
@@ -137,7 +137,7 @@ def _startup_pose_motor_positions() -> list[dict[str, Any]]:
 
 
 class TestPosesComponentE2E:
-    """End-to-end verification of applying poses in the Cerebra Poses view (/pose)."""
+    """End-to-end verification of applying poses in the Cerebra Poses tab (/movement/pose)."""
 
     def test_apply_pose_moves_robot_and_sends_standard_joint_trajectory(self):
         base_positions = _startup_pose_motor_positions()
@@ -217,7 +217,7 @@ class TestPosesComponentE2E:
 
                 try:
                     page.goto(
-                        f"{ROBOT_URL}/pose",
+                        f"{ROBOT_URL}/movement/pose",
                         wait_until="domcontentloaded",
                         timeout=30000,
                     )
@@ -310,7 +310,7 @@ class TestPosesComponentE2E:
 
                 try:
                     page.goto(
-                        f"{ROBOT_URL}/pose",
+                        f"{ROBOT_URL}/movement/pose",
                         wait_until="domcontentloaded",
                         timeout=30000,
                     )
