@@ -8,6 +8,7 @@ import os
 import re
 import subprocess
 import time
+import unicodedata
 import uuid
 from urllib.parse import urlparse
 
@@ -228,6 +229,29 @@ def _wait_for_persisted_user_message(chat_id: str, content: str) -> None:
     )
 
 
+def _fold_hyphens(text: str) -> str:
+    """Fold typographic hyphens to ASCII before comparing.
+
+    A local model writes 'PIB‑COLOR‑…' with U+2011 (non-breaking hyphen) in one turn and
+    with U+002D in the next, so a byte-exact comparison of the recalled value failed on a
+    correct answer (PR-2176). NFKC plus an explicit dash map keeps the assertion about the
+    stored value instead of about the model's typography.
+    """
+    folded = unicodedata.normalize("NFKC", text)
+    for dash in (
+        "\u2010",
+        "\u2011",
+        "\u2012",
+        "\u2013",
+        "\u2014",
+        "\u2015",
+        "\u2212",
+        "\u00ad",
+    ):
+        folded = folded.replace(dash, "-")
+    return folded
+
+
 def _await_service_response(connection, request_id: str, timeout_s: float):
     """Drain rosbridge frames until the response for `request_id` arrives.
 
@@ -426,7 +450,7 @@ def test_voice_assistant_hermes_persists_reply_and_recalls_prior_fact():
             "and do not use tools.",
             first_ids,
         )
-        assert token in recalled_reply["content"]
+        assert token in _fold_hyphens(recalled_reply["content"])
     finally:
         # Each cleanup step is isolated so a failing one cannot mask the real result,
         # and so a leftover "listening" chat cannot slow down the following tests.
