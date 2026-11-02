@@ -52,14 +52,27 @@ def _assert_victim_stayed_green(result, victim: str, message: str) -> None:
     """A leak shows up as a failure in the victim module, not anywhere else.
 
     The polluter module is allowed to skip itself (it needs the colcon-built
-    'datatypes' package); that must not silently turn this guard into a no-op,
-    so a skipped polluter fails the guard instead (PR-2171).
+    'datatypes' package); that must not silently turn this guard into a no-op.
+    A victim module that cannot even be collected (missing third-party import in
+    this environment) also fails here, because a guard whose subject never ran
+    proves nothing (PR-2171).
     """
     output = result.stdout
+    victim_name = Path(victim).name
+
+    collect_errors = [
+        line for line in output.splitlines() if "ERROR collecting" in line
+    ]
+    assert not collect_errors, (
+        f"{message}: the victim or polluter module could not be collected in this "
+        "environment, so this guard proves nothing - install the module's "
+        "dependencies first:\n" + "\n".join(collect_errors) + "\n" + output[-2000:]
+    )
+
     leaked = [
         line
         for line in output.splitlines()
-        if line.startswith(("FAILED ", "ERROR ")) and victim in line
+        if line.startswith(("FAILED ", "ERROR ")) and victim_name in line
     ]
     assert not leaked, f"{message}\n" + "\n".join(leaked) + "\n" + output[-4000:]
 
@@ -67,7 +80,7 @@ def _assert_victim_stayed_green(result, victim: str, message: str) -> None:
     skipped_polluter = [
         line
         for line in output.splitlines()
-        if line.startswith("SKIPPED") and polluter in line
+        if line.startswith("SKIPPED") and Path(polluter).name in line
     ]
     assert not skipped_polluter, (
         f"{message}: the polluter module {polluter} did not run "
