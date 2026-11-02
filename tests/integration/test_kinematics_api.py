@@ -119,7 +119,12 @@ class TestAnswer:
         assert elapsed_ms < 500.0, elapsed_ms
         body = response.get_json()
         assert body["reach"]["ok"] is False
-        assert body["reach"]["blockedBy"] in {"workspace", "behind_body", "joint_limit", "convergence"}
+        assert body["reach"]["blockedBy"] in {
+            "workspace",
+            "behind_body",
+            "joint_limit",
+            "convergence",
+        }
 
     def test_thirty_solves_stay_inside_the_drag_budget(self, client):
         xyz_m = [c / 1000.0 for c in ZERO_RIGHT_MM]

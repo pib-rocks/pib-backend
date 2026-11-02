@@ -90,7 +90,9 @@ def _closest_reachable(side: str, xyz_mm: Sequence[float], seed_rad, restarts: i
         fraction = step / 8
         point = [c * fraction for c in xyz_mm]
         try:
-            joints, _stats = _solve(side, point, seed_rad, restarts=restarts, max_iterations=60)
+            joints, _stats = _solve(
+                side, point, seed_rad, restarts=restarts, max_iterations=60
+            )
         except _failure_types():
             continue
         best_joints, best_point, best_f = joints, point, fraction
@@ -103,7 +105,9 @@ def _closest_reachable(side: str, xyz_mm: Sequence[float], seed_rad, restarts: i
         mid = (lo + hi) / 2
         point = [c * mid for c in xyz_mm]
         try:
-            joints, _stats = _solve(side, point, seed_rad, restarts=restarts, max_iterations=60)
+            joints, _stats = _solve(
+                side, point, seed_rad, restarts=restarts, max_iterations=60
+            )
         except _failure_types():
             hi = mid
             continue
