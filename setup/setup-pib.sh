@@ -2083,6 +2083,9 @@ elif is_ubuntu_noble || is_supported_raspbian; then
   # docker_install.sh runs its own run_step calls, one per service it sets up.
   source "$SETUP_INSTALLATION_DIR/docker_install.sh" || print ERROR "failed to install Cerebra via Docker"
 fi
+# Fresh installations used to come up without it: the 3D tab then answers 404 for
+# /robot-model/model.json. The model is a release asset, not part of the images.
+run_step "Install robot model" bash "$SETUP_INSTALLATION_DIR/install_robot_model.sh" || print ERROR "failed to install the robot model (the 3D tab will answer 404)"
 run_step "Clean up" cleanup || print WARN "cleanup failed"
 
 print_step_summary
