@@ -21,7 +21,14 @@ from service import diagnostics_service
 
 SERIAL_BY_ID_DIR = Path("/dev/serial/by-id")
 
-DETECTED_ASSIGNMENTS_TTL_SEC = 120.0
+# A scan result describes which adapter holds which controller. That is a fact about the
+# wiring, not telemetry: it only changes when someone plugs hardware differently, which
+# needs a restart anyway. So the last report is kept until a newer one replaces it. It
+# used to expire after 120 s, which left "Use detected assignments" usable only inside a
+# two minute window after a motors restart - the scan may only refresh its report once the
+# controller addresses are stored, and those are exactly what the button fills in
+# (PR-2199). A serial that disappears from /dev/serial/by-id is gone from the listing
+# entirely, so nothing stale is offered.
 _detected_assignments: dict[str, dict] = {}
 
 #: Width of ``Controller.address``; a longer value would be truncated silently.
@@ -133,9 +140,6 @@ def _apply_detected_assignment(item: dict) -> dict:
         return item
     stored = _detected_assignments.get(serial)
     if stored is None:
-        return item
-    if (time.time() - stored["updated_at"]) > DETECTED_ASSIGNMENTS_TTL_SEC:
-        del _detected_assignments[serial]
         return item
     item["assignedControllerNumber"] = stored["controllerNumber"]
     item["matchCount"] = stored["matchCount"]
