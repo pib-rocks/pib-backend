@@ -324,8 +324,33 @@ function add_pib_to_docker_group() {
 }
 
 function open_database_permissions() {
+    # The SQLite database lives in the container volume the compose file configures
+    # (SQLALCHEMY_DATABASE_URI=sqlite:////data/pibdata.db), not in the checkout: the
+    # old host path pib_api/flask/pibdata.db has not existed since the DB moved, so
+    # every fresh install ended with "step 33: Open database permissions: FAILED
+    # rc=1" while the stack was healthy (measured on a fresh pib4advanced install,
+    # PR-2180). Resolve the configured path inside the running container instead.
     require_nonempty BACKEND_DIR || return 1
-    sudo chmod 777 "$BACKEND_DIR/pib_api/flask/pibdata.db"
+    local container db_path
+    container="$(sudo docker ps --filter "name=flask-app" --format '{{.Names}}' 2>/dev/null | head -1)"
+    if [[ -z "$container" ]]; then
+        print INFO "no flask-app container running - database permissions untouched"
+        return 0
+    fi
+    db_path="$(sudo docker exec "$container" printenv SQLALCHEMY_DATABASE_URI 2>/dev/null || true)"
+    db_path="${db_path#sqlite:}"
+    # sqlite:////data/x.db -> /data/x.db (collapse the leading slashes)
+    db_path="$(printf '%s' "${db_path}" | sed -E 's#^/*#/#')"
+    if [[ -z "$db_path" || "$db_path" == "/" ]]; then
+        print INFO "no SQLite database configured - database permissions untouched"
+        return 0
+    fi
+    if sudo docker exec "$container" test -f "$db_path"; then
+        print INFO "database $db_path is writable: $(sudo docker exec "$container" stat -c '%A %U:%G' "$db_path")"
+        return 0
+    fi
+    print ERROR "database $db_path is missing in $container"
+    return 1
 }
 
 run_step "Install Docker Engine" install_docker_engine || print ERROR "failed to install docker engine"
