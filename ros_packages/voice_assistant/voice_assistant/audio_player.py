@@ -87,15 +87,15 @@ def cloud_language_code(value: object) -> str:
     return "de"
 
 
-#: The cloud speech codes for the two voices the personality editor offers. ``F3`` is Bella,
+#: The cloud speech codes for the two voices the personality editor offers. ``F2`` is Domi,
 #: ``M3`` is Adam; both are stock ElevenLabs voices the endpoint accepts by name
 #: (``pib_cloud/routes/audio_speech.py:VOICE_IDS``), so the robot never sends a raw voice id.
-VOICE_FEMALE = "F3"
+VOICE_FEMALE = "F2"
 VOICE_MALE = "M3"
 
 
 def cloud_voice(value: object) -> str:
-    """``F3`` or ``M3``, from the personality's gender (the dialog's "Voice" dropdown)."""
+    """``F2`` or ``M3``, from the personality's gender (the dialog's "Voice" dropdown)."""
     text = value.strip().lower() if isinstance(value, str) else ""
     return VOICE_MALE if text.startswith("m") else VOICE_FEMALE
 
