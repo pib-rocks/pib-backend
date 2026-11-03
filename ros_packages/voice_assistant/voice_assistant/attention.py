@@ -5,7 +5,9 @@ from __future__ import annotations
 import logging
 import math
 import time
+from typing import Any
 
+from pib_capability.manifest import load_manifest
 from pib_hermes_config.attention import (
     AttentionPlan,
     SceneBuffer,
@@ -13,6 +15,14 @@ from pib_hermes_config.attention import (
     body_from_detection,
     greeting_line,
     remember_greeting,
+)
+from pib_hermes_config.proactivity import (
+    PRESENCE_GREETING_SKILL,
+    PROACTIVE_TOPIC_SKILL,
+    ProactivityBudget,
+    PROFILE_SCHOOL,
+    decide,
+    resolve_profile,
 )
 
 logger = logging.getLogger(__name__)
@@ -25,9 +35,18 @@ HEAD_POSE_TOPIC = "detections/head_pose_estimation_crop"
 class AttentionHandle:
     """Applies a plan: the head moves before the caller speaks or calls the model."""
 
-    def __init__(self, buffer: SceneBuffer, command) -> None:
+    def __init__(
+        self,
+        buffer: SceneBuffer,
+        command,
+        *,
+        manifest: dict[str, Any] | None = None,
+        budget: ProactivityBudget | None = None,
+    ) -> None:
         self.buffer = buffer
         self._command = command
+        self._manifest = manifest if manifest is not None else load_manifest()
+        self._budget = budget if budget is not None else ProactivityBudget()
 
     def before_answer(self, now: float | None = None) -> AttentionPlan:
         """Turn toward the speaker, then return the preface for this answer."""
@@ -46,10 +65,67 @@ class AttentionHandle:
         plan = self._plan(moment)
         if not plan.greeting or not plan.person_id or not plan.name:
             return None
-        line = greeting_line(plan.name, language)
+        now_ms = int(moment * 1000)
+        decision = decide(
+            self._manifest,
+            PRESENCE_GREETING_SKILL,
+            now_ms,
+            plan.person_id,
+            budget=self._budget,
+        )
+        if not decision.allowed:
+            logger.info(
+                "proactivity refused %s: tier=%s reason=%s skill=%s",
+                PRESENCE_GREETING_SKILL,
+                decision.tier,
+                decision.reason,
+                PRESENCE_GREETING_SKILL,
+            )
+            return None
         self._command_plan(plan)
         if not self._remember(plan.person_id, moment):
             return None
+        if resolve_profile(self._manifest) == PROFILE_SCHOOL:
+            return None
+        line = greeting_line(plan.name, language)
+        logger.info(
+            "proactivity allowed %s: tier=%s reason=%s skill=%s",
+            PRESENCE_GREETING_SKILL,
+            decision.tier,
+            decision.reason,
+            PRESENCE_GREETING_SKILL,
+        )
+        return line
+
+    def take_proactive_topic(
+        self, line: str, now: float | None = None, person_id: str | None = None
+    ) -> str | None:
+        """Speak an unprompted topic line when the budget and profile allow it."""
+        moment = time.monotonic() if now is None else float(now)
+        now_ms = int(moment * 1000)
+        decision = decide(
+            self._manifest,
+            PROACTIVE_TOPIC_SKILL,
+            now_ms,
+            person_id,
+            budget=self._budget,
+        )
+        if not decision.allowed:
+            logger.info(
+                "proactivity refused %s: tier=%s reason=%s skill=%s",
+                PROACTIVE_TOPIC_SKILL,
+                decision.tier,
+                decision.reason,
+                PROACTIVE_TOPIC_SKILL,
+            )
+            return None
+        logger.info(
+            "proactivity allowed %s: tier=%s reason=%s skill=%s",
+            PROACTIVE_TOPIC_SKILL,
+            decision.tier,
+            decision.reason,
+            PROACTIVE_TOPIC_SKILL,
+        )
         return line
 
     def command_toward_speaker(self, now: float | None = None) -> None:

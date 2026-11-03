@@ -12,6 +12,7 @@ VOICE_ASSISTANT_PKG = REPO_ROOT / "ros_packages" / "voice_assistant"
 if str(VOICE_ASSISTANT_PKG) not in sys.path:
     sys.path.insert(0, str(VOICE_ASSISTANT_PKG))
 
+from pib_capability.manifest import load_manifest
 from pib_hermes_config.attention import (  # noqa: E402
     HEAD_MOTOR,
     HEAD_POSITION_MAX,
@@ -30,6 +31,17 @@ from pib_hermes_config.attention import (  # noqa: E402
 )
 from pib_hermes_config.memory import MEMORY_FILENAME, iter_memory_files  # noqa: E402
 from voice_assistant.attention import AttentionHandle  # noqa: E402
+
+
+@pytest.fixture
+def default_proactivity_manifest():
+    return load_manifest("pib5museum")
+
+
+def _handle(buffer, command, manifest=None):
+    if manifest is None:
+        manifest = load_manifest("pib5museum")
+    return AttentionHandle(buffer, command, manifest=manifest)
 
 
 @pytest.fixture(autouse=True)
@@ -84,9 +96,7 @@ def _hold(buffer: SceneBuffer, body: Body, start: float = 0.0) -> None:
 def test_the_head_turns_toward_a_face_on_the_right_before_the_plan_is_used():
     buffer = SceneBuffer()
     order = []
-    handle = AttentionHandle(
-        buffer, lambda motor, position: order.append((motor, position))
-    )
+    handle = _handle(buffer, lambda motor, position: order.append((motor, position)))
     buffer.note_face_center(460, 0, now=1.0)
 
     plan = handle.before_answer(now=1.0)
@@ -101,7 +111,7 @@ def test_the_head_turns_toward_a_face_on_the_right_before_the_plan_is_used():
 def test_a_missing_face_does_not_turn_the_head():
     buffer = SceneBuffer()
     called = []
-    handle = AttentionHandle(buffer, lambda motor, position: called.append(motor))
+    handle = _handle(buffer, lambda motor, position: called.append(motor))
     buffer.note_face_center(0, 0, now=1.0)
 
     plan = handle.before_answer(now=1.0)
@@ -271,7 +281,7 @@ def test_a_cooldown_prevents_greeting_the_same_person_twice():
     enroll_person("Ada", ada)
     buffer = SceneBuffer()
     _hold(buffer, _face(640, embedding=ada))
-    handle = AttentionHandle(buffer, lambda _motor, _position: None)
+    handle = _handle(buffer, lambda _motor, _position: None)
 
     first = handle.take_opening_greeting(language="German", now=0.5)
     buffer.note_bodies("test", [_face(640, embedding=ada)], 9.5)
@@ -293,7 +303,7 @@ def test_answering_a_recognised_person_uses_up_the_greeting():
     enroll_person("Ada", ada)
     buffer = SceneBuffer()
     _hold(buffer, _face(640, embedding=ada))
-    handle = AttentionHandle(buffer, lambda _motor, _position: None)
+    handle = _handle(buffer, lambda _motor, _position: None)
 
     plan = handle.before_answer(now=0.5)
 
