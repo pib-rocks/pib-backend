@@ -22,6 +22,7 @@
     "trigger_smarthome_scene",
     "soul_append",
     "pib_recall",
+    "pib_remember",
     "pib_describe_scene",
     "pib_locate_object"
   ],

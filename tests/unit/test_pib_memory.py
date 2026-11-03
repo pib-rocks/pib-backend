@@ -3,18 +3,51 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import pytest
 
+import pib_memory.mcp as memory_mcp
+from pib_memory.mcp import register_memory_tools
 from pib_memory.recall import recall
 from pib_memory.store import MemoryStore, MissingEvidenceRefError
 
 
+class _ToolServer:
+    def __init__(self) -> None:
+        self.tools: dict[str, Any] = {}
+
+    def tool(self, **kwargs: Any):
+        def decorator(fn):
+            self.tools[fn.__name__] = fn
+            return fn
+
+        return decorator
+
+
 @pytest.fixture
-def memory_store(tmp_path):
-    store = MemoryStore(tmp_path / "memory.db")
+def memory_db(tmp_path, monkeypatch):
+    path = tmp_path / "memory.db"
+    monkeypatch.setenv("PIB_MEMORY_DB_PATH", str(path))
+    memory_mcp._store = None
+    yield path
+    if memory_mcp._store is not None:
+        memory_mcp._store.close()
+    memory_mcp._store = None
+
+
+@pytest.fixture
+def memory_store(memory_db):
+    store = MemoryStore(memory_db)
     yield store
     store.close()
+
+
+@pytest.fixture
+def pib_remember(memory_db):
+    server = _ToolServer()
+    register_memory_tools(server)
+    return server.tools["pib_remember"]
 
 
 def test_record_types_round_trip(memory_store):
@@ -178,3 +211,77 @@ def test_purge_removes_only_older_rows(memory_store):
     assert {ep["evidence_ref"] for ep in exported["episodes"]} == {"frame:recent"}
     assert {o["object_id"] for o in exported["object_memory"]} == {"o-new"}
     assert {p["display_name"] for p in exported["person_memory"]} == {"NewPat"}
+
+
+def test_pib_remember_writes_user_requested_episode(pib_remember, memory_store):
+    result = pib_remember("User asked to remember the Wi-Fi password hint.")
+    assert result == {"ok": True, "id": 1}
+
+    episode = memory_store.export()["episodes"][0]
+    assert episode["task"] == "User asked to remember the Wi-Fi password hint."
+    assert episode["outcome"] is None
+    assert json.loads(episode["participants_json"]) == []
+    assert episode["place_id"] is None
+    assert episode["consent_scope"] == "user_requested"
+    assert episode["evidence_ref"].startswith("manual:")
+    assert len(episode["evidence_ref"]) == len("manual:") + 32
+
+
+def test_pib_remember_rejects_empty_and_whitespace(pib_remember, memory_store):
+    assert pib_remember("") == {"ok": False, "reason": "text_empty"}
+    assert pib_remember("   \n\t") == {"ok": False, "reason": "text_empty"}
+    assert memory_store.export()["episodes"] == []
+
+
+def test_pib_remember_rejects_text_over_500_characters(pib_remember, memory_store):
+    result = pib_remember("x" * 501)
+    assert result == {"ok": False, "reason": "text_too_long"}
+    assert pib_remember("x" * 500) == {"ok": True, "id": 1}
+    assert len(memory_store.export()["episodes"]) == 1
+
+
+def test_pib_remember_deduplicates_same_text_within_30_seconds(
+    pib_remember, memory_store, monkeypatch
+):
+    base = 1_700_000_000.0
+    monkeypatch.setattr(memory_mcp.time, "time", lambda: base)
+
+    first = pib_remember("  same note  ")
+    monkeypatch.setattr(memory_mcp.time, "time", lambda: base + 10)
+    second = pib_remember("same note")
+
+    assert first == {"ok": True, "id": 1}
+    assert second == {"ok": True, "id": 1, "deduplicated": True}
+    assert len(memory_store.export()["episodes"]) == 1
+
+
+def test_pib_remember_writes_again_after_dedupe_window(
+    pib_remember, memory_store, monkeypatch
+):
+    base = 1_700_000_000.0
+    monkeypatch.setattr(memory_mcp.time, "time", lambda: base)
+    first = pib_remember("repeatable fact")
+
+    monkeypatch.setattr(memory_mcp.time, "time", lambda: base + 31)
+    second = pib_remember("repeatable fact")
+
+    assert first["ok"] is True
+    assert second == {"ok": True, "id": 2}
+    assert len(memory_store.export()["episodes"]) == 2
+
+
+def test_pib_remember_two_different_texts_write_two_rows(pib_remember, memory_store):
+    one = pib_remember("first memory")
+    two = pib_remember("second memory")
+    assert one == {"ok": True, "id": 1}
+    assert two == {"ok": True, "id": 2}
+    tasks = [ep["task"] for ep in memory_store.export()["episodes"]]
+    assert tasks == ["first memory", "second memory"]
+
+
+def test_pib_remember_when_store_unavailable(pib_remember, monkeypatch):
+    monkeypatch.setattr(memory_mcp, "_store_or_none", lambda: None)
+    assert pib_remember("anything") == {
+        "ok": False,
+        "reason": "memory_store_unavailable",
+    }

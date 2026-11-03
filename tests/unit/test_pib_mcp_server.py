@@ -275,6 +275,7 @@ def test_tool_discovery_exposes_complete_declared_surface():
         "pib_recall",
         "pib_describe_scene",
         "pib_locate_object",
+        "pib_remember",
     }
 
 
