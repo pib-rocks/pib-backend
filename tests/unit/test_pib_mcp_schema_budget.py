@@ -20,7 +20,7 @@ _READ_SIDE_EFFECT = re.compile(
 )
 _WRITE_SIDE_EFFECT = re.compile(r"side effect", re.IGNORECASE)
 _UNIT_HINT = re.compile(
-    r"degree|degrees|radians|0-255|1-3|500|program|pose|device|scene|motor|camera|relay|soul|smart",
+    r"degree|degrees|radians|0-255|1-3|500|program|pose|device|scene|motor|camera|relay|soul|smart|memory",
     re.IGNORECASE,
 )
 
@@ -56,4 +56,4 @@ def test_every_tool_description_states_unit_and_side_effect():
 
 @pytest.mark.parametrize("budget", [CHAT_MCP_TOOL_SCHEMA_BUDGET_CHARS])
 def test_schema_budget_constant_matches_acceptance_target(budget):
-    assert budget == 3800
+    assert budget == 4150

@@ -35,7 +35,7 @@ def register_memory_tools(server: Any) -> None:
         person: str | None = None,
         place: str | None = None,
     ) -> dict[str, Any]:
-        """Recall robot episodic memory (top-k, time-decayed, evidence-backed)."""
+        """Read-only. Recall episodic memory records (top-k, time-decayed) with date and evidence."""
 
         store = _store_or_none()
         if store is None:

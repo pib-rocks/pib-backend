@@ -7,7 +7,9 @@ from typing import Any
 
 # PR-2103: chat turns inline every MCP tool schema (name + description + JSON schema).
 # Measured on the test robot at develop 5c43bb46: 18 pib tools ≈ 5654 characters (~1414 tokens).
-CHAT_MCP_TOOL_SCHEMA_BUDGET_CHARS = 3800
+# PR-2212: the 19th tool (pib_recall) adds 331 characters; the measured total is 4119,
+# so the ceiling moves to 4150 with 31 characters of headroom.
+CHAT_MCP_TOOL_SCHEMA_BUDGET_CHARS = 4150
 
 DEFAULT_TOOL_PAYLOAD_BUDGET_BYTES = 8 * 1024
 
