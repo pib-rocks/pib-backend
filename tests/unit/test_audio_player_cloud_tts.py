@@ -33,7 +33,13 @@ from pib_hermes_config.visible_state import (
     VOICE_USING_FALLBACK_TOPIC,
     engine_is_fallback,
 )
-from pib_hermes_config.voice_backends import CLOUD_TTS_ROUTE, resolve_tts_route
+from pib_hermes_config.voice_backends import (
+    CLOUD_TTS_ROUTE,
+    LOCAL_TTS_ID,
+    effective_tts_engine,
+    resolve_tts_route,
+)
+from pib_hermes_config.voice_catalogue import resolve_voice_id
 from voice_assistant.cloud_token import CloudTokenError
 from voice_assistant.pib_cloud_stream import pib_cloud_base_url
 
@@ -81,6 +87,9 @@ def build_player(post, token="cloud-token"):
         String=lambda: SimpleNamespace(data=None),
         clauses_to_synthesize=clauses_to_synthesize,
         resolve_tts_route=resolve_tts_route,
+        effective_tts_engine=effective_tts_engine,
+        LOCAL_TTS_ID=LOCAL_TTS_ID,
+        resolve_voice_id=resolve_voice_id,
         CLOUD_TTS_ROUTE=CLOUD_TTS_ROUTE,
         util=SimpleNamespace(surpress_stderr=contextlib.nullcontext),
         requests=SimpleNamespace(post=post),
@@ -119,7 +128,12 @@ def build_player(post, token="cloud-token"):
     node.counter_lock = Lock()
     node.token = None
     node._published_fallback = None
-    node.voice_using_fallback_publisher = SimpleNamespace(publish=lambda _msg: None)
+    node.fallback_events = []
+
+    def capture_fallback(msg):
+        node.fallback_events.append(getattr(msg, "data", msg))
+
+    node.voice_using_fallback_publisher = SimpleNamespace(publish=capture_fallback)
     node.tts_engine = SimpleNamespace(
         synthesize=local_synthesize, active_backend="supertone-supertonic-3"
     )
@@ -131,9 +145,14 @@ def build_player(post, token="cloud-token"):
     return node, ns, log, local_calls
 
 
-def request(text="Ein Satz.", join=False, engine="cloud_tts"):
+def request(text="Ein Satz.", join=False, engine="cloud_tts", voice_id=None):
     return SimpleNamespace(
-        speech=text, gender="Male", language="de", tts_engine=engine, join=join
+        speech=text,
+        gender="Male",
+        language="de",
+        tts_engine=engine,
+        voice_id=voice_id,
+        join=join,
     )
 
 
@@ -361,3 +380,103 @@ def test_local_fallback_preserves_supertone_44100_sample_rate(monkeypatch):
     assert item.encoding.num_channels == 1
     assert item.encoding.bytes_per_sample == 2
     assert b"".join(item.data) == LOCAL_PCM
+
+
+def test_cloud_success_publishes_no_fallback_state(monkeypatch):
+    monkeypatch.setenv("PIB_CLOUD_BASE_URL", "https://cloud.example/v1")
+    node, _, _, _ = build_player(
+        lambda url, **kwargs: SimpleNamespace(
+            status_code=200, content=wav_container(CLOUD_PCM)
+        )
+    )
+    node.play_audio_from_speech(request(), SimpleNamespace())
+    assert node.fallback_events == [False]
+
+
+def test_cloud_failure_publishes_fallback_once_for_the_turn(monkeypatch):
+    monkeypatch.setenv("PIB_CLOUD_BASE_URL", "https://cloud.example/v1")
+    node, _, _, _ = build_player(
+        lambda url, **kwargs: SimpleNamespace(status_code=502, content=b"")
+    )
+    node.play_audio_from_speech(
+        request("Erster Satz. Zweiter Satz."), SimpleNamespace()
+    )
+    assert node.fallback_events == [True]
+
+
+def test_personality_voice_id_is_sent_when_set(monkeypatch):
+    calls = []
+
+    def post(url, **kwargs):
+        calls.append(kwargs["json"])
+        return SimpleNamespace(status_code=200, content=wav_container(CLOUD_PCM))
+
+    monkeypatch.setenv("PIB_CLOUD_BASE_URL", "https://cloud.example/v1")
+    node, _, _, _ = build_player(post)
+    spoken = request(voice_id="F2")
+    spoken.gender = "Male"
+    node.play_audio_from_speech(spoken, SimpleNamespace())
+    assert calls[0]["voice"] == "F2"
+
+
+def test_default_route_is_cloud_when_token_is_available(monkeypatch):
+    calls = []
+
+    def post(url, **kwargs):
+        calls.append(url)
+        return SimpleNamespace(status_code=200, content=wav_container(CLOUD_PCM))
+
+    monkeypatch.setenv("PIB_CLOUD_BASE_URL", "https://cloud.example/v1")
+    node, _, _, _ = build_player(post)
+    node.play_audio_from_speech(request(engine=""), SimpleNamespace())
+    assert len(calls) == 1
+
+
+def test_explicit_local_engine_never_opens_the_cloud_with_empty_stored_engine(
+    monkeypatch,
+):
+    monkeypatch.setenv("PIB_CLOUD_BASE_URL", "https://cloud.example/v1")
+    node, _, _, local_calls = build_player(
+        lambda url, **kwargs: pytest.fail("cloud used for a local engine")
+    )
+    node.play_audio_from_speech(request(engine="supertone"), SimpleNamespace())
+    assert len(local_calls) == 1
+    assert True not in node.fallback_events
+
+
+def test_cloud_timeout_falls_back_to_local(monkeypatch):
+    class SlowPost:
+        def __call__(self, url, **kwargs):
+            timeout = kwargs.get("timeout")
+            assert timeout == 3.0
+            raise requests.Timeout("too slow")
+
+    monkeypatch.setenv("PIB_CLOUD_BASE_URL", "https://cloud.example/v1")
+    monkeypatch.setenv("PIB_CLOUD_TTS_TIMEOUT_SECONDS", "3")
+    node, _, log, local_calls = build_player(SlowPost())
+    node.play_audio_from_speech(request(), SimpleNamespace())
+    assert len(local_calls) == 1
+    assert node.fallback_events == [True]
+    assert "cloud_transport_error" in log.warning.call_args.args[0]
+
+
+def test_cloud_turn_logs_speech_characters_and_usage_headers(monkeypatch):
+    headers = {
+        "X-Usage-Speech-Characters": "12",
+        "X-Speech-Cost": "0.004",
+    }
+
+    def post(url, **kwargs):
+        return SimpleNamespace(
+            status_code=200,
+            content=wav_container(CLOUD_PCM),
+            headers=headers,
+        )
+
+    monkeypatch.setenv("PIB_CLOUD_BASE_URL", "https://cloud.example/v1")
+    node, _, log, _ = build_player(post)
+    node.play_audio_from_speech(request("Hallo Welt."), SimpleNamespace())
+    logged = " ".join(str(c.args[0]) for c in log.info.call_args_list if c.args)
+    assert "speech_characters_sent=11" in logged
+    assert "speech_characters=12" in logged
+    assert "speech_cost=0.004" in logged

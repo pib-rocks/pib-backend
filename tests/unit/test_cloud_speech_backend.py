@@ -121,6 +121,20 @@ def test_cloud_speech_resolves_to_the_cloud_route():
     assert resolve_tts_route(CLOUD_STT_ID) == "unsupported"
 
 
+def test_effective_tts_engine_prefers_cloud_when_available():
+    from pib_hermes_config.voice_backends import effective_tts_engine
+
+    assert effective_tts_engine("", cloud_speech_available=True) == CLOUD_TTS_ID
+    assert effective_tts_engine(None, cloud_speech_available=True) == CLOUD_TTS_ID
+    assert (
+        effective_tts_engine(LOCAL_TTS_ID, cloud_speech_available=True) == LOCAL_TTS_ID
+    )
+    assert effective_tts_engine("", cloud_speech_available=False) == LOCAL_TTS_ID
+    assert (
+        effective_tts_engine(CLOUD_TTS_ID, cloud_speech_available=False) == CLOUD_TTS_ID
+    )
+
+
 # --- personality defaults ------------------------------------------------------
 
 

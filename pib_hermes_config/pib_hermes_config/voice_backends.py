@@ -181,6 +181,23 @@ def resolve_tts_route(engine: object) -> str:
     return "unsupported"
 
 
+def effective_tts_engine(stored: object, *, cloud_speech_available: bool) -> str:
+    """Stored engine, or cloud speech when pib.Cloud is reachable and nothing local was chosen.
+
+    An explicit ``supertone`` choice always wins. A blank stored value follows
+    ``cloud_speech_available`` (tts capability on the row plus a usable token).
+    Any other stored value is returned unchanged for route resolution.
+    """
+    if not isinstance(stored, str) or not stored.strip():
+        return CLOUD_TTS_ID if cloud_speech_available else LOCAL_TTS_ID
+    raw = stored.strip()
+    if raw in _LOCAL_TTS:
+        return LOCAL_TTS_ID
+    if raw == CLOUD_TTS_ID:
+        return CLOUD_TTS_ID
+    return raw
+
+
 def whisper_language_code(value: object) -> str:
     """ISO 639-1 code for faster-whisper, or "" when it cannot be pinned.
 
