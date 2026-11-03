@@ -39,7 +39,8 @@ RUN pip install --no-deps hermes-agent==0.19.0
 COPY ./pib_blockly/pib_blockly_client /tmp/pib_blockly_client
 # Shared with the voice assistant so both resolve the same Hermes profiles dir.
 COPY ./pib_hermes_config /tmp/pib_hermes_config
-RUN pip install --no-deps /tmp/pib_blockly_client /tmp/pib_hermes_config
+COPY ./pib_capability /tmp/pib_capability
+RUN pip install --no-deps /tmp/pib_blockly_client /tmp/pib_hermes_config /tmp/pib_capability
 
 COPY ./pib_api/flask/ .
 
