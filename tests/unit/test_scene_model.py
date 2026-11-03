@@ -1,6 +1,14 @@
 import json
 
+import numpy as np
+
 from ros_packages.camera.oak_d_lite.scene_model import SceneModel, fixture_detections
+from ros_packages.camera.oak_d_lite.scene_model_projection import (
+    bbox_center_px,
+    deproject_pixel_to_camera_mm,
+    depth_mm_at_px,
+    point3d_for_detection_bbox,
+)
 
 
 def _ingest(model: SceneModel, detections, stamp_ms, width=1280, height=720):
@@ -104,3 +112,62 @@ def test_snapshot_json_serialisable_with_required_fields():
         assert required <= set(obj.keys())
     assert len(decoded["people"]) == 1
     assert decoded["people"][0]["label"] == "person"
+
+
+def test_deprojection_reproduces_known_point_within_one_mm():
+    intrinsics = {"fx": 1000.0, "fy": 1000.0, "cx": 500.0, "cy": 400.0}
+    expected = {"x": 400.0, "y": 200.0, "z": 2000.0}
+    u = 700
+    v = 500
+    got = deproject_pixel_to_camera_mm(u, v, expected["z"], intrinsics)
+    assert got is not None
+    assert abs(got["x"] - expected["x"]) <= 1.0
+    assert abs(got["y"] - expected["y"]) <= 1.0
+    assert abs(got["z"] - expected["z"]) <= 1.0
+
+
+def test_deprojection_none_for_zero_depth_out_of_frame_and_missing_intrinsics():
+    intrinsics = {"fx": 500.0, "fy": 500.0, "cx": 10.0, "cy": 10.0}
+    depth = np.array([[0, 500], [800, 1200]], dtype=np.uint16)
+    assert deproject_pixel_to_camera_mm(1, 1, 0.0, intrinsics) is None
+    assert depth_mm_at_px(depth, 0, 0) is None
+    assert depth_mm_at_px(depth, 5, 1) is None
+    assert deproject_pixel_to_camera_mm(1, 1, 500.0, None) is None
+    assert point3d_for_detection_bbox((0, 0, 2, 2), depth, intrinsics) is not None
+    assert point3d_for_detection_bbox((0, 0, 2, 2), depth, intrinsics) == {
+        "x": -21.6,
+        "y": -21.6,
+        "z": 1200.0,
+    }
+
+
+def test_bbox_centre_uses_column_row_depth_index_order():
+    depth = np.zeros((120, 200), dtype=np.uint16)
+    u, v = 150, 70
+    depth[v, u] = 888
+    bbox = (140, 60, 160, 80)
+    assert bbox_center_px(bbox) == (u, v)
+    assert depth_mm_at_px(depth, u, v) == 888.0
+    assert depth_mm_at_px(depth, v, u) is None
+    intrinsics = {"fx": 100.0, "fy": 100.0, "cx": 0.0, "cy": 0.0}
+    point = point3d_for_detection_bbox(bbox, depth, intrinsics)
+    assert point is not None
+    assert point["z"] == 888.0
+    assert point["x"] == 888.0 * u / 100.0
+    assert point["y"] == 888.0 * v / 100.0
+
+
+def test_snapshot_includes_intrinsics_metadata():
+    model = SceneModel()
+    model.set_intrinsics_metadata(
+        {"fx": 1.0, "fy": 2.0, "cx": 3.0, "cy": 4.0},
+        None,
+    )
+    snap = model.snapshot(0)
+    assert snap["intrinsics"] == {"fx": 1.0, "fy": 2.0, "cx": 3.0, "cy": 4.0}
+    assert "intrinsics_unavailable_reason" not in snap
+
+    model.set_intrinsics_metadata(None, "pipeline_not_running")
+    missing = model.snapshot(1)
+    assert missing["intrinsics"] is None
+    assert missing["intrinsics_unavailable_reason"] == "pipeline_not_running"

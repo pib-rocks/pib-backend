@@ -1098,6 +1098,7 @@ class PipelineBuildersMixin:
             owner_ref = stereo.CameraNode._device_owner
             if owner_ref is not None and owner_ref() is self:
                 stereo.CameraNode._device_owner = None
+            self._clear_scene_model_intrinsics()
             self.pipeline = None
             self.camRgb = None
             self.isp_out = None
@@ -1174,6 +1175,7 @@ class PipelineBuildersMixin:
                             self._build_pipeline(include_stereo)
                     self.pipeline.start()
                     stereo.CameraNode._device_owner = stereo.weakref.ref(self)
+                    self._load_scene_model_intrinsics_once()
                     return True
                 except Exception as exc:
                     self.get_logger().error(
