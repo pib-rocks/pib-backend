@@ -39,6 +39,7 @@ class Personality:
         self.description = personality_dto.get("description")
         self.stt_engine = personality_dto.get("sttEngine", "local_whisper")
         self.tts_engine = personality_dto.get("ttsEngine", "supertone")
+        self.voice_id = personality_dto.get("voiceId") or ""
         applies = personality_dto.get("localVoiceApplies", True)
         self.local_voice_applies = True if applies is None else bool(applies)
         self.live_voice_note = personality_dto.get("liveVoiceNote")

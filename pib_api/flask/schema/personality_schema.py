@@ -30,6 +30,7 @@ from pib_hermes_config.memory import (
     read_memory,
 )
 from pib_hermes_config.voice_backends import live_voice_note, local_voice_applies
+from pib_hermes_config.voice_catalogue import resolve_voice_id
 from provider_registry import has_capability, model_ref_for_stored
 from schema.sql_auto_with_camel_case_schema import SQLAutoWithCamelCaseSchema
 from service import provider_service, soul_service
@@ -68,6 +69,7 @@ class PersonalitySchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):
     )
     local_voice_applies = fields.Method("get_local_voice_applies", dump_only=True)
     live_voice_note = fields.Method("get_live_voice_note", dump_only=True)
+    voice_id = fields.Method("get_voice_id", dump_only=True)
     assistant_model_id = fields.Integer(required=False, allow_none=True)
     # 'default', or the decimal id of a model row, as text. The catalogue
     # api_name is not a reference and is rejected. The provider follows.
@@ -205,6 +207,9 @@ class PersonalitySchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):
 
     def get_live_voice_note(self, obj: Personality) -> str | None:
         return live_voice_note(self._provider_is_live(obj))
+
+    def get_voice_id(self, obj: Personality) -> str:
+        return resolve_voice_id(getattr(obj, "gender", None))
 
 
 personality_schema = PersonalitySchemaSQLAutoWith(exclude=("id",))

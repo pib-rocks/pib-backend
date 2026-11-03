@@ -72,5 +72,14 @@ def test_pib5edu_and_pib5advanced_differ_only_in_hardware_fields():
         key: advanced[key] for key in ("tier", "platform", "sensors", "limits")
     }
     assert edu_hardware != advanced_hardware
+    edu_proactivity = {
+        key: value for key, value in edu["proactivity"].items() if key != "profile"
+    }
+    advanced_proactivity = {
+        key: value for key, value in advanced["proactivity"].items() if key != "profile"
+    }
+    assert edu_proactivity == advanced_proactivity
     for key in ("skills", "learned_skills", "cloud", "degraded_without_cloud"):
         assert edu[key] == advanced[key]
+    assert edu["proactivity"]["profile"] == "school"
+    assert advanced["proactivity"]["profile"] == "default"

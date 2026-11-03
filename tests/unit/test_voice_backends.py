@@ -76,6 +76,7 @@ def test_new_personality_voice_defaults_before_the_password(app, monkeypatch):
     assert body["ttsEngine"] == "cloud_tts"
     assert body["localVoiceApplies"] is True
     assert body["liveVoiceNote"] is None
+    assert body["voiceId"] == "F2"
 
     with app.app_context():
         gpt6_id = RegistryModel.query.filter_by(api_name="gpt-6").one().id
