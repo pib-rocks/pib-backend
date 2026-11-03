@@ -52,6 +52,10 @@ MCP_TOOL_DESCRIPTIONS: dict[str, str] = {
     "pib_recall": (
         "Ruft Episodenerinnerungen ab (read-only, top-k, mit Datum und Belegen)."
     ),
+    "pib_remember": (
+        "Speichert eine Episodenerinnerung nur, wenn der Nutzer ausdrücklich darum "
+        "bittet; zum Abrufen nutze pib_recall."
+    ),
     "pib_describe_scene": (
         "Liefert eine Zusammenfassung der aktuellen Kamera-Szene (Objekte, Personen, "
         "Entfernungen in Metern)."
