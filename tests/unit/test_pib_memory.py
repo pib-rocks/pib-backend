@@ -130,7 +130,9 @@ def test_recall_respects_k_order_and_fields(memory_store):
 
     records = recall("alpha", k=2, store=memory_store)
     assert len(records) <= 2
-    assert all("date" in r and "evidence_ref" in r and "confidence" in r for r in records)
+    assert all(
+        "date" in r and "evidence_ref" in r and "confidence" in r for r in records
+    )
     assert records[0]["evidence_ref"] == "frame:new"
     assert records[1]["evidence_ref"] == "frame:old"
 

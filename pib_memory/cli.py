@@ -14,7 +14,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="pib_memory")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    del_person = sub.add_parser("delete-person", help="Remove a person and their episodes")
+    del_person = sub.add_parser(
+        "delete-person", help="Remove a person and their episodes"
+    )
     del_person.add_argument("name", help="Person display name or numeric id")
 
     del_place = sub.add_parser("delete-place", help="Remove memories tied to a place")
