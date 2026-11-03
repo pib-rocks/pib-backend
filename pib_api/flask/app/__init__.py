@@ -22,6 +22,7 @@ from controller import (
     version_controller,
     robot_model_controller,
     kinematics_controller,
+    capability_controller,
 )
 
 app.register_blueprint(program_controller.bp, url_prefix="/program", name="program")
@@ -131,4 +132,9 @@ app.register_blueprint(
 )
 app.register_blueprint(
     robot_model_controller.bp, url_prefix="/robot-model", name="robot_model"
+)
+app.register_blueprint(
+    capability_controller.bp,
+    url_prefix="/api/v1/capabilities",
+    name="capabilities_api_v1",
 )

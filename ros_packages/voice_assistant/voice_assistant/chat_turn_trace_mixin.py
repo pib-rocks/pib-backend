@@ -232,9 +232,30 @@ class ChatTurnTraceMixin:
             self.last_pib_message_id = None
             self.message_content = None
 
+    def _emit_barge_in_stop_trace(self) -> None:
+        """Stamp when this turn stopped because the user interrupted or cancelled it."""
+        publisher = getattr(self, "_turn_trace_publisher", None)
+        try:
+            from voice_assistant.turn_latency import format_event, now_ms
+
+            raw = format_event(
+                "barge_in_stop",
+                ts_ms=now_ms(),
+                source="chat",
+                chat_id=self._turn_trace_chat_id(),
+            )
+            self._record_turn_trace(raw)
+            if publisher is not None:
+                message = String()
+                message.data = raw
+                publisher.publish(message)
+        except Exception as exc:
+            self.get_logger().warning(f"barge_in_stop trace was not published: {exc}")
+
     def _finish_cancelled_turn(self, chat_id: str, goal_handle) -> None:
         """Stop the action, remove partial assistant text, and trace cancelled."""
         self._turn_trace_cancelled = True
+        self._emit_barge_in_stop_trace()
         self._freeze_turn_done_stage()
         self._discard_assistant_reply(chat_id)
         if goal_handle.is_cancel_requested:

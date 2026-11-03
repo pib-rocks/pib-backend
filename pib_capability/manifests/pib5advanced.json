@@ -1,0 +1,35 @@
+{
+  "tier": "advanced",
+  "platform": "pib5",
+  "sensors": ["oak_d_lite", "microphone_array", "feetech_st_serial_feedback"],
+  "skills": [
+    "list_motors",
+    "get_state",
+    "get_motion_model",
+    "list_poses",
+    "list_programs",
+    "capture_image",
+    "move_motors",
+    "move_motor",
+    "apply_joint_trajectory",
+    "apply_pose",
+    "run_program",
+    "set_led",
+    "set_relay",
+    "list_smarthome_devices",
+    "get_smarthome_state",
+    "control_smarthome_device",
+    "trigger_smarthome_scene",
+    "soul_append"
+  ],
+  "learned_skills": [],
+  "limits": {
+    "local_llm_memory_gib": 8
+  },
+  "cloud": {
+    "speech_to_text": true,
+    "text_to_speech": true,
+    "large_language_model": true
+  },
+  "degraded_without_cloud": []
+}

@@ -2,8 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Annotated, Any, Callable
+
+from pib_capability.manifest import (
+    capability_enforcement_enabled,
+    load_manifest,
+    remove_tools_not_in_manifest,
+    resolve_variant,
+)
 
 try:
     from mcp.server.fastmcp import FastMCP
@@ -40,6 +48,8 @@ ACTUATING_TOOLS = {
     "trigger_smarthome_scene",
 }
 MAX_SOUL_LESSON_CHARS = 500
+
+logger = logging.getLogger(__name__)
 
 NonEmptyString = Annotated[str, Field(min_length=1, strict=True)]
 MotorPositionDegrees = Annotated[float, Field(strict=True)]
@@ -447,6 +457,17 @@ def create_server(
                 },
             )
         return _invoke(robot.soul_append, personality_id, lesson, detail)
+
+    variant = resolve_variant()
+    manifest = load_manifest(variant)
+    if capability_enforcement_enabled():
+        remove_tools_not_in_manifest(server, manifest)
+    exposed = len(server._tool_manager.list_tools())
+    logger.info(
+        "MCP capability manifest variant=%s exposed_tools=%d",
+        variant,
+        exposed,
+    )
 
     _compact_tool_schemas(server)
     return server

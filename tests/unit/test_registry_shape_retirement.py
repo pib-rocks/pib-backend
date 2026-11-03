@@ -16,6 +16,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FLASK_DIR = REPO_ROOT / "pib_api" / "flask"
 IMPORT_DIRS = (
+    REPO_ROOT,
     FLASK_DIR,
     REPO_ROOT / "pib_blockly" / "pib_blockly_client",
     REPO_ROOT / "pib_api" / "client",
