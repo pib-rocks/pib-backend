@@ -279,3 +279,16 @@ def test_last_audio_is_the_last_burst_not_the_first():
     trace2.observe({"stage": "first_token", "ts_ms": 1039.20})
     trace2.observe({"stage": "first_token", "ts_ms": 2000.00})
     assert "first_token_ms=39.20" in render_line(trace2.close())
+
+
+def test_cancelled_turn_records_barge_in_stop_and_eos_delta():
+    trace = TurnTrace()
+    trace.open("chat-cancel", "voice", origin_ms=1000.0)
+    trace.observe({"stage": "end_of_speech", "ts_ms": 1000.0, "chat_id": "chat-cancel"})
+    trace.observe({"stage": "request_sent", "ts_ms": 1100.0, "chat_id": "chat-cancel"})
+    trace.observe({"stage": "barge_in_stop", "ts_ms": 1150.0, "chat_id": "chat-cancel"})
+    assert trace.delta("end_of_speech", "barge_in_stop") == pytest.approx(150.0)
+    record = trace.close(incomplete=True)
+    line = render_line(record)
+    assert "eos_to_barge_in_stop=150.00" in line
+    assert record["incomplete"] == 1
