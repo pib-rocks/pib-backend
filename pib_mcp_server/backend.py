@@ -55,6 +55,8 @@ JOINT_STATES_TOPIC = "/joint_states"
 JOINT_STATE_MESSAGE_TYPE = "sensor_msgs/JointState"
 GET_ALL_JOINT_POSITIONS_SERVICE = "/get_all_joint_positions"
 GET_ALL_JOINT_POSITIONS_TYPE = "datatypes/srv/GetAllJointPositions"
+GET_SCENE_SERVICE = "/get_scene"
+GET_SCENE_TYPE = "std_srvs/srv/Trigger"
 DEFAULT_JOINT_STATE_MAX_AGE_SEC = 0.5
 BATCH_SERVICE_UNAVAILABLE_REASON = (
     "get_all_joint_positions service unavailable (older motors image)"
@@ -810,6 +812,31 @@ class PibBackend:
             code = self._http("GET", f"/program/{quote(str(number), safe='')}/code")
             detailed.append({**program, **code})
         return detailed
+
+    def get_scene(self) -> dict[str, Any]:
+        response = self._ros_service(GET_SCENE_SERVICE, GET_SCENE_TYPE, {})
+        if not response.get("success"):
+            raise BackendError(
+                "ros_service_failed",
+                response.get("message") or "get_scene returned success=false",
+            )
+        raw_message = response.get("message", "")
+        if not isinstance(raw_message, str) or not raw_message.strip():
+            raise BackendError(
+                "ros_service_failed", "get_scene returned an empty scene payload"
+            )
+        try:
+            parsed = json.loads(raw_message)
+        except ValueError as exc:
+            raise BackendError(
+                "ros_service_failed",
+                "get_scene message is not valid JSON",
+            ) from exc
+        if not isinstance(parsed, dict):
+            raise BackendError(
+                "ros_service_failed", "get_scene message must be a JSON object"
+            )
+        return parsed
 
     def capture_image(self, detail: bool = False) -> dict[str, Any]:
         response = self._ros_service(

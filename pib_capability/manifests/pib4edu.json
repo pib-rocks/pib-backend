@@ -21,7 +21,9 @@
     "control_smarthome_device",
     "trigger_smarthome_scene",
     "soul_append",
-    "pib_recall"
+    "pib_recall",
+    "pib_describe_scene",
+    "pib_locate_object"
   ],
   "learned_skills": [],
   "limits": {

@@ -56,4 +56,4 @@ def test_every_tool_description_states_unit_and_side_effect():
 
 @pytest.mark.parametrize("budget", [CHAT_MCP_TOOL_SCHEMA_BUDGET_CHARS])
 def test_schema_budget_constant_matches_acceptance_target(budget):
-    assert budget == 4150
+    assert budget == 4485
