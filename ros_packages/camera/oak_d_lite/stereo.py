@@ -33,7 +33,6 @@ from urllib.request import urlopen
 from rclpy.node import Node
 from sensor_msgs.msg import CompressedImage, Imu
 from std_msgs.msg import Float32MultiArray, Float64, Int32, Int32MultiArray, String
-from std_srvs.srv import Trigger
 
 from .mjpeg_server import (
     DEFAULT_STREAM_PORT,
@@ -425,6 +424,8 @@ class CameraNode(
         self.scene_model_timer = self.create_timer(
             SCENE_MODEL_TIMER_PERIOD_SECONDS, self._publish_scene_model
         )
+        from std_srvs.srv import Trigger
+
         self.get_scene_service = self.create_service(
             Trigger, "get_scene", self.get_scene_callback
         )
