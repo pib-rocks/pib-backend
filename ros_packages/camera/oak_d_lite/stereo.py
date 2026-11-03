@@ -657,12 +657,14 @@ class CameraNode(
         publisher = self.detection_publishers.get(model_id)
         if publisher is not None:
             publisher.publish(message)
-        self.scene_model.ingest(
-            self._scene_detection_dicts(detections),
-            frame_width,
-            frame_height,
-            self._stamp_ms(),
-        )
+        scene_model = getattr(self, "scene_model", None)
+        if scene_model is not None:
+            scene_model.ingest(
+                self._scene_detection_dicts(detections),
+                frame_width,
+                frame_height,
+                self._stamp_ms(),
+            )
 
     def _publish_qr_detections(self, packet):
         frame = self._decode_current_frame()
