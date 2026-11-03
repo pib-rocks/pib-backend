@@ -268,6 +268,7 @@ def test_tool_discovery_exposes_complete_declared_surface():
         "control_smarthome_device",
         "trigger_smarthome_scene",
         "soul_append",
+        "pib_recall",
     }
 
 

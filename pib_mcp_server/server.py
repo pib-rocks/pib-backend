@@ -458,6 +458,11 @@ def create_server(
             )
         return _invoke(robot.soul_append, personality_id, lesson, detail)
 
+    # --- pib_memory ---
+    from pib_memory.mcp import register_memory_tools
+
+    register_memory_tools(server)
+
     variant = resolve_variant()
     manifest = load_manifest(variant)
     if capability_enforcement_enabled():
