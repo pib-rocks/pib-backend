@@ -522,9 +522,8 @@ class VoiceAssistantNode(AssistantTurnCallbacksMixin, AssistantLatencyMixin, Nod
         request.gender = gender
         request.language = language
         request.join = on_stopped_playing is not None
-        request.tts_engine = (
-            getattr(self.personality, "tts_engine", None) or "supertone"
-        )
+        request.tts_engine = getattr(self.personality, "tts_engine", None) or ""
+        request.voice_id = getattr(self.personality, "voice_id", None) or ""
         request.turn_id = getattr(self, "_speech_turn_id", "") or ""
         if speech and str(speech).strip():
             self._note_spoken_answer(str(speech))

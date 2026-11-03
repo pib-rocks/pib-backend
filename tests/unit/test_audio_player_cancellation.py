@@ -50,6 +50,11 @@ def player(monkeypatch):
         Thread=Thread,
         clauses_to_synthesize=helper.clauses_to_synthesize,
         resolve_tts_route=lambda engine: "local",
+        effective_tts_engine=lambda stored, cloud_speech_available=False: stored
+        or "supertone",
+        resolve_voice_id=lambda gender: "F1",
+        resolve_cloud_token=lambda: "token",
+        CloudTokenError=Exception,
         CLOUD_TTS_ROUTE="cloud",
         util=SimpleNamespace(surpress_stderr=contextlib.nullcontext),
     )
