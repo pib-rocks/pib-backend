@@ -598,6 +598,8 @@ function install_pib_python_packages() {
   print INFO "Installing pib-sdk and pib_mcp_server into system Python"
   pip install --break-system-packages pib-sdk \
     || print WARN "failed to install pib-sdk"
+  pip install --break-system-packages -e "$BACKEND_DIR/pib_capability" \
+    || print WARN "failed to install pib_capability"
   pip install --break-system-packages -e "$BACKEND_DIR/pib_mcp_server" \
     || print WARN "failed to install pib_mcp_server"
   print SUCCESS "Installed pib Python packages system-wide"

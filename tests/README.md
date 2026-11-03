@@ -44,7 +44,7 @@ pip install --prefer-binary \
   -r tests/requirements-camera.txt \
   -r tests/requirements-unit.txt \
   playwright lark
-pip install -e ./pib_hermes_config -e ./pib_mcp_server -e ./public_api_client
+pip install -e ./pib_hermes_config -e ./pib_capability -e ./pib_mcp_server -e ./public_api_client
 playwright install chromium        # skipped on arm64; the tests then use system chromium
 
 # The live suites read PIB_ROBOT_URL and refuse to guess localhost.
