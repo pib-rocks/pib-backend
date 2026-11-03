@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pib_memory"
+version = "0.1.0"
+description = "Robot-local episodic memory for pib"
+requires-python = ">=3.10"
+dependencies = []
+
+[tool.setuptools]
+packages = ["pib_memory"]
+package-dir = { pib_memory = "." }

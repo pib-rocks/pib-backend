@@ -602,6 +602,8 @@ function install_pib_python_packages() {
     || print WARN "failed to install pib_capability"
   pip install --break-system-packages -e "$BACKEND_DIR/pib_mcp_server" \
     || print WARN "failed to install pib_mcp_server"
+  pip install --break-system-packages -e "$BACKEND_DIR/pib_memory" \
+    || print WARN "failed to install pib_memory"
   print SUCCESS "Installed pib Python packages system-wide"
 }
 

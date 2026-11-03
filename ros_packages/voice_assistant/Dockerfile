@@ -100,6 +100,7 @@ RUN cp /tmp/provider_registry.py \
 
 COPY ./pib_mcp_server ./pib_mcp_server
 COPY ./pib_capability ./pib_capability
+COPY ./pib_memory ./pib_memory
 # The in-repo packages declare no dependencies beyond what is installed above (pib_mcp_server:
 # mcp, websocket-client). --no-deps keeps this layer from re-resolving the environment and
 # reporting conflicts in it.
@@ -108,7 +109,8 @@ RUN pip install --break-system-packages --no-deps \
         ./pib_hermes_config/ \
         ./public_api_client/ \
         ./pib_mcp_server/ \
-        ./pib_capability/
+        ./pib_capability/ \
+        ./pib_memory/
 
 COPY ./ros_packages/datatypes ros2_ws/datatypes
 COPY ./ros_packages/voice_assistant ros2_ws/voice_assistant
