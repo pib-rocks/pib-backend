@@ -115,3 +115,17 @@ def test_unusable_input_exits_2(tmp_path: Path):
     assert (
         main([str(bad_baseline), "--baseline", str(tmp_path / "no-baseline.json")]) == 2
     )
+
+
+def test_summarize_reports_eos_to_barge_in_stop_delta():
+    records = [
+        {"stages": {"end_of_speech": 0.0, "barge_in_stop": 150.0}},
+        {"stages": {"end_of_speech": 0.0, "barge_in_stop": 250.0}},
+        {"stages": {"end_of_speech": 0.0}},
+    ]
+    summary = summarize(records)
+    metric = summary["deltas"]["eos_to_barge_in_stop"]
+    assert metric["count"] == 2
+    assert metric["skipped"] == 1
+    assert metric["p50"] == 150.0
+    assert metric["p95"] == 250.0
