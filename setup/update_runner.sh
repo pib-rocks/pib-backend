@@ -71,6 +71,8 @@ CEREBRA_TARGET="unknown"
 # strict rule blocked the update that would have fixed the damage.
 BACKEND_SERVICES_BEFORE=""
 CEREBRA_SERVICES_BEFORE=""
+VOICE_CONTAINER="${PIB_VOICE_CONTAINER:-pib-backend-ros-voice-assistant-1}"
+VOICE_HEALTH_BEFORE=""
 REGRESSIONS=""
 UNHEALTHY_SERVICES=""
 ATTEMPT=1
@@ -976,6 +978,22 @@ verify_result() {
     if [ -n "$(printf '%s' "$UNHEALTHY_SERVICES" | tr -d ' ')" ]; then
         log "Tolerated pre-existing unhealthy services (decision D12): $(printf '%s' "$UNHEALTHY_SERVICES" | tr -s ' ')"
     fi
+    local voice_check_output voice_reason
+    voice_check_output=""
+    voice_reason=""
+    # wait_for_stacks already waited for the stack; keep this bounded so a failing probe cannot
+    # stretch every verify_result attempt by the probe's full start-period retry.
+    if voice_check_output="$(PIB_VOICE_HEALTH_ATTEMPTS=3 PIB_VOICE_HEALTH_INTERVAL_SECONDS=10 \
+        bash "$BACKEND_DIR/setup/installation_scripts/voice_healthcheck.sh" 2>&1)"; then
+        log "voice assistant healthy"
+    else
+        voice_reason="$(printf '%s\n' "$voice_check_output" | grep 'reason=' | tail -1 || true)"
+        if [ "$VOICE_HEALTH_BEFORE" = "healthy" ]; then
+            log "Verification failed: voice assistant was healthy before the update and is not now: ${voice_reason:-probe failed without reason line}"
+            return 1
+        fi
+        log "Voice assistant unhealthy before and after the update (D12): ${voice_reason:-probe failed without reason line}"
+    fi
     backend_head="$(git -C "$BACKEND_DIR" rev-parse HEAD)"
     if [ "$backend_head" != "$BACKEND_TARGET" ]; then
         log "Verification failed: pib-backend is at $backend_head, expected $BACKEND_TARGET"
@@ -1315,6 +1333,7 @@ check_cancel
 check_update_dir
 BACKEND_SERVICES_BEFORE="$(snapshot_running_services "$BACKEND_DIR/docker-compose.yaml" --profile all)"
 CEREBRA_SERVICES_BEFORE="$(snapshot_running_services "$CEREBRA_DIR/docker-compose.yaml")"
+VOICE_HEALTH_BEFORE="$(docker inspect "$VOICE_CONTAINER" --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' 2>/dev/null || true)"
 log "Services running before the update: pib-backend=[$(printf '%s' "$BACKEND_SERVICES_BEFORE" | tr '\n' ' ')] cerebra=[$(printf '%s' "$CEREBRA_SERVICES_BEFORE" | tr '\n' ' ')]"
 validate_repository "pib-backend" "$BACKEND_DIR"
 validate_repository "cerebra" "$CEREBRA_DIR"
