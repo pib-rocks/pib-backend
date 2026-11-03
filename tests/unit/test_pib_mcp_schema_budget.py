@@ -46,7 +46,7 @@ def test_every_tool_description_states_unit_and_side_effect():
         assert _UNIT_HINT.search(
             description
         ), f"{tool.name} description missing a unit hint: {description!r}"
-        if tool.name in ACTUATING_TOOLS or tool.name == "soul_append":
+        if tool.name in ACTUATING_TOOLS or tool.name in ("soul_append", "pib_remember"):
             assert _WRITE_SIDE_EFFECT.search(description), tool.name
         elif tool.name == "capture_image":
             assert _WRITE_SIDE_EFFECT.search(description), tool.name
@@ -56,4 +56,4 @@ def test_every_tool_description_states_unit_and_side_effect():
 
 @pytest.mark.parametrize("budget", [CHAT_MCP_TOOL_SCHEMA_BUDGET_CHARS])
 def test_schema_budget_constant_matches_acceptance_target(budget):
-    assert budget == 4485
+    assert budget == 4660

@@ -11,7 +11,9 @@ from typing import Any
 # so the ceiling moves to 4150 with 31 characters of headroom.
 # PR-2227: pib_describe_scene and pib_locate_object add 333 characters; measured total
 # 4452, ceiling 4485 with 33 characters of headroom.
-CHAT_MCP_TOOL_SCHEMA_BUDGET_CHARS = 4485
+# PR-2231: pib_remember adds 177 characters; measured total 4629, ceiling 4660
+# with 31 characters of headroom.
+CHAT_MCP_TOOL_SCHEMA_BUDGET_CHARS = 4660
 
 DEFAULT_TOOL_PAYLOAD_BUDGET_BYTES = 8 * 1024
 

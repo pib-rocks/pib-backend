@@ -80,7 +80,7 @@ def register_memory_tools(server: Any) -> None:
 
     @server.tool(annotations=write_annotations, structured_output=True)
     def pib_remember(text: str) -> dict[str, Any]:
-        """Side effect. Store one episodic row when the user explicitly asks to remember something."""
+        """Side effect. Store one memory row (max 500 characters) when the user explicitly asks to remember something."""
 
         trimmed = (text or "").strip()
         if not trimmed:
