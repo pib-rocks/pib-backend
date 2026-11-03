@@ -77,7 +77,7 @@ from .face_crop import (
     translate_gaze,
 )
 from .parsed_detections import published_field, translate_detections
-from .scene_model import SceneModel
+from .scene_model_mixin import SceneModelMixin
 from .qr_detection import (
     QR_MODEL_ID,
     decode_qr_detections,
@@ -125,9 +125,6 @@ COMPRESSED_IMAGE_TOPIC = "/oak/rgb/image_raw/compressed"
 COMPRESSED_IMAGE_FRAME_ID = "oak_rgb_camera_optical_frame"
 DEFAULT_QUALITY_FACTOR = 80
 DEFAULT_TIMER_PERIOD_SECONDS = 0.1
-SCENE_MODEL_TOPIC = "/scene_model"
-SCENE_MODEL_PUBLISH_HZ = 2.0
-SCENE_MODEL_TIMER_PERIOD_SECONDS = 1.0 / SCENE_MODEL_PUBLISH_HZ
 #: The device hand chain produces its own results at camera rate. Polling it on
 #: the stream timer (10 Hz) capped hand tracking at 10 detections/s whatever the
 #: device managed, so the chain gets its own poll.
@@ -279,6 +276,7 @@ class CameraNode(
     HandTrackingMixin,
     PipelineBuildersMixin,
     BranchCaptureMixin,
+    SceneModelMixin,
     Node,
 ):
     """Own and publish the OAK-D Lite camera and its on-board BMI270 IMU.
@@ -417,18 +415,7 @@ class CameraNode(
             logger=self.get_logger(),
         )
         self.last_detections = {}
-        self.scene_model = SceneModel()
-        self.scene_model_publisher_ = self.create_publisher(
-            String, SCENE_MODEL_TOPIC, 10
-        )
-        self.scene_model_timer = self.create_timer(
-            SCENE_MODEL_TIMER_PERIOD_SECONDS, self._publish_scene_model
-        )
-        from std_srvs.srv import Trigger
-
-        self.get_scene_service = self.create_service(
-            Trigger, "get_scene", self.get_scene_callback
-        )
+        self._init_scene_model()
 
         if self.camera_available:
             self.get_camera_image_service = self.create_service(
@@ -583,43 +570,6 @@ class CameraNode(
         response.detections = self.last_detections.get(
             request.model_id, self._empty_detections(request.model_id)
         )
-        return response
-
-    def _stamp_ms(self):
-        return self.get_clock().now().nanoseconds // 1_000_000
-
-    @staticmethod
-    def _scene_detection_dicts(detections):
-        rows = []
-        for detection in detections:
-            rows.append(
-                {
-                    "label": detection.label,
-                    "confidence": float(detection.score),
-                    "bbox": (
-                        int(detection.x_min),
-                        int(detection.y_min),
-                        int(detection.x_max),
-                        int(detection.y_max),
-                    ),
-                    "point3d": None,
-                }
-            )
-        return rows
-
-    def _scene_model_json(self):
-        stamp_ms = self._stamp_ms()
-        return json.dumps(self.scene_model.snapshot(stamp_ms))
-
-    def _publish_scene_model(self):
-        msg = String()
-        msg.data = self._scene_model_json()
-        self.scene_model_publisher_.publish(msg)
-
-    def get_scene_callback(self, request, response):
-        del request
-        response.success = True
-        response.message = self._scene_model_json()
         return response
 
     @staticmethod
