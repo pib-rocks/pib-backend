@@ -64,8 +64,11 @@ class AssistantLatencyMixin:
         from voice_assistant.util import speech_turn_id
 
         self._speech_turn_id = speech_turn_id(self.state.chat_id, self._playback_epoch)
+        self._turn_episode_task = ""
+        self._turn_episode_outcome = ""
         self._cancel_filler_timer()
         self._streaming_speech = _assistant().StreamingSpeech()
+        self._turn_episode_outcome = ""
         self._turn_has_playback = False
         self._answer_audio_pending = False
         with self._filler_lock:
@@ -239,12 +242,29 @@ class AssistantLatencyMixin:
                 f"turn trace first_sentence_flushed failed: {exc}"
             )
 
+    def _record_voice_turn_episode(self) -> None:
+        """Persist one episodic row for a spoken turn that finished cleanly."""
+        try:
+            from pib_memory.turn_episode import record_turn
+
+            trace = self._turn_trace
+            record_turn(
+                chat_id=trace.chat_id or self.state.chat_id or "",
+                turn_id=trace.turn_id or "",
+                task=getattr(self, "_turn_episode_task", ""),
+                outcome=getattr(self, "_turn_episode_outcome", ""),
+            )
+        except Exception as exc:
+            self.get_logger().warning(f"voice turn episode was not recorded: {exc}")
+
     def _close_latency_turn(self, *, incomplete: bool) -> None:
         """Log the one line and append the JSON record. A closed turn is a no-op."""
         try:
             trace = self._turn_trace
             if not trace.is_open:
                 return
+            if not incomplete:
+                self._record_voice_turn_episode()
             if not incomplete:
                 # The audio player stamps last_audio when the burst's queue
                 # drains. Its event may still be in flight for a few

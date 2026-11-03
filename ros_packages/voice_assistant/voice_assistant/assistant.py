@@ -136,6 +136,8 @@ class VoiceAssistantNode(AssistantTurnCallbacksMixin, AssistantLatencyMixin, Nod
         self.is_executing_program = False
         # Clauses already handed to the synthesizer for the current answer.
         self._streaming_speech = StreamingSpeech()
+        self._turn_episode_task = ""
+        self._turn_episode_outcome = ""
         self._filler_timer: Optional[threading.Timer] = None
         self._filler_lock = threading.Lock()
         self._first_token_seen = False
@@ -676,6 +678,7 @@ class VoiceAssistantNode(AssistantTurnCallbacksMixin, AssistantLatencyMixin, Nod
             self.stop_recording()
             self.set_is_listening(request.chat_id, False)
             self._start_spoken_turn()
+            self._turn_episode_task = (request.content or "").strip()
             self.chat(
                 request.content,
                 self.state.chat_id,

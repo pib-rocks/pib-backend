@@ -160,6 +160,7 @@ class ChatTurnTraceMixin:
         self._turn_trace_turn_id = ""
         self._turn_trace_cancelled = False
         self._turn_direct_tool_rounds = None
+        self._turn_episode_outcome = ""
 
     def _ensure_turn_trace_anchor(self, t0: float) -> None:
         """Typed turns anchor at service recv when capture never sent end_of_speech."""
@@ -360,6 +361,21 @@ class ChatTurnTraceMixin:
         """
         route = (os.getenv("PIB_CLOUD_BASE_URL") or "").strip().rstrip("/")
         return route or "default"
+
+    def _record_text_turn_episode(self, chat_id: str, turn_id: str, task: str) -> None:
+        if not turn_id or getattr(self, "_turn_trace_cancelled", False):
+            return
+        try:
+            from pib_memory.turn_episode import record_turn
+
+            record_turn(
+                chat_id=chat_id,
+                turn_id=turn_id,
+                task=task,
+                outcome=getattr(self, "_turn_episode_outcome", ""),
+            )
+        except Exception as exc:
+            self.get_logger().warning(f"text turn episode was not recorded: {exc}")
 
     def _finalize_message_meta(self, chat_id: str) -> None:
         """Write the completed turn facts onto the answer that was just stored.
