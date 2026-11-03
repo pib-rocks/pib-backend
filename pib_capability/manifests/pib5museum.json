@@ -32,5 +32,16 @@
     "text_to_speech": true,
     "large_language_model": true
   },
-  "degraded_without_cloud": []
+  "degraded_without_cloud": [],
+  "proactivity": {
+    "default": "silent",
+    "profile": "default",
+    "overrides": {
+      "move_motor": "announced",
+      "move_motors": "announced",
+      "apply_pose": "announced",
+      "apply_joint_trajectory": "announced",
+      "run_program": "announced"
+    }
+  }
 }

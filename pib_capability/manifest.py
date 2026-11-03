@@ -7,6 +7,11 @@ import os
 from importlib.resources import files
 from typing import Any
 
+from pib_hermes_config.proactivity import (
+    UnknownProactivityTierError,
+    validate_proactivity,
+)
+
 AVAILABLE_VARIANTS: tuple[str, ...] = (
     "pib4advanced",
     "pib4edu",
@@ -87,6 +92,7 @@ def validate_manifest(doc: Any) -> None:
             raise ValueError(
                 f"manifest degraded_without_cloud[{index}] must be a non-empty string"
             )
+    validate_proactivity(doc)
 
 
 def load_manifest(variant: str | None = None) -> dict[str, Any]:
