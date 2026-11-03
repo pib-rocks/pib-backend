@@ -29,9 +29,7 @@ def test_identity_stable_across_ten_second_occlusion_for_ten_object_fixture():
         for entry in model.snapshot(t_after_gap)["objects"]
     }
     assert len(ids_after) == 10
-    stable = sum(
-        1 for label in ids_before if ids_before[label] == ids_after.get(label)
-    )
+    stable = sum(1 for label in ids_before if ids_before[label] == ids_after.get(label))
     assert stable >= 8
 
 
