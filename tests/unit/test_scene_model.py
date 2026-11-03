@@ -171,3 +171,46 @@ def test_snapshot_includes_intrinsics_metadata():
     missing = model.snapshot(1)
     assert missing["intrinsics"] is None
     assert missing["intrinsics_unavailable_reason"] == "pipeline_not_running"
+
+
+def test_init_scene_model_loads_intrinsics_when_pipeline_already_started(monkeypatch):
+    """The camera starts its pipeline before the scene model exists (PR-2224)."""
+    import sys
+    import types
+
+    std_msgs = types.ModuleType("std_msgs")
+    std_msgs_msg = types.ModuleType("std_msgs.msg")
+    std_msgs_msg.String = type("String", (), {"data": ""})
+    std_msgs.msg = std_msgs_msg
+    monkeypatch.setitem(sys.modules, "std_msgs", std_msgs)
+    monkeypatch.setitem(sys.modules, "std_msgs.msg", std_msgs_msg)
+
+    from ros_packages.camera.oak_d_lite.scene_model_mixin import SceneModelMixin
+
+    srv = types.ModuleType("std_srvs.srv")
+    srv.Trigger = object
+    pkg = types.ModuleType("std_srvs")
+    pkg.srv = srv
+    monkeypatch.setitem(sys.modules, "std_srvs", pkg)
+    monkeypatch.setitem(sys.modules, "std_srvs.srv", srv)
+
+    class _Node(SceneModelMixin):
+        def __init__(self):
+            self.pipeline = object()
+            self.loaded = 0
+
+        def create_publisher(self, *args, **kwargs):
+            return None
+
+        def create_timer(self, *args, **kwargs):
+            return None
+
+        def create_service(self, *args, **kwargs):
+            return None
+
+        def _load_scene_model_intrinsics_once(self):
+            self.loaded += 1
+
+    node = _Node()
+    node._init_scene_model()
+    assert node.loaded == 1

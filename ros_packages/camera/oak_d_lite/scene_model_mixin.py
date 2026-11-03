@@ -39,6 +39,10 @@ class SceneModelMixin:
         self.get_scene_service = self.create_service(
             Trigger, "get_scene", self.get_scene_callback
         )
+        # The camera pipeline is started before this method runs, so its
+        # calibration is available now; a later rebuild loads it again.
+        if getattr(self, "pipeline", None) is not None:
+            self._load_scene_model_intrinsics_once()
 
     def _stamp_ms(self) -> int:
         return self.get_clock().now().nanoseconds // 1_000_000
