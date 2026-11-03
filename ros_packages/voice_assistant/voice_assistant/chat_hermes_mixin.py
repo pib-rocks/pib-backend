@@ -303,6 +303,10 @@ class ChatHermesMixin:
         if prev_text_type == _chat().Chat.Goal.TEXT_TYPE_CODE_VISUAL:
             return prev_text, prev_text_type, curr_text
 
+        # The episode records the answer, not the first token: the first chunk
+        # is often one word ("Ich") and says nothing about the turn.
+        if raw_answer.strip():
+            self._turn_episode_outcome = raw_answer.strip()
         speech_tail = speech_result_tail(raw_answer, published_speech)
         return None, None, speech_tail
 
