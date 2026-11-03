@@ -38,15 +38,24 @@ FIXED_UTTERANCES = (
     "Ich hätte gern eine kleine Geschichte über einen neugierigen Roboter, der zum ersten Mal Schnee sieht, ihn anfasst und sich fragt, warum er in der warmen Hand verschwindet.",
 )
 
+
 # Each dialogue is a tuple of turns. A turn is (German text, cancel_after_ms).
 # Exactly one turn per dialogue carries a cancel delay; the rest complete normally.
 def build_dialogue_plan() -> tuple[tuple[tuple[str, int | None], ...], ...]:
     return (
         (("Guten Tag.", None), ("Was kannst du für mich tun?", 1200)),
-        (("Hallo pib.", None), ("Erzähl einen Witz.", None), ("Stopp, anderes Thema.", 1250)),
+        (
+            ("Hallo pib.", None),
+            ("Erzähl einen Witz.", None),
+            ("Stopp, anderes Thema.", 1250),
+        ),
         (("Wie ist das Wetter?", 1100), ("Danke.", None)),
         (("Kennst du Berlin?", None), ("Nenne drei Sehenswürdigkeiten.", 1300)),
-        (("Ich bin müde.", None), ("Gib mir einen Tipp zum Abschalten.", None), ("Genug davon.", 1150)),
+        (
+            ("Ich bin müde.", None),
+            ("Gib mir einen Tipp zum Abschalten.", None),
+            ("Genug davon.", 1150),
+        ),
         (("Was ist KI?", None), ("Erklär es in einem Satz.", 1400)),
         (("Hör mir zu.", 1180), ("Wiederhole das bitte.", None)),
         (("Magst du Musik?", None), ("Empfiehl ein Lied.", None), ("Abbrechen.", 1220)),
@@ -56,7 +65,11 @@ def build_dialogue_plan() -> tuple[tuple[tuple[str, int | None], ...], ...]:
         ),
         (("Erzähl von deinem Tag.", None), ("Kürzer bitte.", 1280)),
         (("Was ist zwei plus zwei?", None), ("Und dreimal sieben?", 1190)),
-        (("Hilf mir beim Kochen.", None), ("Was brauche ich für Nudeln?", None), ("Stop.", 1320)),
+        (
+            ("Hilf mir beim Kochen.", None),
+            ("Was brauche ich für Nudeln?", None),
+            ("Stop.", 1320),
+        ),
         (("Guten Abend.", None), ("Schlaf gut sagen.", 1210)),
         (("Wer bist du?", 1240), ("Interessant.", None)),
         (("Erkläre Schwerkraft.", None), ("Noch einfacher.", None), ("Stopp.", 1160)),
@@ -65,7 +78,11 @@ def build_dialogue_plan() -> tuple[tuple[tuple[str, int | None], ...], ...]:
             ("Was ist dein Lieblingswort?", None),
             ("Sag es noch einmal.", 1130),
         ),
-        (("Beschreibe den Himmel.", None), ("In blau.", None), ("Abbrechen bitte.", 1290)),
+        (
+            ("Beschreibe den Himmel.", None),
+            ("In blau.", None),
+            ("Abbrechen bitte.", 1290),
+        ),
         (("Kannst du rechnen?", None), ("Was ist hundert geteilt durch vier?", 1310)),
         (("Auf Wiedersehen.", None), ("Noch eine Frage: was ist Liebe?", 1200)),
     )
