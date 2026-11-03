@@ -24,7 +24,9 @@ class UnknownVariantError(ValueError):
         self.variant = variant
         self.available = AVAILABLE_VARIANTS
         names = ", ".join(sorted(AVAILABLE_VARIANTS))
-        super().__init__(f"Unknown robot variant {variant!r}; available variants: {names}")
+        super().__init__(
+            f"Unknown robot variant {variant!r}; available variants: {names}"
+        )
 
 
 def resolve_variant(variant: str | None = None) -> str:

@@ -33,7 +33,10 @@ def test_filtering_removes_absent_tools_and_keeps_the_rest():
     backend = FakeBackend()
     server = create_server(backend, actuating_enabled=True)
     manifest = load_manifest("pib5edu")
-    trimmed = {**manifest, "skills": [name for name in manifest["skills"] if name != "soul_append"]}
+    trimmed = {
+        **manifest,
+        "skills": [name for name in manifest["skills"] if name != "soul_append"],
+    }
     remove_tools_not_in_manifest(server, trimmed)
     names = {tool.name for tool in _tools(server)}
     assert "soul_append" not in names
@@ -50,7 +53,9 @@ def test_mcp_server_exposes_exactly_manifest_skills(monkeypatch: pytest.MonkeyPa
     assert exposed == set(skill_names(manifest))
 
 
-def test_capabilities_endpoint_matches_load_manifest(app, monkeypatch: pytest.MonkeyPatch):
+def test_capabilities_endpoint_matches_load_manifest(
+    app, monkeypatch: pytest.MonkeyPatch
+):
     monkeypatch.setenv("PIB_ROBOT_VARIANT", "pib4edu")
     expected = load_manifest("pib4edu")
     with app.test_client() as client:
