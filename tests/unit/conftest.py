@@ -18,7 +18,6 @@ BLOCKLY_CLIENT_DIR = REPO_ROOT / "pib_blockly" / "pib_blockly_client"
 API_CLIENT_DIR = REPO_ROOT / "pib_api" / "client"
 PUBLIC_API_CLIENT_DIR = REPO_ROOT / "public_api_client"
 HERMES_CONFIG_DIR = REPO_ROOT / "pib_hermes_config"
-CAPABILITY_DIR = REPO_ROOT / "pib_capability"
 
 for path in (
     str(FLASK_DIR),
@@ -26,7 +25,6 @@ for path in (
     str(API_CLIENT_DIR),
     str(PUBLIC_API_CLIENT_DIR),
     str(HERMES_CONFIG_DIR),
-    str(CAPABILITY_DIR),
 ):
     if path not in sys.path:
         sys.path.insert(0, path)
