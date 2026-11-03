@@ -83,6 +83,27 @@ def test_cancelled_turn_trace_lists_only_reached_stages():
     assert "first_sentence" not in trace
 
 
+def test_finish_cancelled_turn_records_barge_in_stop(chat_module, chat_node):
+    import json
+    from unittest.mock import MagicMock, patch
+
+    node = chat_node
+    node.get_logger = MagicMock(return_value=MagicMock())
+    node._reset_turn_meta()
+    node._turn_chat_id = "chat-cancel"
+    node._record_turn_trace(json.dumps({"stage": "end_of_speech", "ts_ms": 1000.0}))
+    goal_handle = MagicMock()
+    goal_handle.is_cancel_requested = False
+
+    with patch("voice_assistant.turn_latency.now_ms", return_value=1050.0):
+        with patch.object(chat_module.time, "monotonic", return_value=1.05):
+            node._finish_cancelled_turn("chat-cancel", goal_handle)
+
+    assert "barge_in_stop" in node._turn_stages
+    assert node._turn_stages["barge_in_stop"] == pytest.approx(50.0, abs=0.2)
+    assert node._turn_trace_cancelled is True
+
+
 def test_tool_rounds_are_included_when_tools_ran():
     trace = message_turn_trace(
         {"first_token": 10.0, "turn_end": 50.0},

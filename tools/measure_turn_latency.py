@@ -38,6 +38,58 @@ FIXED_UTTERANCES = (
     "Ich hätte gern eine kleine Geschichte über einen neugierigen Roboter, der zum ersten Mal Schnee sieht, ihn anfasst und sich fragt, warum er in der warmen Hand verschwindet.",
 )
 
+
+# Each dialogue is a tuple of turns. A turn is (German text, cancel_after_ms).
+# Exactly one turn per dialogue carries a cancel delay; the rest complete normally.
+def build_dialogue_plan() -> tuple[tuple[tuple[str, int | None], ...], ...]:
+    return (
+        (("Guten Tag.", None), ("Was kannst du für mich tun?", 1200)),
+        (
+            ("Hallo pib.", None),
+            ("Erzähl einen Witz.", None),
+            ("Stopp, anderes Thema.", 1250),
+        ),
+        (("Wie ist das Wetter?", 1100), ("Danke.", None)),
+        (("Kennst du Berlin?", None), ("Nenne drei Sehenswürdigkeiten.", 1300)),
+        (
+            ("Ich bin müde.", None),
+            ("Gib mir einen Tipp zum Abschalten.", None),
+            ("Genug davon.", 1150),
+        ),
+        (("Was ist KI?", None), ("Erklär es in einem Satz.", 1400)),
+        (("Hör mir zu.", 1180), ("Wiederhole das bitte.", None)),
+        (("Magst du Musik?", None), ("Empfiehl ein Lied.", None), ("Abbrechen.", 1220)),
+        (
+            ("Wie spät ist es ungefähr?", None),
+            ("Danke, das reicht.", 1350),
+        ),
+        (("Erzähl von deinem Tag.", None), ("Kürzer bitte.", 1280)),
+        (("Was ist zwei plus zwei?", None), ("Und dreimal sieben?", 1190)),
+        (
+            ("Hilf mir beim Kochen.", None),
+            ("Was brauche ich für Nudeln?", None),
+            ("Stop.", 1320),
+        ),
+        (("Guten Abend.", None), ("Schlaf gut sagen.", 1210)),
+        (("Wer bist du?", 1240), ("Interessant.", None)),
+        (("Erkläre Schwerkraft.", None), ("Noch einfacher.", None), ("Stopp.", 1160)),
+        (("Wie geht es dir?", None), ("Erzähl mehr.", 1270)),
+        (
+            ("Was ist dein Lieblingswort?", None),
+            ("Sag es noch einmal.", 1130),
+        ),
+        (
+            ("Beschreibe den Himmel.", None),
+            ("In blau.", None),
+            ("Abbrechen bitte.", 1290),
+        ),
+        (("Kannst du rechnen?", None), ("Was ist hundert geteilt durch vier?", 1310)),
+        (("Auf Wiedersehen.", None), ("Noch eine Frage: was ist Liebe?", 1200)),
+    )
+
+
+DIALOGUES = build_dialogue_plan()
+
 DEFAULT_LOG = "/data/voice/turn-latency/turns.jsonl"
 
 
@@ -124,20 +176,37 @@ def _ensure_listening(node, clients, chat_id: str, timeout_sec: float) -> None:
     raise TimeoutError("voice assistant did not start listening")
 
 
+def _sleep_ms(delay_ms: int) -> None:
+    if delay_ms > 0:
+        time.sleep(delay_ms / 1000.0)
+
+
 def run(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--chat-id", required=True)
     parser.add_argument("--turns", type=int, default=5)
+    parser.add_argument(
+        "--dialogues",
+        action="store_true",
+        help="Run the 20 scripted German dialogues with one cancel each (text turns)",
+    )
     parser.add_argument("--log", default=DEFAULT_LOG)
     parser.add_argument("--timeout", type=float, default=90.0)
     args = parser.parse_args(argv)
-    if args.turns < 1:
+    if not args.dialogues and args.turns < 1:
         print("measure_turn_latency: --turns must be at least 1", file=sys.stderr)
+        return 2
+    if args.dialogues and len(DIALOGUES) != 20:
+        print(
+            "measure_turn_latency: dialogue corpus must contain 20 dialogues",
+            file=sys.stderr,
+        )
         return 2
 
     import rclpy
     from datatypes.msg import VoiceAssistantState
     from datatypes.srv import (
+        CancelChatTurn,
         GetVoiceAssistantState,
         SendChatMessage,
         SetVoiceAssistantState,
@@ -150,6 +219,7 @@ def run(argv: list[str] | None = None) -> int:
         "get": node.create_client(GetVoiceAssistantState, "get_voice_assistant_state"),
         "set": node.create_client(SetVoiceAssistantState, "set_voice_assistant_state"),
         "send": node.create_client(SendChatMessage, "send_chat_message"),
+        "cancel": node.create_client(CancelChatTurn, "cancel_chat_turn"),
         "listening": node.create_client(GetChatIsListening, "get_chat_is_listening"),
     }
     original = None
@@ -163,16 +233,43 @@ def run(argv: list[str] | None = None) -> int:
         already_on = (
             bool(original.turned_on) and (original.chat_id or "") == args.chat_id
         )
-        if not already_on:
+        want_voice_on = not args.dialogues
+        if want_voice_on:
+            if not already_on:
+                state = VoiceAssistantState()
+                state.turned_on = True
+                state.chat_id = args.chat_id
+                request = SetVoiceAssistantState.Request()
+                request.voice_assistant_state = state
+                response = _call(node, clients["set"], request, args.timeout)
+                changed = True
+                if not bool(getattr(response, "successful", False)):
+                    # Already-on for this chat is reported as unsuccessful by update_state.
+                    check = _call(
+                        node,
+                        clients["get"],
+                        GetVoiceAssistantState.Request(),
+                        args.timeout,
+                    )
+                    current = check.voice_assistant_state
+                    if not (
+                        bool(current.turned_on)
+                        and (current.chat_id or "") == args.chat_id
+                    ):
+                        print(
+                            "measure_turn_latency: set_voice_assistant_state failed",
+                            file=sys.stderr,
+                        )
+                        return 1
+        elif already_on and (original.chat_id or "") == args.chat_id:
             state = VoiceAssistantState()
-            state.turned_on = True
+            state.turned_on = False
             state.chat_id = args.chat_id
             request = SetVoiceAssistantState.Request()
             request.voice_assistant_state = state
             response = _call(node, clients["set"], request, args.timeout)
             changed = True
             if not bool(getattr(response, "successful", False)):
-                # Already-on for this chat is reported as unsuccessful by update_state.
                 check = _call(
                     node,
                     clients["get"],
@@ -180,25 +277,22 @@ def run(argv: list[str] | None = None) -> int:
                     args.timeout,
                 )
                 current = check.voice_assistant_state
-                if not (
-                    bool(current.turned_on) and (current.chat_id or "") == args.chat_id
-                ):
+                if bool(current.turned_on) and (current.chat_id or "") == args.chat_id:
                     print(
-                        "measure_turn_latency: set_voice_assistant_state failed",
+                        "measure_turn_latency: could not switch to text-only dialogues",
                         file=sys.stderr,
                     )
                     return 1
         _ensure_listening(node, clients, args.chat_id, args.timeout)
         log_path = Path(args.log)
         offset = log_path.stat().st_size if log_path.is_file() else 0
-        for index in range(args.turns):
-            # The turn is over in the log before the assistant has finished its
-            # start signal and started listening again; a message sent into that
-            # window is refused, so wait for the listening state first.
+
+        def drive_turn(content: str, cancel_after_ms: int | None) -> int:
+            nonlocal offset
             _ensure_listening(node, clients, args.chat_id, args.timeout)
             request = SendChatMessage.Request()
             request.chat_id = args.chat_id
-            request.content = _utterance(index)
+            request.content = content
             response = None
             deadline = time.monotonic() + args.timeout
             while time.monotonic() < deadline:
@@ -212,9 +306,56 @@ def run(argv: list[str] | None = None) -> int:
                     file=sys.stderr,
                 )
                 return 1
+            turn_id = (getattr(response, "turn_id", "") or "").strip()
+            if cancel_after_ms is not None:
+                if not turn_id:
+                    print(
+                        "measure_turn_latency: cancel needs a text turn_id",
+                        file=sys.stderr,
+                    )
+                    return 1
+                _sleep_ms(cancel_after_ms)
+                cancel_request = CancelChatTurn.Request()
+                cancel_request.turn_id = turn_id
+                cancel_response = _call(
+                    node, clients["cancel"], cancel_request, args.timeout
+                )
+                if not bool(getattr(cancel_response, "successful", False)):
+                    print(
+                        "measure_turn_latency: cancel_chat_turn failed",
+                        file=sys.stderr,
+                    )
+                    return 1
+                try:
+                    _ensure_listening(node, clients, args.chat_id, args.timeout)
+                except TimeoutError:
+                    print("TIMEOUT waiting for turn after cancel", file=sys.stderr)
+                    return 1
+                return 0
+            if args.dialogues:
+                try:
+                    _ensure_listening(node, clients, args.chat_id, args.timeout)
+                except TimeoutError:
+                    print("TIMEOUT waiting for turn", file=sys.stderr)
+                    return 1
+                return 0
             offset = _wait_for_turn(log_path, offset, args.chat_id, args.timeout)
             if offset is None:
                 return 1
+            return 0
+
+        if args.dialogues:
+            for dialogue in DIALOGUES:
+                for content, cancel_after_ms in dialogue:
+                    code = drive_turn(content, cancel_after_ms)
+                    if code != 0:
+                        return code
+            return 0
+
+        for index in range(args.turns):
+            code = drive_turn(_utterance(index), None)
+            if code != 0:
+                return code
         return 0
     except Exception as exc:
         print(f"measure_turn_latency: {exc}", file=sys.stderr)
