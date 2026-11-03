@@ -7,10 +7,9 @@ import os
 from importlib.resources import files
 from typing import Any
 
-from pib_hermes_config.proactivity import (
-    UnknownProactivityTierError,
-    validate_proactivity,
-)
+# The proactivity validator lives in pib_hermes_config, which itself reads this
+# module to render the SOUL tool list. Importing it at module level made that a
+# circular import (hermes-daemon image build); import it where it is used.
 
 AVAILABLE_VARIANTS: tuple[str, ...] = (
     "pib4advanced",
@@ -92,6 +91,8 @@ def validate_manifest(doc: Any) -> None:
             raise ValueError(
                 f"manifest degraded_without_cloud[{index}] must be a non-empty string"
             )
+    from pib_hermes_config.proactivity import validate_proactivity
+
     validate_proactivity(doc)
 
 
