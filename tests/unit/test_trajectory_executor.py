@@ -37,6 +37,7 @@ try:
         interpolate_positions,
         is_software_trajectory,
         minimum_path_speed_centideg_per_sec,
+        monotone_cubic_slopes,
         validate_software_trajectory_schedule,
     )
     import pib_motors.servo_speed_curve as servo_speed_curve
@@ -149,6 +150,64 @@ def test_interpolate_joint_is_linear_between_two_points() -> None:
     assert interpolate_joint(times, values, 0.5) == pytest.approx(50.0)
     assert interpolate_joint(times, values, 1.0) == pytest.approx(100.0)
     assert interpolate_joint(times, values, 1.5) == pytest.approx(100.0)
+
+
+def test_endpoints_and_reversals_have_zero_velocity_and_decelerate_servo_speed() -> (
+    None
+):
+    """PR-2203: trajectory start, end, and direction reversals must have velocity 0.
+
+    1. monotone_cubic_slopes returns 0.0 at t_0, t_N, and every interior reversal.
+    2. For a 2-point trajectory [0 -> 1000 in 1.0s], instantaneous velocity starts near 0,
+       peaks at 1.5x average speed (1500 cdeg/s) at t=0.5s, and returns to 0 at t=1.0s.
+    3. During execution of a back-and-forth reversal trajectory (0 -> 3000 -> 0), the
+       commanded STS velocity setting decelerates down to STS_VELOCITY_MIN at the start,
+       the reversal peak, and the end instead of being floored at 85% of the leg average.
+    """
+    slopes = monotone_cubic_slopes([0.0, 1.0, 2.0], [0.0, 3000.0, 0.0])
+    assert slopes == [0.0, 0.0, 0.0]
+
+    v_start = abs(
+        interpolate_joint_velocity_centideg_per_sec(
+            [0.0, 1.0], [0.0, 1000.0], 0.0, dt=1e-4
+        )
+    )
+    v_mid = abs(
+        interpolate_joint_velocity_centideg_per_sec(
+            [0.0, 1.0], [0.0, 1000.0], 0.5, dt=1e-4
+        )
+    )
+    v_end = abs(
+        interpolate_joint_velocity_centideg_per_sec(
+            [0.0, 1.0], [0.0, 1000.0], 0.9999, dt=1e-4
+        )
+    )
+    assert v_start < 1.0
+    assert v_mid == pytest.approx(1500.0, rel=1e-2)
+    assert v_end < 1.0
+
+    motor = FakeMotor("elbow")
+    clock = FakeClock()
+    executor = TrajectoryExecutor(
+        node=None,
+        motor_lookup={"elbow": [motor]},
+        rate_hz=20.0,
+        sleep_fn=clock.sleep,
+        clock_fn=clock.time,
+    )
+    assert executor.path_coupled_acceleration is True
+    jt = FakeJointTrajectory(
+        ["elbow"],
+        [FakePoint([0.0], 0.0), FakePoint([3000.0], 1.0), FakePoint([0.0], 2.0)],
+    )
+    assert executor.execute(jt) is True
+    speeds = [entry["speed"] for entry in motor.write_settings]
+    # At t=0.0 (idx 0), t=1.0 reversal (idx 20), and t=2.0 end (idx 40), speed drops to STS_VELOCITY_MIN
+    assert speeds[0] == STS_VELOCITY_MIN
+    assert speeds[20] == STS_VELOCITY_MIN
+    assert speeds[-1] == STS_VELOCITY_MIN
+    # Mid-leg (t=0.5, idx 10) accelerates well above the endpoint speed
+    assert speeds[10] > 400
 
 
 def test_via_point_mid_segment_is_interpolated_not_clamped() -> None:
@@ -441,7 +500,8 @@ def test_path_speed_derivation_slow_vs_fast_leg() -> None:
     slow_speed = abs(interpolate_joint_velocity_centideg_per_sec(times, slow, 0.5))
     fast_speed = abs(interpolate_joint_velocity_centideg_per_sec(times, fast, 0.5))
     assert slow_speed < fast_speed
-    assert slow_speed == pytest.approx(10.0, rel=0.05)
+    # With clamped endpoint slopes (m[0]=0, m[1]=10), midpoint velocity on [0,1] is 1.25 * 10 = 12.5
+    assert slow_speed == pytest.approx(12.5, rel=0.05)
 
 
 # the measured curves, low-speed points included - the same ones the executor uses

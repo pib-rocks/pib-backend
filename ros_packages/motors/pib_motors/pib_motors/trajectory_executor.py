@@ -121,7 +121,12 @@ def is_software_trajectory(jt: Any) -> bool:
 def monotone_cubic_slopes(
     times: Sequence[float], values: Sequence[float]
 ) -> list[float]:
-    """Fritsch–Carlson slopes for a monotone cubic Hermite spline."""
+    """Fritsch–Carlson slopes for a monotone cubic Hermite spline with clamped endpoints.
+
+    Start and end velocities are clamped to 0.0 so a pose sequence accelerates smoothly from rest
+    at t_0 and decelerates to rest at t_N instead of starting and stopping with a step jump in
+    velocity (PR-2203). Interior reversals (delta[i-1] * delta[i] <= 0) also receive slope 0.0.
+    """
     n = len(times)
     if n == 0:
         return []
@@ -132,8 +137,8 @@ def monotone_cubic_slopes(
         (values[i + 1] - values[i]) / h[i] if h[i] != 0.0 else 0.0 for i in range(n - 1)
     ]
     m = [0.0] * n
-    m[0] = delta[0]
-    m[-1] = delta[-1]
+    m[0] = 0.0
+    m[-1] = 0.0
     for i in range(1, n - 1):
         if delta[i - 1] * delta[i] <= 0.0:
             m[i] = 0.0
@@ -310,20 +315,24 @@ def minimum_path_speed_centideg_per_sec(
     *,
     sample_step_sec: float = 0.05,
 ) -> float:
-    """Smallest absolute path speed along a spline (centideg/s), sampled uniformly in time."""
+    """Smallest non-zero leg average speed along a spline (centideg/s).
+
+    Because clamped PCHIP brings the instantaneous velocity to 0 at t_0, t_N, and every
+    reversal waypoint, sampling instantaneous velocity across the spline always approaches 0
+    near the endpoints and would reject every trajectory when SLOW_PATH_BELOW_FLOOR_POLICY
+    is 'reject'. Evaluating the slow-path floor against the slowest moving leg's average rate
+    measures whether a leg itself is slower than the servo's continuous floor.
+    """
     if len(times) < 2 or len(values) < 2:
         return 0.0
-    duration = times[-1] - times[0]
-    if duration <= 0.0:
-        return 0.0
-    step = max(1e-6, float(sample_step_sec))
     minimum = float("inf")
-    t = times[0]
-    while t <= times[-1] + 1e-9:
-        speed = abs(interpolate_joint_velocity_centideg_per_sec(times, values, t))
-        if speed > 0.0:
-            minimum = min(minimum, speed)
-        t += step
+    for idx in range(len(times) - 1):
+        dt = times[idx + 1] - times[idx]
+        if dt <= 0.0:
+            continue
+        leg_speed = abs(values[idx + 1] - values[idx]) / dt
+        if leg_speed > 0.0:
+            minimum = min(minimum, leg_speed)
     return 0.0 if minimum == float("inf") else minimum
 
 
@@ -409,7 +418,7 @@ class TrajectoryExecutor:
         sleep_fn: Callable[[float], None] = time.sleep,
         clock_fn: Callable[[], float] = time.monotonic,
         path_speed_margin: float = PATH_SPEED_TRACKING_MARGIN,
-        path_coupled_acceleration: bool = False,
+        path_coupled_acceleration: bool = True,
         acceleration_scale: float = 2000.0,
         log_every_second: bool = True,
     ) -> None:
@@ -595,28 +604,17 @@ class TrajectoryExecutor:
                 cancelled = True
                 break
             now = self.clock_fn() - t0
-            leg_idx = active_trajectory_leg_index(times, now)
-            leg_dt = (
-                max(1e-6, times[leg_idx + 1] - times[leg_idx])
-                if len(times) >= 2 and leg_idx + 1 < len(times)
-                else 1.0
-            )
             targets = interpolate_positions(active_names, times, series, now)
             for name in active_names:
                 position = targets[name]
                 # Per tick, not per leg: the slope of a PCHIP segment changes inside the
-                # segment, so a speed fixed for the whole segment runs ahead of or behind
-                # the path at the segment ends. Floor at 85% of the leg's average speed so
-                # the servo does not drop to STS_SPEED_MIN (50) right before a waypoint.
+                # segment and drops to 0 at trajectory endpoints and direction reversals.
+                # Track the instantaneous path velocity without flooring at the leg average
+                # so the servo decelerates smoothly into reversals and endpoints (PR-2203).
                 inst_speed = interpolate_joint_velocity_centideg_per_sec(
                     times, series[name], now
                 )
-                leg_avg_speed = (
-                    abs(series[name][leg_idx + 1] - series[name][leg_idx]) / leg_dt
-                    if len(series[name]) > leg_idx + 1
-                    else 0.0
-                )
-                path_speed = max(abs(inst_speed), leg_avg_speed * 0.85)
+                path_speed = abs(inst_speed)
                 for motor in self.motor_lookup[name]:
                     setting = derive_sts_velocity_setting(
                         path_speed,
