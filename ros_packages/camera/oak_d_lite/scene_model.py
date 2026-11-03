@@ -86,6 +86,29 @@ class SceneModel:
         self.match_iou = float(match_iou)
         self._tracks: MutableMapping[int, _Track] = {}
         self._next_id = 1
+        self._intrinsics: Optional[Dict[str, float]] = None
+        self._intrinsics_unavailable_reason: Optional[str] = None
+
+    def set_intrinsics_metadata(
+        self,
+        intrinsics: Optional[Mapping[str, float]],
+        unavailable_reason: Optional[str] = None,
+    ) -> None:
+        """Attach camera intrinsics (or reason they are missing) to snapshots."""
+        if intrinsics is None:
+            self._intrinsics = None
+            self._intrinsics_unavailable_reason = unavailable_reason
+            return
+        self._intrinsics = {
+            "fx": float(intrinsics["fx"]),
+            "fy": float(intrinsics["fy"]),
+            "cx": float(intrinsics["cx"]),
+            "cy": float(intrinsics["cy"]),
+        }
+        self._intrinsics_unavailable_reason = None
+
+    def projection_intrinsics(self) -> Optional[Dict[str, float]]:
+        return self._intrinsics
 
     def ingest(
         self,
@@ -159,11 +182,17 @@ class SceneModel:
             objects.append(entry)
             if track.label.lower() in _PEOPLE_LABELS:
                 people.append(dict(entry))
-        return {
+        payload: Dict[str, Any] = {
             "stamp_ms": stamp_ms,
             "objects": objects,
             "people": people,
+            "intrinsics": self._intrinsics,
         }
+        if self._intrinsics is None and self._intrinsics_unavailable_reason:
+            payload["intrinsics_unavailable_reason"] = (
+                self._intrinsics_unavailable_reason
+            )
+        return payload
 
 
 def fixture_detections(count: int, prefix: str = "obj") -> List[Dict[str, Any]]:
