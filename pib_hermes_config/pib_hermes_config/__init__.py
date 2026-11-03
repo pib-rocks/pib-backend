@@ -301,46 +301,26 @@ def align_profile_ownership(profile_dir: str) -> None:
 # is registered.
 MCP_TOOL_NAME_PREFIX = "mcp__pib__"
 
-# (tool, German one-line description) for every tool pib_mcp_server exports.
-MCP_TOOLS = (
-    (
-        "list_motors",
-        "Listet konfigurierte Motoren und Bricklets inklusive aktueller Motorpositionen.",
-    ),
-    (
-        "get_state",
-        "Liefert den aktuellen Gelenkzustand, Diagnosen und Roboter-Telemetrie.",
-    ),
-    (
-        "get_motion_model",
-        "Liefert das Bewegungsmodell: Gelenke, Achsen, Grenzen in Grad und benannte "
-        "Stellungen; nutze es, statt eine URDF zu verlangen.",
-    ),
-    ("list_poses", "Listet gespeicherte Posen."),
-    ("list_programs", "Listet gespeicherte Blockly-/Python-Programme."),
-    ("capture_image", "Nimmt ein Kamerabild als base64-kodiertes JPEG auf."),
-    (
-        "move_motor",
-        "Bewegt einen Motor in Grad innerhalb seiner konfigurierten Rotationsgrenzen.",
-    ),
-    (
-        "move_motors",
-        "Bewegt mehrere Motoren in einem Aufruf (Zielwinkel in Grad pro Motor).",
-    ),
-    (
-        "apply_joint_trajectory",
-        "Führt eine zeitgesteuerte Gelenk-Trajektorie aus (Grad an der Tool-Grenze, Radiant auf ROS).",
-    ),
-    ("apply_pose", "Wendet eine gespeicherte Pose anhand ihres genauen Namens an."),
-    ("run_program", "Startet ein gespeichertes Programm anhand seiner Program-ID."),
-    ("set_led", "Setzt die RGB-LED eines Buttons (Button 1–3, Kanäle 0–255)."),
-    ("set_relay", "Schaltet das Solid-State-Relais ein oder aus."),
-    (
-        "soul_append",
-        "Hängt eine dauerhafte Lektion an die SOUL.md einer Persönlichkeit an; "
-        "ersetzt sie nie.",
-    ),
-)
+
+def _manifest_skill_names(variant: str | None = None) -> tuple[str, ...]:
+    """Ordered skill list from one capability manifest (default robot variant)."""
+    from pib_capability.manifest import load_manifest
+
+    manifest = load_manifest(variant)
+    return tuple(manifest["skills"])
+
+
+def mcp_tools_for_manifest(variant: str | None = None) -> tuple[tuple[str, str], ...]:
+    """(tool, German description) pairs for every skill in the manifest."""
+    from pib_hermes_config.mcp_tool_text import description_for_tool
+
+    return tuple(
+        (tool, description_for_tool(tool)) for tool in _manifest_skill_names(variant)
+    )
+
+
+# (tool, German one-line description) for the default variant's manifest skills.
+MCP_TOOLS = mcp_tools_for_manifest()
 
 
 def mcp_tool_name(tool: str) -> str:
@@ -351,15 +331,16 @@ def mcp_tool_name(tool: str) -> str:
 MCP_TOOL_NAMES = tuple(mcp_tool_name(tool) for tool, _ in MCP_TOOLS)
 
 
-def _build_mcp_tools_soul_section() -> str:
+def _build_mcp_tools_soul_section(variant: str | None = None) -> str:
     """Render the SOUL section that teaches the agent its real tool names.
 
-    Generated rather than written out, because the failure this prevents is a
-    second spelling creeping into the prose. A SOUL that offered both
-    ``mcp__pib__list_poses`` and an ``mcp_pib_list_poses`` "alias" made
-    gemini-3.5-flash pick the one Hermes never registered, and every such turn
-    died as "Model generated invalid tool call" after three retries. Exactly one
-    name per tool can be documented here by construction.
+    Generated from the capability manifest skill list and ``mcp_tool_text``,
+    because the failure this prevents is a second spelling creeping into the
+    prose. A SOUL that offered both ``mcp__pib__list_poses`` and an
+    ``mcp_pib_list_poses`` "alias" made gemini-3.5-flash pick the one Hermes
+    never registered, and every such turn died as "Model generated invalid tool
+    call" after three retries. Exactly one name per tool can be documented here
+    by construction.
     """
     lines = [
         "## Verfügbare MCP-Werkzeuge (pib_mcp_server)",
@@ -370,12 +351,12 @@ def _build_mcp_tools_soul_section() -> str:
         "`list_poses` oder `pib_list_poses` existieren nicht.",
         "",
     ]
-    for tool, description in MCP_TOOLS:
+    for tool, description in mcp_tools_for_manifest(variant):
         lines += [f"### {mcp_tool_name(tool)}", description, ""]
     return "\n".join(lines).rstrip() + "\n"
 
 
-# Seeded into every personality SOUL.md so the agent knows its real FastMCP tools.
+# Default-variant section: used to recognise and strip legacy generated blocks.
 MCP_TOOLS_SOUL_SECTION = _build_mcp_tools_soul_section()
 
 
@@ -415,6 +396,38 @@ def _mcp_tools_soul_section_end(lines: list[str], start: int) -> int | None:
         if actual != expected.strip():
             return None
     return end
+
+
+def regenerate_mcp_tools_soul_section(text: str, variant: str | None = None) -> str:
+    """Replace a generated MCP tool block with the current manifest-driven section.
+
+    Text after the removed block (for example lessons appended via ``soul_append``)
+    is preserved. When no generated block is present, the fresh section is appended
+    after the existing prose.
+    """
+    if not isinstance(text, str):
+        return text
+    lines = text.split("\n")
+    start = None
+    for index, line in enumerate(lines):
+        if _is_mcp_tools_soul_heading(line):
+            start = index
+            break
+    new_section = _build_mcp_tools_soul_section(variant).rstrip("\n")
+    if start is None:
+        prefix = text.rstrip("\n")
+        if not prefix.strip():
+            return new_section + "\n"
+        return prefix + "\n\n" + new_section + "\n"
+    end = _mcp_tools_soul_section_end(lines, start)
+    if end is None:
+        return text
+    while end < len(lines) and not lines[end].strip():
+        end += 1
+    prefix = "\n".join(lines[:start]).rstrip("\n")
+    tail = "\n".join(lines[end:]).rstrip("\n")
+    parts = [part for part in (prefix, new_section, tail) if part]
+    return "\n".join(parts) + "\n"
 
 
 def strip_mcp_tools_soul_section(text: str) -> str:
