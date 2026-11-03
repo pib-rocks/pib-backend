@@ -103,6 +103,7 @@ class AssistantTurnCallbacksMixin:
             )
             return
         self._start_spoken_turn()
+        self._turn_episode_task = transcribed_text.strip()
         self._mark_text_received()
         self.chat(
             transcribed_text,
@@ -134,6 +135,8 @@ class AssistantTurnCallbacksMixin:
             # This is the handoff of the turn's first answer clause to the
             # synthesiser. Marked here rather than in play_audio_from_speech so
             # a thinking filler never becomes the answer's first sentence.
+            if not getattr(self, "_turn_episode_outcome", ""):
+                self._turn_episode_outcome = clauses[0].strip()
             self._mark_first_sentence_flushed()
         if not clauses:
             if is_final and not self.is_executing_program:
