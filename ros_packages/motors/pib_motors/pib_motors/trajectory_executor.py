@@ -638,8 +638,15 @@ class TrajectoryExecutor:
     ) -> int | None:
         """Acceleration for this write, coupled to how fast the required speed changes.
 
-        The servo's own acceleration stays the upper bound: the point is to let it follow the
-        path, not to make it snappier than it was configured to be.
+        During a 100 Hz streamed trajectory, an STS servo's SRAM acceleration register (addr 41,
+        1..254) limits how fast the internal velocity controller can ramp toward the next 10 ms
+        target. If ``acc`` drops to ``1`` (100 steps/s^2) on ticks where ``setting`` is steady,
+        the servo is starved to ~1/30th of its normal acceleration, lags hundreds of ticks behind
+        the spline, and leaves ``STS_ACC=1`` latched in SRAM after the trajectory finishes.
+        We therefore return ``None`` (which resolves to the servo's configured default
+        acceleration, e.g. 30 for STS3095 and 100 for fingers) whenever ``path_coupled_acceleration``
+        is off, on the first tick, or when the speed setting does not change, and floor any
+        coupled value at ``STS_STREAM_ACC_MIN`` (30) when the motor's baseline allows it.
         """
         if not self.path_coupled_acceleration:
             return None
@@ -648,13 +655,16 @@ class TrajectoryExecutor:
         if previous is None or dt <= 0.0:
             return None
         change_per_sec = abs(setting - previous) / dt
+        if change_per_sec <= 0.0:
+            return None
         baseline = self._baseline_acceleration(motor)
         if baseline <= 0:
             return None
+        floor = min(baseline, 30)
         wanted = int(
             round(baseline * min(1.0, change_per_sec / self.acceleration_scale))
         )
-        return max(1, min(baseline, wanted))
+        return max(floor, min(baseline, wanted))
 
     def _log_perf_trace(self, line: str) -> None:
         if self.node is not None:
@@ -677,11 +687,29 @@ class TrajectoryExecutor:
         getter = getattr(motor, "get_settings", None)
         if not callable(getter):
             return 0
-        settings = getter() or {}
+        raw_settings = getter()
+        settings: Mapping[str, Any] = (
+            raw_settings if isinstance(raw_settings, Mapping) else {}
+        )
         try:
-            return int(settings.get("acceleration") or 0)
+            raw = int(settings.get("acceleration") or 0)
         except (TypeError, ValueError):
             return 0
+        if raw <= 0:
+            return 0
+        # Legacy Tinkerforge settings in the DB store 10000 (arm/head) or 50000 (fingers).
+        # Convert those to valid STS acceleration register units (1..254) so _acceleration_for
+        # scales in the same domain that WritePosEx expects.
+        if raw in (50, 10000, 50000):
+            for actuator in getattr(motor, "actuators", []):
+                pin = getattr(actuator, "pin", None)
+                if (
+                    pin is not None
+                    and family_for_servo_id(int(pin)) != SERVO_FAMILY_FINGER
+                ):
+                    return 80
+            return 80 if raw <= 10000 else 150
+        return raw
 
     def _log_tick_speeds(
         self,

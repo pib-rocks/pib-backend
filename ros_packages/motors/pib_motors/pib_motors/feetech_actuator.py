@@ -573,9 +573,9 @@ class FeetechStSerialActuator:
         if speed is None or acc is None:
             default_speed, default_acc = self._resolve_speed_and_acc()
             speed = default_speed if speed is None else int(speed)
-            acc = default_acc if acc is None else int(acc)
+            acc = default_acc if acc is None else max(1, min(254, int(acc)))
         else:
-            speed, acc = int(speed), int(acc)
+            speed, acc = int(speed), max(1, min(254, int(acc)))
 
         if bus_priority is BusPriority.STREAM:
             try:

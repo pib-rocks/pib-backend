@@ -320,8 +320,10 @@ def test_the_acceleration_is_coupled_to_the_speed_change() -> None:
     assert changing is not None
     assert changing <= 3000, "must never exceed the motor's own acceleration"
 
+    # When the speed setting does not change, _acceleration_for returns None so the
+    # actuator uses its default acceleration instead of latching STS_ACC=1 (100 steps/s^2).
     steady = fresh._acceleration_for(motor, 400, 0.01)  # no change
-    assert steady == 1, steady
+    assert steady is None, steady
 
 
 def test_acceleration_coupling_can_be_switched_off() -> None:
