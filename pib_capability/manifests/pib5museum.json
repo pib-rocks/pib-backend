@@ -20,7 +20,8 @@
     "get_smarthome_state",
     "control_smarthome_device",
     "trigger_smarthome_scene",
-    "soul_append"
+    "soul_append",
+    "pib_recall"
   ],
   "learned_skills": [],
   "limits": {
