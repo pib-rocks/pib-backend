@@ -81,7 +81,9 @@ def check_ros_stack() -> Tuple[bool, str, str]:
     return True, "", ""
 
 
-def _route_diagnostics(model: str, provider: str, profile_dir: Optional[str] = None) -> str:
+def _route_diagnostics(
+    model: str, provider: str, profile_dir: Optional[str] = None
+) -> str:
     """Name the config file and credential id this store read used.
 
     A present key stays invisible when the route names a provider the store
@@ -98,7 +100,9 @@ def _route_diagnostics(model: str, provider: str, profile_dir: Optional[str] = N
     try:
         # Name the file the route was actually read from: the profile's config.yaml when the
         # personality resolved, the base config otherwise.
-        config_path = os.path.join(profile_dir or _current_hermes_home(), CONFIG_FILENAME)
+        config_path = os.path.join(
+            profile_dir or _current_hermes_home(), CONFIG_FILENAME
+        )
     except Exception:  # noqa: BLE001 - diagnostics must never break the probe
         config_path = "unknown"
     try:
@@ -159,7 +163,9 @@ def check_provider_key() -> Tuple[bool, str, str, Optional[str]]:
         resolve_hermes_provider_key(provider, api_name=model)
     except DirectToolLoopError as error:
         message = str(error).strip()
-        route = _route_diagnostics(model, provider, profile_dir if active is not None else None)
+        route = _route_diagnostics(
+            model, provider, profile_dir if active is not None else None
+        )
         route_with_profile = f"{route} {profile_fact}"
         if "No keys are available for provider" in message:
             return (

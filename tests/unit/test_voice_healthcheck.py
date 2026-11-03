@@ -108,7 +108,9 @@ def test_healthcheck_provider_key_surfaces_no_key_reason(monkeypatch):
                     "pib_hermes_config.provider_needs_key",
                     return_value=True,
                 ):
-                    ok, reason, detail, provider = voice_healthcheck.check_provider_key()
+                    ok, reason, detail, provider = (
+                        voice_healthcheck.check_provider_key()
+                    )
 
     assert ok is False
     assert reason == voice_healthcheck.REASON_NO_KEY
@@ -266,7 +268,9 @@ def test_check_provider_key_falls_back_when_backend_unreachable():
                     "pib_hermes_config.provider_needs_key",
                     return_value=True,
                 ):
-                    ok, reason, detail, provider = voice_healthcheck.check_provider_key()
+                    ok, reason, detail, provider = (
+                        voice_healthcheck.check_provider_key()
+                    )
 
     settings_mock.assert_called_once_with()
     assert ok is False
