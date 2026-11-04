@@ -91,6 +91,9 @@ class TalkLiveLoop:
         #: Deltas of the current turn, per role, so one message is written per
         #: turn instead of one per token.
         self._pending_text: dict[bool, str] = {True: "", False: ""}
+        #: When the operator stopped speaking, for the first-audio measurement.
+        self._speech_stopped_at: float | None = None
+        self._stream = None
 
     # ---------------------------------------------------------------- surface
 
@@ -264,6 +267,7 @@ class TalkLiveLoop:
         )
         self._session = session
         tools = await asyncio.to_thread(self._tool_definitions)
+        logger.info("live setup: %d tools, model=%s", len(tools), wire_model)
         setup = rt.SessionSetup(
             model=wire_model,
             voice=DEFAULT_VOICE,
@@ -347,6 +351,13 @@ class TalkLiveLoop:
                 if isinstance(event, rt.OutputAudio):
                     if stream is None:
                         stream = await asyncio.to_thread(self._open_playback)
+                        self._stream = stream
+                    if self._speech_stopped_at is not None:
+                        logger.info(
+                            "first audio after end of speech: %d ms",
+                            int((time.monotonic() - self._speech_stopped_at) * 1000),
+                        )
+                        self._speech_stopped_at = None
                     self._set_speaking(True)
                     await asyncio.to_thread(stream.write, event.data)
                 elif isinstance(event, rt.Transcript):
@@ -369,7 +380,21 @@ class TalkLiveLoop:
                     await session.send(
                         [rt.SubmitToolResult(call_id=event.call_id, output=output)]
                     )
+                elif isinstance(event, rt.SpeechStarted):
+                    # Barge-in: the buffered audio in the device is what keeps
+                    # pib talking over the operator. Flush it and tell the
+                    # provider to stop generating.
+                    self._speech_stopped_at = None
+                    await self._flush_playback()
+                    self._set_speaking(False)
+                    try:
+                        await session.send([rt.CancelResponse()])
+                    except Exception:
+                        logger.exception("CancelResponse failed")
+                elif isinstance(event, rt.SpeechStopped):
+                    self._speech_stopped_at = time.monotonic()
                 elif isinstance(event, rt.OutputInterrupted):
+                    await self._flush_playback()
                     self._set_speaking(False)
                 elif isinstance(event, rt.OutputTurnCompleted):
                     self._set_speaking(False)
@@ -377,6 +402,20 @@ class TalkLiveLoop:
             self._set_speaking(False)
             if stream is not None:
                 await asyncio.to_thread(stream.close)
+
+    async def _flush_playback(self) -> None:
+        stream = self._stream
+        if stream is None:
+            return
+        try:
+            await asyncio.to_thread(self._restart_stream, stream)
+        except Exception:
+            logger.exception("Could not flush the playback buffer")
+
+    @staticmethod
+    def _restart_stream(stream) -> None:
+        stream.stop_stream()
+        stream.start_stream()
 
     def _open_playback(self):
         return pyaudio.PyAudio().open(
