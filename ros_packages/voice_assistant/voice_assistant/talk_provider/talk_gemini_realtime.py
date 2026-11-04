@@ -291,7 +291,18 @@ def build_setup_message(setup: rt.SessionSetup) -> dict[str, Any]:
         # the speaker only until the next audio chunk arrives (observed on
         # 192.168.1.168: five "stop"s during one answer).
         "realtimeInputConfig": {
-            "automaticActivityDetection": {"disabled": False},
+            # The server VAD owns the turn boundary. With the defaults a turn
+            # ran ~9 s before it was cut, so answers referred to sentences from
+            # twenty seconds earlier (measured on 192.168.1.168). High
+            # sensitivity on both edges plus a 400 ms silence tail is what a
+            # conversational turn needs.
+            "automaticActivityDetection": {
+                "disabled": False,
+                "startOfSpeechSensitivity": "START_SENSITIVITY_HIGH",
+                "endOfSpeechSensitivity": "END_SENSITIVITY_HIGH",
+                "prefixPaddingMs": 20,
+                "silenceDurationMs": 400,
+            },
             "activityHandling": "START_OF_ACTIVITY_INTERRUPTS",
         },
         "generationConfig": {

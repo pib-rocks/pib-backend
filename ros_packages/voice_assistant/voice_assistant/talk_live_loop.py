@@ -163,6 +163,16 @@ class TalkLiveLoop:
         self._last_activity = time.monotonic()
         self._speaking_listener = None
         self._action_announcer = None
+        #: Hardware VAD. The provider emits no SpeechStarted for this model,
+        #: so the barge-in trigger has to come from the array itself.
+        try:
+            from std_msgs.msg import Bool
+
+            self._speech_sub = node.create_subscription(
+                Bool, "speech_detected", self._on_speech_detected, 10
+            )
+        except Exception:
+            self._speech_sub = None
         self._chat_client = node.create_client(
             CreateOrUpdateChatMessage, "create_or_update_chat_message"
         )
@@ -179,6 +189,7 @@ class TalkLiveLoop:
         self._turn: dict[str, float] = {}
         self._turn_audio_bytes = 0
         self._uplink_chunks = 0
+        self._max_uplink_depth = 0
         self._uplink_drops = 0
         self._event_count = 0
         self._last_event_at = 0.0
@@ -247,6 +258,29 @@ class TalkLiveLoop:
 
     def _note_activity(self) -> None:
         self._last_activity = time.monotonic()
+
+    def _on_speech_detected(self, message) -> None:
+        """Instant barge-in: the operator spoke while pib was talking."""
+
+        if not getattr(message, "data", False) or not self._speaking:
+            return
+        loop = self._loop
+        session = self._session
+        if loop is None or session is None:
+            return
+
+        async def _interrupt() -> None:
+            await asyncio.to_thread(self._player.flush)
+            self._set_speaking(False)
+            try:
+                await session.send([rt.CancelResponse()])
+            except Exception:
+                logger.exception("CancelResponse failed")
+
+        try:
+            asyncio.run_coroutine_threadsafe(_interrupt(), loop)
+        except Exception:
+            logger.exception("Could not schedule the barge-in")
 
     def _set_speaking(self, speaking: bool) -> None:
         if speaking == self._speaking:
@@ -370,6 +404,12 @@ class TalkLiveLoop:
             return
 
         await asyncio.to_thread(self._player.start)
+        # Nothing recorded before this moment belongs to this conversation.
+        while not self._audio_in_queue.empty():
+            try:
+                self._audio_in_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
         bridge = RosAudioBridge(ROS_AUDIO_TOPIC, self._loop, self._audio_in_queue)
         bridge.start()
         tasks = [
@@ -419,6 +459,9 @@ class TalkLiveLoop:
                 continue
             sent += 1
             self._uplink_chunks = sent
+            depth = self._audio_in_queue.qsize()
+            if depth > self._max_uplink_depth:
+                self._max_uplink_depth = depth
             self._note_activity()
             try:
                 await session.send(
@@ -515,6 +558,9 @@ class TalkLiveLoop:
                     self._turn.setdefault("turn_complete", now)
                     self._set_speaking(False)
                     self._log_turn_trace()
+
+                elif type(event).__name__ == "OutputTurnCompleted":  # pragma: no cover
+                    self._set_speaking(False)
         finally:
             self._set_speaking(False)
             await asyncio.to_thread(self._player.close)
