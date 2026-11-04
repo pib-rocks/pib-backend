@@ -11,7 +11,7 @@ import asyncio
 import os
 import logging
 import threading
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import numpy as np
 import rclpy
@@ -40,6 +40,14 @@ from pib_hermes_config.live_session import (
 
 import pyaudio
 from google import genai
+
+from voice_assistant.cloud_session import (
+    CascadeResult,
+    CloudSession,
+    CloudSessionError,
+    mint_session,
+    report_usage,
+)
 
 import wave
 from pathlib import Path
@@ -107,6 +115,20 @@ class LiveIdleTimeout(RuntimeError):
     """The personality's idle timeout elapsed with nobody speaking."""
 
     pass
+
+
+class CloudSessionRenewRequested(RuntimeError):
+    """Ephemeral session TTL neared; settle usage and mint a replacement."""
+
+    pass
+
+
+class CloudSessionEnded(RuntimeError):
+    """pib.Cloud ended the live session (cascade or mint error)."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
 
 
 # ——————————————————————————————————————————
@@ -241,7 +263,15 @@ class GeminiAudioLoop:
         cancels all tasks, and joins the thread so a new run can start cleanly.
     """
 
-    def __init__(self, api_key: str = "") -> None:
+    def __init__(
+        self,
+        api_key: str = "",
+        *,
+        cloud_session_mode: bool = False,
+        session_provider: Callable[..., CloudSession | CascadeResult] | None = None,
+        usage_reporter: Callable[[str, dict | None], object] | None = None,
+        on_session_end: Callable[[str], None] | None = None,
+    ) -> None:
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._is_listening = False
@@ -253,6 +283,15 @@ class GeminiAudioLoop:
         self.session = None  # gemini live session (aio client)
         self.playback_stream = None  # PyAudio output stream
         self.api_key = api_key
+        self._cloud_session_mode = bool(cloud_session_mode)
+        self._session_provider = session_provider or mint_session
+        self._usage_reporter = usage_reporter or report_usage
+        self._on_session_end = on_session_end
+        self._cloud_session_id: Optional[str] = None
+        self._cloud_expires_at: Optional[str] = None
+        self._cloud_ttl_seconds: Optional[int] = None
+        self._cloud_session_started_at: float = 0.0
+        self._usage_metadata_accum: dict[str, object] = {}
 
         # ROS bridge handle
         self._ros_bridge: Optional[RosAudioBridge] = None
@@ -838,6 +877,7 @@ class GeminiAudioLoop:
                 assistant_text_piece: Optional[str] = None
                 turn_sent_audio = False
                 async for resp in turn:
+                    self._accumulate_usage_metadata(resp)
                     # ----- Session management signals -----
                     # Session resumption checkpoints (store handle for reconnect)
                     session_resumption_update = getattr(
@@ -1165,6 +1205,103 @@ class GeminiAudioLoop:
         except Exception:
             logger.exception("play_audio error")
 
+    def _accumulate_usage_metadata(self, resp: object) -> None:
+        if not self._cloud_session_mode:
+            return
+        usage = getattr(resp, "usage_metadata", None) or getattr(
+            resp, "usageMetadata", None
+        )
+        if usage is None:
+            return
+        if isinstance(usage, dict):
+            self._usage_metadata_accum.update(usage)
+            return
+        for attr, key in (
+            ("prompt_token_count", "prompt_token_count"),
+            ("promptTokenCount", "prompt_token_count"),
+            ("response_token_count", "response_token_count"),
+            ("responseTokenCount", "response_token_count"),
+            ("total_token_count", "total_token_count"),
+            ("totalTokenCount", "total_token_count"),
+        ):
+            value = getattr(usage, attr, None)
+            if isinstance(value, int):
+                self._usage_metadata_accum[key] = value
+
+    async def _settle_cloud_usage(self, session_id: Optional[str] = None) -> None:
+        if not self._cloud_session_mode:
+            return
+        sid = session_id or self._cloud_session_id
+        if not sid:
+            return
+        payload = (
+            dict(self._usage_metadata_accum) if self._usage_metadata_accum else None
+        )
+        try:
+            await asyncio.to_thread(self._usage_reporter, sid, payload)
+        except CloudSessionError as error:
+            logger.warning(
+                "pib.Cloud usage settlement failed: %s", error.code, exc_info=True
+            )
+        except Exception:
+            logger.exception("Could not report pib.Cloud live session usage")
+        else:
+            self._usage_metadata_accum.clear()
+
+    async def _open_cloud_session(
+        self, previous_session_id: Optional[str]
+    ) -> CloudSession:
+        model = self._model or ""
+        try:
+            result = await asyncio.to_thread(
+                self._session_provider, model, previous_session_id
+            )
+        except CloudSessionError as error:
+            await self._end_cloud_session(error.code)
+            raise CloudSessionEnded(error.code) from error
+        if isinstance(result, CascadeResult):
+            await self._end_cloud_session(result.reason)
+            raise CloudSessionEnded(result.reason)
+        self._cloud_session_id = result.session_id
+        self._cloud_expires_at = result.expires_at
+        self._cloud_ttl_seconds = result.ttl_seconds
+        self._cloud_session_started_at = time.monotonic()
+        logger.info(
+            "pib.Cloud live session id=%s expires_at=%s ttl_seconds=%s",
+            result.session_id,
+            result.expires_at,
+            result.ttl_seconds,
+        )
+        return result
+
+    async def _end_cloud_session(self, reason: str) -> None:
+        if self._cloud_session_id:
+            try:
+                await self._settle_cloud_usage()
+            except Exception:
+                logger.exception("Could not settle pib.Cloud session on end")
+            self._cloud_session_id = None
+        self._stop_event.set()
+        self._is_listening = False
+        callback = self._on_session_end
+        if callback is not None:
+            try:
+                callback(reason)
+            except Exception:
+                logger.exception("on_session_end callback failed")
+
+    async def _watch_cloud_session_ttl(self) -> None:
+        ttl = self._cloud_ttl_seconds
+        if not self._cloud_session_mode or not ttl or ttl <= 0:
+            while not self._stop_event.is_set():
+                await asyncio.sleep(0.5)
+            return
+        renew_at = self._cloud_session_started_at + (ttl * 0.8)
+        while not self._stop_event.is_set():
+            await asyncio.sleep(0.1)
+            if time.monotonic() >= renew_at:
+                raise CloudSessionRenewRequested()
+
     def _note_activity(self) -> None:
         """Speech happened. Silence on the uplink does not count."""
         self._last_activity = time.monotonic()
@@ -1198,7 +1335,14 @@ class GeminiAudioLoop:
             logger.error("Refusing live session without a pinned Gemini model.")
             return
 
-        client = genai.Client(api_key=self.api_key)
+        if self._cloud_session_mode:
+            try:
+                cloud = await self._open_cloud_session(None)
+                client = genai.Client(api_key=cloud.ephemeral_token)
+            except CloudSessionEnded:
+                return
+        else:
+            client = genai.Client(api_key=self.api_key)
 
         # Read chat personality/description from PIB to seed the model (once)
         description = "You are pib, a humanoid robot."
@@ -1292,6 +1436,10 @@ class GeminiAudioLoop:
                         asyncio.create_task(self.play_audio()),
                         asyncio.create_task(self._watch_idle()),
                     ]
+                    if self._cloud_session_mode:
+                        tasks.append(
+                            asyncio.create_task(self._watch_cloud_session_ttl())
+                        )
 
                     # Wait until one task errors (or requests reconnect)
                     done, pending = await asyncio.wait(
@@ -1318,6 +1466,21 @@ class GeminiAudioLoop:
                     str(e),
                     "present" if self._session_handle else "none",
                 )
+
+            except CloudSessionRenewRequested:
+                if self._stop_event.is_set():
+                    break
+                old_id = self._cloud_session_id
+                await self._settle_cloud_usage(old_id)
+                try:
+                    cloud = await self._open_cloud_session(old_id)
+                except CloudSessionEnded:
+                    break
+                self._session_handle = None
+                client = genai.Client(api_key=cloud.ephemeral_token)
+
+            except CloudSessionEnded:
+                break
 
             except asyncio.CancelledError:
                 logger.debug("GeminiAudioLoop.run: cancelled")
@@ -1368,6 +1531,10 @@ class GeminiAudioLoop:
             # Backoff before reconnecting
             if not self._stop_event.is_set():
                 await asyncio.sleep(LIVE_RECONNECT_BACKOFF_S)
+
+        if self._cloud_session_mode and self._cloud_session_id:
+            await self._settle_cloud_usage()
+            self._cloud_session_id = None
 
         logger.info("GeminiAudioLoop.run: terminated")
 
