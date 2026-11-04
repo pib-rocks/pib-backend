@@ -271,6 +271,8 @@ class TalkLiveLoop:
         try:
             async for event in session:
                 self._note_activity()
+                if not isinstance(event, rt.OutputAudio):
+                    logger.info("live event: %s", type(event).__name__)
                 if isinstance(event, rt.SessionReady):
                     self._ready.set()
                 if isinstance(event, rt.OutputAudio):
