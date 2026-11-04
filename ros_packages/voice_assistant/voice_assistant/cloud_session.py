@@ -64,7 +64,7 @@ class CascadeResult:
 
 @dataclass(frozen=True)
 class CloudUsageResult:
-    settled_pib_tokens: int | None = None
+    settled_pib_tokens: float | None = None
     status: str | None = None
 
 
@@ -166,17 +166,23 @@ def report_usage(
     body = _json_object(raw)
     if not isinstance(body, dict):
         raise CloudSessionError("bad_response", _generic_message("bad_response"))
-    settled = body.get("settled_pib_tokens")
-    if settled is not None and not isinstance(settled, int):
+    # The service bills with "billed_pib_tokens"; "settled_pib_tokens" is kept
+    # as a fallback for older answers. Both are numbers, never ints.
+    settled = body.get("billed_pib_tokens")
+    if settled is None:
+        settled = body.get("settled_pib_tokens")
+    if settled is not None and not isinstance(settled, (int, float)):
         try:
-            settled = int(settled)
+            settled = float(settled)
         except (TypeError, ValueError):
             settled = None
     status_text = body.get("status")
     if status_text is not None and not isinstance(status_text, str):
         status_text = None
     return CloudUsageResult(
-        settled_pib_tokens=settled if isinstance(settled, int) else None,
+        settled_pib_tokens=(
+            float(settled) if isinstance(settled, (int, float)) else None
+        ),
         status=status_text if isinstance(status_text, str) else None,
     )
 
