@@ -67,6 +67,7 @@ class TalkLiveLoop:
             CreateOrUpdateChatMessage, "create_or_update_chat_message"
         )
         self._audio_in_queue: asyncio.Queue = asyncio.Queue()
+        self._ready = asyncio.Event()
 
     # ---------------------------------------------------------------- surface
 
@@ -242,6 +243,9 @@ class TalkLiveLoop:
             await asyncio.sleep(0.2)
 
     async def _uplink(self, session) -> None:
+        # The provider only accepts audio once its setup is acknowledged; the
+        # downlink sets this on SessionReady.
+        await self._ready.wait()
         while not self._stop_event.is_set():
             message = await self._audio_in_queue.get()
             data = message.get("data", b"")
@@ -259,6 +263,8 @@ class TalkLiveLoop:
         try:
             async for event in session:
                 self._note_activity()
+                if isinstance(event, rt.SessionReady):
+                    self._ready.set()
                 if isinstance(event, rt.OutputAudio):
                     if stream is None:
                         stream = await asyncio.to_thread(self._open_playback)
