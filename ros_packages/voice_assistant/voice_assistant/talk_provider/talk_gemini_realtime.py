@@ -651,7 +651,7 @@ class GeminiRealtimeSession:
         self._degrade_logged: set[str] = set()
         self._terminal_emitted = False
         #: Live issues no session id; receipts get a locally synthesized one.
-        self._session_id = f"gemini-live-{uuid.uuid4().hex[:16]}"
+        self._session_id = f"live-session-{uuid.uuid4().hex[:16]}"
         #: Latest session-resumption handle, carried across 300 s token renewals.
         self.resumption_handle: str | None = resumption_handle
         #: Token counts accumulated from server usageMetadata frames.
@@ -662,9 +662,7 @@ class GeminiRealtimeSession:
             raise rt.RealtimeSessionError("Realtime session connect may only run once")
         self.uses_client_delegation = setup.task_continuity
         model = setup.model.removeprefix("models/")
-        if model.startswith(("gemini-2.5-", "gemini-live-2.5-")):
-            self._live_context_transport = "clientContent"
-        elif model.startswith(("gemini-3.1-", "gemini-3.8-")):
+        if model.startswith("gemini-3.8-live"):
             self._live_context_transport = "realtimeInput"
         self.supports_live_context = (
             self.uses_client_delegation and self._live_context_transport is not None
