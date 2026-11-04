@@ -779,15 +779,11 @@ class GeminiAudioLoop:
         try:
             while not self._stop_event.is_set():
                 msg = await self.out_queue.get()
-                if self._speaking:
-                    # pib's own voice reaches the microphone array on this
-                    # hardware (the array is capture-only, so its canceller has
-                    # no reference) and the model answered its own sentences,
-                    # switching language with every echo (heard on 192.168.1.168).
-                    # The uplink therefore closes while a turn is being spoken.
-                    # Barge-in over the live path is the price; the turn-based
-                    # path keeps its hardware barge-in.
-                    continue
+                # The uplink stays open while pib speaks. The array's canceller
+                # was measured at 31 dB ERLE (scripts/aec_probe.py), so it
+                # subtracts the robot's own voice; closing the uplink instead
+                # swallowed everything the person said over a greeting and made
+                # the turn feel delayed (reported on 192.168.1.168).
                 if not admit_live_uplink(
                     now=time.monotonic(),
                     exclude_until=self._exclude_until,
