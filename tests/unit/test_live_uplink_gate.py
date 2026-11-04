@@ -34,14 +34,17 @@ def test_a_busy_loop_still_receives_the_chunk_it_was_handed():
     asyncio.run(exercise())
 
 
-def test_the_uplink_is_closed_while_the_robot_speaks():
-    """The echo gate sits in the send loop, before the playback-tail admission."""
+def test_the_uplink_stays_open_while_the_robot_speaks():
+    """The array cancels its own voice (31 dB ERLE); closing the mic lost the turn.
+
+    A closed uplink swallowed everything said over a greeting, which read as a
+    long delay before the robot answered.
+    """
 
     source = AUDIO_LOOP.read_text(encoding="utf-8")
     send_loop = source.split("async def send_realtime", 1)[1]
     body = send_loop.split("async with self._send_lock", 1)[0]
-    assert "if self._speaking:" in body, "the echo gate is gone"
-    assert body.index("if self._speaking:") < body.index("admit_live_uplink(")
+    assert "if self._speaking:" not in body
 
 
 def test_the_bridge_hands_chunks_over_without_a_timeout():
