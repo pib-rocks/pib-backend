@@ -68,4 +68,5 @@ def test_an_ephemeral_token_is_not_used_as_a_query_key():
 
     source = inspect.getsource(provider)
     assert "BidiGenerateContentConstrained" in source
-    assert 'ws_headers = {"Authorization": f"Token {ephemeral}"}' in source
+    assert 'ws_headers = {"Authorization": f"Token {auth_token}"}' in source
+    assert 'auth_token.startswith("auth_tokens/")' in source
