@@ -33,11 +33,12 @@ _SESSION_STRING_FIELDS = (
 )
 _SESSION_INT_FIELDS = (
     "ttl_seconds",
-    "pre_hold_pib_tokens",
     "daily_slots_used",
     "daily_slots_limit",
     "daily_slots_remaining",
 )
+# The service returns the pre-hold as a number (a float), never as an int.
+_SESSION_NUMBER_FIELDS = ("pre_hold_pib_tokens",)
 
 
 @dataclass(frozen=True)
@@ -50,7 +51,7 @@ class CloudSession:
     model: str
     transport: str
     endpoint: str
-    pre_hold_pib_tokens: int
+    pre_hold_pib_tokens: float
     daily_slots_used: int
     daily_slots_limit: int
     daily_slots_remaining: int
@@ -249,6 +250,11 @@ def _session_from_body(body: dict[str, object]) -> CloudSession:
         if isinstance(value, bool) or not isinstance(value, int):
             raise CloudSessionError("bad_response", _generic_message("bad_response"))
         values[name] = value
+    for name in _SESSION_NUMBER_FIELDS:
+        value = body.get(name)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise CloudSessionError("bad_response", _generic_message("bad_response"))
+        values[name] = float(value)
     return CloudSession(**values)  # type: ignore[arg-type]
 
 
