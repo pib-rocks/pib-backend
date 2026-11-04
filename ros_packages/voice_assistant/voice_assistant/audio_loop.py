@@ -33,6 +33,7 @@ from pib_hermes_config.live_interaction import (
     iter_playback_slices,
 )
 from pib_hermes_config.live_session import (
+    live_output_language,
     context_window_compression,
     gemini_live_connect_model,
     idle_expired,
@@ -80,10 +81,17 @@ CHUNK_SIZE = 1024
 
 # The live model id is a field of the provider row. This loop opens whatever
 # pinned Gemini model the caller passes in.
+# The personality speaks German on every pib today. Without a pinned output
+# language the native-audio model mirrors whatever language it believes it heard,
+# so one mis-transcribed word switched the whole answer to Spanish or Italian
+# (heard on 192.168.1.168). PIB_LIVE_LANGUAGE lets another site pick its own.
+LIVE_LANGUAGE = live_output_language()
+
 CONFIG = {
     "response_modalities": ["AUDIO"],  # request synthesized speech back
     "input_audio_transcription": {},  # get user (input) transcript stream
     "output_audio_transcription": {},  # get assistant (output) transcript stream
+    "speech_config": {"language_code": LIVE_LANGUAGE},
     # Thinking off by default (PR-2039): the Live session has no tool loop to reward
     # it, and it delays the first spoken sentence.
     "thinking_config": live_thinking_config(),

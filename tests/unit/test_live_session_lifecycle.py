@@ -16,6 +16,7 @@ from pib_hermes_config.live_session import (
     context_window_compression,
     gemini_live_connect_model,
     idle_expired,
+    live_output_language,
     live_session_ends_on_handover,
     openai_models_url,
     voice_start_mode,
@@ -558,6 +559,23 @@ def test_a_non_cloud_loop_leaves_the_error_path_alone():
 
     asyncio.run(exercise())
     assert reasons == []
+
+
+def test_the_live_output_language_is_pinned_and_overridable(monkeypatch):
+    monkeypatch.delenv("PIB_LIVE_LANGUAGE", raising=False)
+    assert live_output_language() == "de-DE"
+
+    monkeypatch.setenv("PIB_LIVE_LANGUAGE", "en-GB")
+    assert live_output_language() == "en-GB"
+
+    monkeypatch.setenv("PIB_LIVE_LANGUAGE", "   ")
+    assert live_output_language() == "de-DE"
+
+
+def test_the_live_config_asks_for_the_pinned_language():
+    source = AUDIO_LOOP.read_text(encoding="utf-8")
+    assert '"speech_config": {"language_code": LIVE_LANGUAGE}' in source
+    assert "LIVE_LANGUAGE = live_output_language()" in source
 
 
 def test_ephemeral_token_never_logged(caplog):

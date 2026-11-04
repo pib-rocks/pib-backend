@@ -8,6 +8,8 @@ channel at a time.
 
 from __future__ import annotations
 
+import os
+
 #: September 2025 preview. It must not be opened again.
 RETIRED_LIVE_MODEL = "gemini-2.5-flash-native-audio-preview-09-2025"
 
@@ -16,6 +18,19 @@ RETIRED_LIVE_MODEL = "gemini-2.5-flash-native-audio-preview-09-2025"
 #: unlock re-reads the account list and rewrites the row.
 GEMINI_LIVE_MODEL = "gemini-3.8-live"
 GEMINI_LIVE_MODEL_CHECKED_ON = "2026-10-01"
+
+#: Output language of a live session. A native-audio model mirrors the language
+#: it believes it heard, so one mis-transcribed word switched a whole answer to
+#: Spanish or Italian on 192.168.1.168. Pinning it keeps the answer in the
+#: personality's language regardless of what the transcriber guessed.
+LIVE_DEFAULT_LANGUAGE = "de-DE"
+
+
+def live_output_language() -> str:
+    """The language the live model answers in (``PIB_LIVE_LANGUAGE``)."""
+    value = os.getenv("PIB_LIVE_LANGUAGE", LIVE_DEFAULT_LANGUAGE).strip()
+    return value or LIVE_DEFAULT_LANGUAGE
+
 
 #: OpenAI realtime model. It is stored only after ``/v1/models`` on that
 #: account lists it. No OpenAI key was available to check on 2026-10-01.
