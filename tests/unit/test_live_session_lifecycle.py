@@ -544,6 +544,12 @@ def test_an_unexpected_error_ends_the_session_so_the_button_is_not_stuck():
     assert loop._cloud_session_id is None
 
 
+def test_the_idle_stop_closes_the_session():
+    source = AUDIO_LOOP.read_text(encoding="utf-8")
+    idle = source.split("except LiveIdleTimeout:", 1)[1].split("except ", 1)[0]
+    assert '_fail_session("idle_timeout")' in idle
+
+
 def test_the_run_error_path_closes_the_session():
     source = AUDIO_LOOP.read_text(encoding="utf-8")
     assert 'await self._fail_session("connection_failed")' in source
