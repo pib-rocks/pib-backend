@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import queue
 import threading
 import time
 import uuid
@@ -65,6 +66,85 @@ def upsample_16k_to_24k(pcm: bytes) -> bytes:
 DEFAULT_IDLE_TIMEOUT_S = 180.0
 
 
+class _PlaybackSink:
+    """Writes model audio from its own thread so the event loop stays free.
+
+    Awaiting ``to_thread(stream.write, ...)`` per chunk made the loop wait for
+    the device buffer: SpeechStarted arrived too late for a barge-in and the
+    operator's own words sat in the uplink for seconds (reported on
+    192.168.1.168: five "stop"s arrived at the model long after they were said).
+    """
+
+    def __init__(self) -> None:
+        self._queue: "queue.Queue[bytes]" = queue.Queue(maxsize=200)
+        self._stream = None
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        if self._thread is not None:
+            return
+        self._stream = pyaudio.PyAudio().open(
+            format=FORMAT,
+            channels=CHANNELS,
+            rate=RECEIVE_SAMPLE_RATE,
+            output=True,
+        )
+        self._thread = threading.Thread(
+            target=self._run, name="TalkPlayback", daemon=True
+        )
+        self._thread.start()
+
+    def write(self, data: bytes) -> None:
+        if not data:
+            return
+        try:
+            self._queue.put_nowait(data)
+        except queue.Full:
+            # Losing a chunk is better than growing the delay without bound.
+            pass
+
+    def flush(self) -> None:
+        try:
+            while True:
+                self._queue.get_nowait()
+        except queue.Empty:
+            pass
+        stream = self._stream
+        if stream is not None:
+            try:
+                stream.stop_stream()
+                stream.start_stream()
+            except Exception:
+                pass
+
+    def close(self) -> None:
+        self._stop.set()
+        if self._stream is not None:
+            try:
+                self._stream.close()
+            except Exception:
+                pass
+            self._stream = None
+        thread = self._thread
+        if thread is not None:
+            thread.join(timeout=2.0)
+            self._thread = None
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            data = self._queue.get()
+            if self._stop.is_set():
+                return
+            stream = self._stream
+            if stream is None:
+                continue
+            try:
+                stream.write(data)
+            except Exception:
+                logger.exception("Playback write failed")
+
+
 class TalkLiveLoop:
     """One live session, driven by the Talk provider."""
 
@@ -86,7 +166,9 @@ class TalkLiveLoop:
         self._chat_client = node.create_client(
             CreateOrUpdateChatMessage, "create_or_update_chat_message"
         )
-        self._audio_in_queue: asyncio.Queue = asyncio.Queue()
+        #: Bounded on purpose: a backlog is latency. ~2 s of 64 ms chunks.
+        self._audio_in_queue: asyncio.Queue = asyncio.Queue(maxsize=30)
+        self._player = _PlaybackSink()
         self._ready = asyncio.Event()
         #: Deltas of the current turn, per role, so one message is written per
         #: turn instead of one per token.
@@ -280,6 +362,7 @@ class TalkLiveLoop:
             logger.exception("Could not open the Talk session")
             return
 
+        await asyncio.to_thread(self._player.start)
         bridge = RosAudioBridge(ROS_AUDIO_TOPIC, self._loop, self._audio_in_queue)
         bridge.start()
         tasks = [
@@ -320,16 +403,14 @@ class TalkLiveLoop:
                 logger.error("Live session did not become ready; uplink not started")
                 return
             await asyncio.sleep(0.05)
-        sent = 0
         logger.info("uplink started")
+        sent = 0
         while not self._stop_event.is_set():
             message = await self._audio_in_queue.get()
             data = message.get("data", b"")
-            sent += 1
-            if sent % 100 == 0:
-                logger.info("uplink sent %s chunks (%s bytes)", sent, len(data))
             if not data:
                 continue
+            sent += 1
             self._note_activity()
             try:
                 await session.send(
@@ -338,20 +419,17 @@ class TalkLiveLoop:
             except Exception:
                 logger.exception("Uploading a microphone chunk failed")
                 return
+            if sent % 200 == 0:
+                logger.info("uplink sent %s chunks", sent)
 
     async def _downlink(self, session) -> None:
-        stream = None
         try:
             async for event in session:
                 self._note_activity()
                 if not isinstance(event, rt.OutputAudio):
                     logger.info("live event: %s", type(event).__name__)
-                if isinstance(event, rt.SessionReady):
-                    self._ready.set()
+
                 if isinstance(event, rt.OutputAudio):
-                    if stream is None:
-                        stream = await asyncio.to_thread(self._open_playback)
-                        self._stream = stream
                     if self._speech_stopped_at is not None:
                         logger.info(
                             "first audio after end of speech: %d ms",
@@ -359,7 +437,10 @@ class TalkLiveLoop:
                         )
                         self._speech_stopped_at = None
                     self._set_speaking(True)
-                    await asyncio.to_thread(stream.write, event.data)
+                    # Never await the device here: the loop must stay free to
+                    # see SpeechStarted, otherwise there is no barge-in.
+                    self._player.write(event.data)
+
                 elif isinstance(event, rt.Transcript):
                     is_user = event.role is rt.TranscriptRole.USER
                     piece = event.text.strip()
@@ -373,6 +454,7 @@ class TalkLiveLoop:
                         self._write_transcript(text, is_user=is_user)
                     if not is_user:
                         self._set_speaking(event.final is False)
+
                 elif isinstance(event, rt.FunctionCall):
                     output = await asyncio.to_thread(
                         self._run_tool, event.name, event.arguments
@@ -380,50 +462,30 @@ class TalkLiveLoop:
                     await session.send(
                         [rt.SubmitToolResult(call_id=event.call_id, output=output)]
                     )
+
                 elif isinstance(event, rt.SpeechStarted):
-                    # Barge-in: the buffered audio in the device is what keeps
-                    # pib talking over the operator. Flush it and tell the
-                    # provider to stop generating.
+                    # Barge-in: drop queued audio, clear the device buffer and
+                    # tell the provider to stop generating.
                     self._speech_stopped_at = None
-                    await self._flush_playback()
+                    await asyncio.to_thread(self._player.flush)
                     self._set_speaking(False)
                     try:
                         await session.send([rt.CancelResponse()])
                     except Exception:
                         logger.exception("CancelResponse failed")
+
                 elif isinstance(event, rt.SpeechStopped):
                     self._speech_stopped_at = time.monotonic()
+
                 elif isinstance(event, rt.OutputInterrupted):
-                    await self._flush_playback()
+                    await asyncio.to_thread(self._player.flush)
                     self._set_speaking(False)
+
                 elif isinstance(event, rt.OutputTurnCompleted):
                     self._set_speaking(False)
         finally:
             self._set_speaking(False)
-            if stream is not None:
-                await asyncio.to_thread(stream.close)
-
-    async def _flush_playback(self) -> None:
-        stream = self._stream
-        if stream is None:
-            return
-        try:
-            await asyncio.to_thread(self._restart_stream, stream)
-        except Exception:
-            logger.exception("Could not flush the playback buffer")
-
-    @staticmethod
-    def _restart_stream(stream) -> None:
-        stream.stop_stream()
-        stream.start_stream()
-
-    def _open_playback(self):
-        return pyaudio.PyAudio().open(
-            format=FORMAT,
-            channels=CHANNELS,
-            rate=RECEIVE_SAMPLE_RATE,
-            output=True,
-        )
+            await asyncio.to_thread(self._player.close)
 
     async def _idle_watchdog(self) -> None:
         while not self._stop_event.is_set():
