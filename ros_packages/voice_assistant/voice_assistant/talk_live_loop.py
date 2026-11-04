@@ -203,6 +203,7 @@ class TalkLiveLoop:
         self._max_uplink_depth = 0
         self._speech_detected_at: float | None = None
         self._first_audio_logged = False
+        self._last_speech_flag_at = 0.0
         self._uplink_drops = 0
         self._event_count = 0
         self._last_event_at = 0.0
@@ -277,7 +278,11 @@ class TalkLiveLoop:
 
         if not getattr(message, "data", False):
             return
-        self._speech_detected_at = time.monotonic()
+        now = time.monotonic()
+        if now - self._last_speech_flag_at < 0.3:
+            return
+        self._last_speech_flag_at = now
+        self._speech_detected_at = now
         logger.info("hw speech_detected")
         if not self._speaking:
             return
@@ -473,6 +478,12 @@ class TalkLiveLoop:
             message = await self._audio_in_queue.get()
             data = message.get("data", b"")
             if not data:
+                continue
+            if self._speaking:
+                # The array reports speech while the speaker is audible, which
+                # restarts the server turn over and over (84 s to first audio
+                # measured on 192.168.1.168). The uplink stays closed while pib
+                # talks; barge-in comes from the hardware flag with debounce.
                 continue
             sent += 1
             self._uplink_chunks = sent
