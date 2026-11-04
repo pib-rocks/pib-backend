@@ -196,18 +196,51 @@ class _PlaybackSink:
         if self._thread is not None and self._thread.is_alive():
             return
         self._stop.clear()
-        self._pyaudio = pyaudio.PyAudio()
-        self._stream = self._pyaudio.open(
-            format=FORMAT,
-            channels=CHANNELS,
-            rate=RECEIVE_SAMPLE_RATE,
-            output=True,
-            frames_per_buffer=PLAYBACK_SLICE_BYTES // 2,
-        )
+        with self._stream_lock:
+            if self._pyaudio is None:
+                self._pyaudio = pyaudio.PyAudio()
+            open_kwargs = dict(
+                format=FORMAT,
+                channels=CHANNELS,
+                rate=RECEIVE_SAMPLE_RATE,
+                output=True,
+                frames_per_buffer=PLAYBACK_SLICE_BYTES // 2,
+            )
+            pulse_idx = self._pulse_output_index(self._pyaudio)
+            stream = None
+            if pulse_idx is not None:
+                try:
+                    stream = self._pyaudio.open(
+                        output_device_index=pulse_idx, **open_kwargs
+                    )
+                except Exception:
+                    stream = None
+            if stream is None:
+                stream = self._pyaudio.open(**open_kwargs)
+            self._stream = stream
         self._thread = threading.Thread(
             target=self._run, name="TalkPlayback", daemon=True
         )
         self._thread.start()
+
+    @staticmethod
+    def _pulse_output_index(pya) -> int | None:
+        if not os.getenv("PULSE_SERVER", "").strip():
+            return None
+        try:
+            count = int(pya.get_device_count())
+        except Exception:
+            return None
+        for idx in range(count):
+            try:
+                info = pya.get_device_info_by_index(idx)
+            except Exception:
+                continue
+            if int(info.get("maxOutputChannels", 0)) < 1:
+                continue
+            if str(info.get("name", "")).strip().lower() == "pulse":
+                return idx
+        return None
 
     def write(self, data: bytes) -> None:
         if not data:
@@ -261,16 +294,14 @@ class _PlaybackSink:
         with self._stream_lock:
             if self._stream is not None:
                 try:
+                    self._stream.stop_stream()
+                except Exception:
+                    pass
+                try:
                     self._stream.close()
                 except Exception:
                     pass
                 self._stream = None
-            if self._pyaudio is not None:
-                try:
-                    self._pyaudio.terminate()
-                except Exception:
-                    pass
-                self._pyaudio = None
         self._set_playing(False)
 
     def _run(self) -> None:
@@ -350,7 +381,7 @@ class TalkLiveLoop:
         self._hw_speech_at = 0.0
 
         try:
-            from std_msgs.msg import Bool, String
+            from std_msgs.msg import Bool, Int16MultiArray, String
 
             self._vad_sub = node.create_subscription(
                 Bool, "/voice_activity", self._on_voice_activity, 10
@@ -358,17 +389,21 @@ class TalkLiveLoop:
             self._speech_sub = node.create_subscription(
                 Bool, "/speech_detected", self._on_speech_detected, 10
             )
+            self._audio_sub = node.create_subscription(
+                Int16MultiArray, ROS_AUDIO_TOPIC, self._on_audio_stream, 10
+            )
             self._trace_pub = node.create_publisher(String, TURN_TRACE_TOPIC, 10)
         except Exception:
             self._vad_sub = None
             self._speech_sub = None
+            self._audio_sub = None
             self._trace_pub = None
 
         self._chat_client = node.create_client(
             CreateOrUpdateChatMessage, "create_or_update_chat_message"
         )
-        #: Bounded queue (~4 s of 64 ms chunks) so handshake speech is preserved.
-        self._audio_in_queue: asyncio.Queue = asyncio.Queue(maxsize=64)
+        #: Recreated fresh per _session_main so it always binds to the active event loop.
+        self._audio_in_queue: asyncio.Queue | None = None
         self._player = _PlaybackSink(
             on_playing_change=self._set_speaking,
             on_first_write=self._on_first_speaker_write,
@@ -518,6 +553,36 @@ class TalkLiveLoop:
         if detected:
             self._hw_speech_at = now
         self._barge_in_detector.observe_speech_detected(detected, now_ms=now * 1000.0)
+
+    def _on_audio_stream(self, message) -> None:
+        if not self._listening:
+            return
+        loop = self._loop
+        audio_queue = self._audio_in_queue
+        if loop is None or audio_queue is None:
+            return
+        try:
+            pcm = np.asarray(message.data, dtype=np.int16).tobytes()
+        except Exception:
+            return
+        if not pcm:
+            return
+        try:
+            loop.call_soon_threadsafe(self._enqueue_audio_on_loop, audio_queue, pcm)
+        except RuntimeError:
+            pass
+
+    def _enqueue_audio_on_loop(self, audio_queue: asyncio.Queue, pcm: bytes) -> None:
+        if audio_queue.full():
+            try:
+                audio_queue.get_nowait()
+                self._uplink_drops += 1
+            except asyncio.QueueEmpty:
+                pass
+        try:
+            audio_queue.put_nowait({"data": pcm, "mime_type": "audio/pcm"})
+        except asyncio.QueueFull:
+            pass
 
     def _trigger_barge_in(self, reason: str, rms: float) -> None:
         """Stop local speaker in <=20 ms and fence old server audio."""
@@ -875,18 +940,17 @@ class TalkLiveLoop:
 
     async def _session_main(self, model: str | None) -> str:
         self._loop = asyncio.get_running_loop()
+        # A fresh Queue per event loop prevents Python's _LoopBoundMixin from
+        # raising RuntimeError("is bound to a different event loop") on the
+        # second session start.
+        self._audio_in_queue = asyncio.Queue(maxsize=64)
+        self._uplink_chunks = 0
+        self._uplink_speech_chunks = 0
+        self._uplink_silence_chunks = 0
+        self._max_uplink_depth = 0
+        self._uplink_drops = 0
+        self._last_event_at = 0.0
         wire_model = model or "gemini-3.8-live"
-
-        # Drain any stale items and start RosAudioBridge + PlaybackSink in parallel
-        # with minting so speech spoken right after the start earcon is captured.
-        while not self._audio_in_queue.empty():
-            try:
-                self._audio_in_queue.get_nowait()
-            except asyncio.QueueEmpty:
-                break
-
-        bridge = RosAudioBridge(ROS_AUDIO_TOPIC, self._loop, self._audio_in_queue)
-        bridge.start()
 
         player_future = asyncio.to_thread(self._player.start)
         tools_future = asyncio.to_thread(self._tool_definitions)
@@ -1000,7 +1064,7 @@ class TalkLiveLoop:
                     bool(resumption_handle),
                 )
         finally:
-            bridge.stop()
+            self._audio_in_queue = None
             await asyncio.to_thread(self._player.close)
             if self._session_id:
                 sid = self._session_id
@@ -1046,11 +1110,14 @@ class TalkLiveLoop:
                 return
             await asyncio.sleep(0.02)
         logger.info("uplink started (16 kHz native, zero-resampling)")
+        audio_queue = self._audio_in_queue
+        if audio_queue is None:
+            return
         sent = 0
         while not self._stop_event.is_set() and (
             renew_event is None or not renew_event.is_set()
         ):
-            message = await self._audio_in_queue.get()
+            message = await audio_queue.get()
             data = message.get("data", b"")
             if not data:
                 continue
@@ -1060,7 +1127,7 @@ class TalkLiveLoop:
                 continue
             sent += 1
             self._uplink_chunks = sent
-            depth = self._audio_in_queue.qsize()
+            depth = audio_queue.qsize()
             if depth > self._max_uplink_depth:
                 self._max_uplink_depth = depth
             try:
