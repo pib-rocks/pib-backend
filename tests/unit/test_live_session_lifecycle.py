@@ -322,6 +322,11 @@ if str(VOICE_ASSISTANT_PKG) not in sys.path:
 
 from ros_stubs import install_ros_stubs
 
+# Load the real client before the stubs run: install_ros_stubs() replaces
+# pib_api_client.voice_assistant_client with a bare module when it is not
+# imported yet, and every later test then sees a module without its functions.
+import pib_api_client.voice_assistant_client  # noqa: F401,E402
+
 install_ros_stubs()
 
 import types
@@ -330,8 +335,11 @@ from unittest.mock import MagicMock
 _pyaudio = types.ModuleType("pyaudio")
 _pyaudio.PyAudio = MagicMock()
 _pyaudio.paInt16 = 8
+_prev_pyaudio = sys.modules.get("pyaudio")
 sys.modules["pyaudio"] = _pyaudio
 
+_prev_google = sys.modules.get("google")
+_prev_genai = sys.modules.get("google.genai")
 _google = types.ModuleType("google")
 _genai = types.ModuleType("google.genai")
 _genai.Client = MagicMock()
@@ -349,6 +357,19 @@ from voice_assistant.cloud_session import (  # noqa: E402
     CloudSession,
     CloudSessionError,
 )
+
+# The stubs exist only to import the module under test. Leaving them in
+# sys.modules broke every later test that imports the real google package
+# ("ImportError ... unknown location" in test_provider_registry).
+for _name, _previous in (
+    ("google.genai", _prev_genai),
+    ("google", _prev_google),
+    ("pyaudio", _prev_pyaudio),
+):
+    if _previous is None:
+        sys.modules.pop(_name, None)
+    else:
+        sys.modules[_name] = _previous
 
 _LIVE_EPHEMERAL = "ephemeral-live-token-77-SECRET"
 _LIVE_MODEL = GEMINI_LIVE_MODEL
