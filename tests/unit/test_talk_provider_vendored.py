@@ -154,3 +154,35 @@ def test_uplink_silence_shaper_and_barge_in(monkeypatch):
     assert loop._barge_in_fenced is True
     assert loop._player.is_playing is False
     assert out_barge.endswith(loud)
+
+
+def test_resumption_handle_and_usage_metadata_tracking():
+    """Setup forwards a resumption handle and decode records usageMetadata."""
+    msg = provider.build_setup_message(_setup(), resumption_handle="resume-tok-42")
+    assert msg["setup"]["sessionResumption"] == {"handle": "resume-tok-42"}
+
+    session = provider.GeminiRealtimeSession(
+        auth_token="auth_tokens/test",
+        auth_source="pib-cloud",
+        input_sample_rate=16000,
+        resumption_handle="resume-tok-42",
+    )
+    session._decode(
+        {
+            "usageMetadata": {
+                "promptTokenCount": 120,
+                "responseTokenCount": 45,
+                "totalTokenCount": 165,
+            },
+            "sessionResumptionUpdate": {
+                "resumable": True,
+                "newHandle": "resume-tok-43",
+            },
+        }
+    )
+    assert session.resumption_handle == "resume-tok-43"
+    assert session.usage_metadata == {
+        "prompt_token_count": 120,
+        "response_token_count": 45,
+        "total_token_count": 165,
+    }

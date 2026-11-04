@@ -891,7 +891,11 @@ class TalkLiveLoop:
         player_future = asyncio.to_thread(self._player.start)
         tools_future = asyncio.to_thread(self._tool_definitions)
         instructions_future = asyncio.to_thread(self._personality_text)
-        mint_future = asyncio.to_thread(mint_session, wire_model)
+        mint_future = asyncio.to_thread(mint_session, wire_model, None)
+
+        resumption_handle: str | None = None
+        previous_sid: str | None = None
+        current_usage: dict[str, int] = {}
 
         try:
             try:
@@ -906,45 +910,95 @@ class TalkLiveLoop:
                 logger.error("pib.Cloud returned no usable session")
                 return "mint_failed"
 
-            self._session_id = minted.session_id
             tools, instructions, _ = await asyncio.gather(
                 tools_future, instructions_future, player_future
             )
             logger.info("live setup: %d tools, model=%s", len(tools), wire_model)
-
-            session = gemini.GeminiRealtimeSession(
-                auth_token=minted.ephemeral_token,
-                auth_source="pib-cloud",
-                input_sample_rate=SEND_SAMPLE_RATE,
-            )
-            self._session = session
             setup = rt.SessionSetup(
                 model=wire_model,
                 voice=DEFAULT_VOICE,
                 instructions=instructions,
                 tools=tools,
             )
-            try:
-                await session.connect(setup)
-            except Exception:
-                logger.exception("Could not open the Talk session")
-                return "connection_failed"
 
-            tasks = [
-                asyncio.create_task(self._uplink(session)),
-                asyncio.create_task(self._downlink(session)),
-                asyncio.create_task(self._idle_watchdog()),
-            ]
-            try:
-                await self._stop_waiter()
-            finally:
-                for task in tasks:
-                    task.cancel()
-                await asyncio.gather(*tasks, return_exceptions=True)
+            while not self._stop_event.is_set():
+                if minted is None:
+                    try:
+                        minted = await asyncio.to_thread(
+                            mint_session, wire_model, previous_sid
+                        )
+                    except CloudSessionError as exc:
+                        logger.warning(
+                            "pib.Cloud live session renewal failed: %s", exc.code
+                        )
+                        return exc.code
+                    if isinstance(minted, CascadeResult):
+                        logger.warning(
+                            "pib.Cloud ended the live session on renewal: %s",
+                            minted.reason,
+                        )
+                        return minted.reason
+                    if not isinstance(minted, CloudSession):
+                        logger.error("pib.Cloud returned no usable renewal session")
+                        return "mint_failed"
+
+                self._session_id = minted.session_id
+                ttl_seconds = float(minted.ttl_seconds or 300)
+                session = gemini.GeminiRealtimeSession(
+                    auth_token=minted.ephemeral_token,
+                    auth_source="pib-cloud",
+                    input_sample_rate=SEND_SAMPLE_RATE,
+                    resumption_handle=resumption_handle,
+                )
+                self._session = session
                 try:
-                    await session.close()
+                    await session.connect(setup)
                 except Exception:
-                    pass
+                    logger.exception("Could not open the Talk session")
+                    return "connection_failed"
+
+                renew_event = asyncio.Event()
+                tasks = [
+                    asyncio.create_task(self._uplink(session, renew_event)),
+                    asyncio.create_task(self._downlink(session, renew_event)),
+                    asyncio.create_task(self._idle_watchdog()),
+                    asyncio.create_task(self._ttl_watchdog(ttl_seconds, renew_event)),
+                ]
+                try:
+                    await self._wait_for_stop_or_renew(renew_event)
+                finally:
+                    for task in tasks:
+                        task.cancel()
+                    await asyncio.gather(*tasks, return_exceptions=True)
+                    resumption_handle = session.resumption_handle or resumption_handle
+                    current_usage = dict(session.usage_metadata)
+                    try:
+                        await session.close()
+                    except Exception:
+                        pass
+
+                if self._stop_event.is_set():
+                    break
+
+                # Settle the expiring segment before minting the replacement token
+                if self._session_id:
+                    previous_sid = self._session_id
+                    self._session_id = None
+                    try:
+                        await asyncio.to_thread(
+                            report_usage, previous_sid, current_usage or None
+                        )
+                        current_usage = {}
+                    except Exception:
+                        logger.exception(
+                            "Could not settle pib.Cloud session before renewal"
+                        )
+                minted = None
+                logger.info(
+                    "Renewing pib.Cloud live session (previous=%s, resumable=%s)",
+                    previous_sid,
+                    bool(resumption_handle),
+                )
         finally:
             bridge.stop()
             await asyncio.to_thread(self._player.close)
@@ -952,16 +1006,35 @@ class TalkLiveLoop:
                 sid = self._session_id
                 self._session_id = None
                 try:
-                    await asyncio.to_thread(report_usage, sid, None)
+                    await asyncio.to_thread(report_usage, sid, current_usage or None)
                 except Exception:
                     logger.exception("Could not settle the pib.Cloud session")
         return "closed"
 
-    async def _stop_waiter(self) -> None:
-        while not self._stop_event.is_set():
+    async def _wait_for_stop_or_renew(self, renew_event: asyncio.Event) -> None:
+        while not self._stop_event.is_set() and not renew_event.is_set():
             await asyncio.sleep(0.1)
 
-    async def _uplink(self, session) -> None:
+    async def _ttl_watchdog(
+        self, ttl_seconds: float, renew_event: asyncio.Event
+    ) -> None:
+        if ttl_seconds <= 0:
+            return
+        renew_at = time.monotonic() + (ttl_seconds * 0.8)
+        hard_deadline = time.monotonic() + max(1.0, ttl_seconds - 5.0)
+        while not self._stop_event.is_set() and not renew_event.is_set():
+            await asyncio.sleep(0.25)
+            now = time.monotonic()
+            if now >= hard_deadline or (
+                now >= renew_at
+                and not self._in_user_speech
+                and not self._player.is_playing
+                and not self._server_generating
+            ):
+                renew_event.set()
+                return
+
+    async def _uplink(self, session, renew_event: asyncio.Event | None = None) -> None:
         deadline = time.monotonic() + 10.0
         while (
             session.state is not rt.SessionState.CONNECTED
@@ -974,7 +1047,9 @@ class TalkLiveLoop:
             await asyncio.sleep(0.02)
         logger.info("uplink started (16 kHz native, zero-resampling)")
         sent = 0
-        while not self._stop_event.is_set():
+        while not self._stop_event.is_set() and (
+            renew_event is None or not renew_event.is_set()
+        ):
             message = await self._audio_in_queue.get()
             data = message.get("data", b"")
             if not data:
@@ -992,8 +1067,13 @@ class TalkLiveLoop:
                 await session.send([rt.AppendInputAudio(data=shaped)])
             except Exception:
                 if not self._stop_event.is_set():
-                    logger.exception("Uploading a microphone chunk failed")
-                    self._stop_event.set()
+                    logger.warning(
+                        "Uplink send interrupted; requesting session renewal"
+                    )
+                    if renew_event is not None:
+                        renew_event.set()
+                    else:
+                        self._stop_event.set()
                 return
             if sent % 200 == 0:
                 logger.info(
@@ -1005,7 +1085,9 @@ class TalkLiveLoop:
                     self._noise_rms,
                 )
 
-    async def _downlink(self, session) -> None:
+    async def _downlink(
+        self, session, renew_event: asyncio.Event | None = None
+    ) -> None:
         try:
             async for event in session:
                 now = time.monotonic()
@@ -1106,7 +1188,10 @@ class TalkLiveLoop:
                         event.state,
                         event.detail,
                     )
-                    self._stop_event.set()
+                    if not self._stop_event.is_set() and renew_event is not None:
+                        renew_event.set()
+                    else:
+                        self._stop_event.set()
                     return
         finally:
             self._server_generating = False

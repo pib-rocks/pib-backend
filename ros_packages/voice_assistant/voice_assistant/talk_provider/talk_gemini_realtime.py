@@ -273,7 +273,9 @@ def _validate_turn_detection(setup: rt.SessionSetup) -> None:
         )
 
 
-def build_setup_message(setup: rt.SessionSetup) -> dict[str, Any]:
+def build_setup_message(
+    setup: rt.SessionSetup, *, resumption_handle: str | None = None
+) -> dict[str, Any]:
     """Map neutral setup to the Live ``setup`` message.
 
     The model is part of THIS payload as ``models/<id>`` — only the key rides
@@ -318,9 +320,9 @@ def build_setup_message(setup: rt.SessionSetup) -> dict[str, Any]:
         "systemInstruction": {"parts": [{"text": setup.instructions}]},
         "outputAudioTranscription": {},
         "inputAudioTranscription": {},
-        # Record-only in v1: handles are tracked (and server-invalidated ones
-        # discarded) but never sent back — reconnect is the follow-up feature.
-        "sessionResumption": {},
+        "sessionResumption": (
+            {"handle": resumption_handle} if resumption_handle else {}
+        ),
         # Audio-only sessions hard-cap near 15 minutes without compression.
         # An empty slidingWindow takes the server defaults (trigger at 80% of
         # the context window, target half of that; system instruction is
@@ -606,6 +608,7 @@ class GeminiRealtimeSession:
         auth_source: str,
         aiohttp_module=None,
         input_sample_rate: int = 24000,
+        resumption_handle: str | None = None,
     ) -> None:
         self.auth_token = auth_token
         self.auth_source = auth_source
@@ -653,9 +656,10 @@ class GeminiRealtimeSession:
         self._terminal_emitted = False
         #: Live issues no session id; receipts get a locally synthesized one.
         self._session_id = f"gemini-live-{uuid.uuid4().hex[:16]}"
-        #: Latest session-resumption handle, recorded for the follow-up
-        #: reconnect feature; v1 never sends it back.
-        self.resumption_handle: str | None = None
+        #: Latest session-resumption handle, carried across 300 s token renewals.
+        self.resumption_handle: str | None = resumption_handle
+        #: Token counts accumulated from server usageMetadata frames.
+        self.usage_metadata: dict[str, int] = {}
 
     async def connect(self, setup: rt.SessionSetup) -> None:
         if self.state is not rt.SessionState.NEW:
@@ -692,7 +696,11 @@ class GeminiRealtimeSession:
                 "refused rather than degraded"
             )
         try:
-            await self._wire.connect(setup_message=build_setup_message(setup))
+            await self._wire.connect(
+                setup_message=build_setup_message(
+                    setup, resumption_handle=self.resumption_handle
+                )
+            )
         except asyncio.CancelledError:
             self.state = rt.SessionState.CLOSED
             raise
@@ -1350,6 +1358,16 @@ class GeminiRealtimeSession:
             events: list[rt.RealtimeEvent] = []
             if "setupComplete" in message:
                 events.append(rt.SessionReady(session_id=self._session_id))
+            usage = message.get("usageMetadata")
+            if isinstance(usage, dict):
+                for src_key, dst_key in (
+                    ("promptTokenCount", "prompt_token_count"),
+                    ("responseTokenCount", "response_token_count"),
+                    ("totalTokenCount", "total_token_count"),
+                ):
+                    val = usage.get(src_key)
+                    if isinstance(val, int):
+                        self.usage_metadata[dst_key] = val
             resumption = message.get("sessionResumptionUpdate")
             if isinstance(resumption, dict):
                 self._note_resumption_update(resumption)
