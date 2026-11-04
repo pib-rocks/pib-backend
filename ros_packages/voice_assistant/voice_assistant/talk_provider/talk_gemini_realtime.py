@@ -308,10 +308,6 @@ def build_setup_message(
         },
         "generationConfig": {
             "responseModalities": ["AUDIO"],
-            # Thinking is off: the live loop has no tool-rewarding turn and any
-            # budget here lands directly in the time-to-first-audio (measured
-            # >5 s on 192.168.1.168 before this line existed).
-            "thinkingConfig": {"thinkingBudget": 0},
             "speechConfig": {
                 "languageCode": os.environ.get("PIB_LIVE_LANGUAGE", "de-DE"),
                 "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": setup.voice}},
