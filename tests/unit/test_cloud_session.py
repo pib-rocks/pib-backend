@@ -48,7 +48,7 @@ def _ok_body(**overrides):
         "model": MODEL,
         "transport": "websocket",
         "endpoint": "wss://live.example/v1",
-        "pre_hold_pib_tokens": 12,
+        "pre_hold_pib_tokens": 12.5,
         "daily_slots_used": 1,
         "daily_slots_limit": 10,
         "daily_slots_remaining": 9,
@@ -93,6 +93,8 @@ def test_mint_session_success(monkeypatch):
     assert result.session_id == "sess-abc"
     assert result.ephemeral_token == EPHEMERAL
     assert result.daily_slots_remaining == 9
+    # The service answers with a float; an int-only parser rejected every real mint.
+    assert result.pre_hold_pib_tokens == 12.5
     assert captured["url"] == session_url("https://cloud.example/v1")
     assert captured["headers"]["Authorization"] == f"Bearer {BEARER}"
     sent = json.loads(captured["body"].decode("utf-8"))
