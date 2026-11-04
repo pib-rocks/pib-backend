@@ -89,9 +89,15 @@ _CLEAR_PLAYBACK_ACK_LOG_SECONDS = 5.0
 
 class VoiceAssistantNode(AssistantTurnCallbacksMixin, AssistantLatencyMixin, Node):
 
-    def __init__(self):
+    def __init__(self, *, use_cloud_live: bool | None = None):
 
         super().__init__("voice_assistant")
+
+        if use_cloud_live is None:
+            use_cloud_live = os.getenv(
+                "PIB_CLOUD_LIVE_SESSION", ""
+            ).strip().lower() in ("1", "true", "yes")
+        self._use_cloud_live = use_cloud_live
 
         self.gemini_loop = GeminiAudioLoop(api_key="")
 
@@ -248,6 +254,8 @@ class VoiceAssistantNode(AssistantTurnCallbacksMixin, AssistantLatencyMixin, Nod
         self.voice_backend = os.getenv("PIB_VOICE_BACKEND", "gemini").strip().lower()
         if self.voice_backend == "duplex":
             self.gemini_loop = self._build_duplex_loop()
+        elif self._use_cloud_live:
+            self.gemini_loop = self._build_cloud_live_loop()
 
         self.play_audio_from_file_client: Client = self.create_client(
             PlayAudioFromFile, "play_audio_from_file"
@@ -368,6 +376,25 @@ class VoiceAssistantNode(AssistantTurnCallbacksMixin, AssistantLatencyMixin, Nod
             return self.gemini_loop
         self.get_logger().info(f"voice backend: duplex relay at {url}")
         return loop
+
+    def _build_cloud_live_loop(self):
+        """Gemini live through pib.Cloud ephemeral session tokens."""
+        from voice_assistant.cloud_session import mint_session, report_usage
+
+        self.get_logger().info("voice backend: gemini live via pib.Cloud session")
+        return GeminiAudioLoop(
+            api_key="",
+            cloud_session_mode=True,
+            session_provider=mint_session,
+            usage_reporter=report_usage,
+            on_session_end=self._on_cloud_live_session_end,
+        )
+
+    def _on_cloud_live_session_end(self, reason: str) -> None:
+        self.get_logger().info(f"pib.Cloud live session ended: {reason}")
+        self.state.turned_on = False
+        self.state.speaking = False
+        self._publish_voice_state()
 
     def _request_duplex_transcription(self, on_text) -> None:
         """One utterance from the existing recorder, then hand the text to the relay.

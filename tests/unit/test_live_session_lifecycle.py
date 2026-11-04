@@ -304,3 +304,235 @@ def test_model_list_urls_and_payloads_do_not_put_the_key_in_the_query():
     )
     assert found == ["gemini-3.8-flash", GEMINI_LIVE_MODEL]
     assert pages == []
+
+
+# --- GeminiAudioLoop pib.Cloud session lifecycle (fake provider + fake live client) ---
+
+import asyncio
+import sys
+import time
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+
+import pytest
+
+VOICE_ASSISTANT_PKG = REPO_ROOT / "ros_packages" / "voice_assistant"
+if str(VOICE_ASSISTANT_PKG) not in sys.path:
+    sys.path.insert(0, str(VOICE_ASSISTANT_PKG))
+
+from ros_stubs import install_ros_stubs
+
+# Load the real client before the stubs run: install_ros_stubs() replaces
+# pib_api_client.voice_assistant_client with a bare module when it is not
+# imported yet, and every later test then sees a module without its functions.
+import pib_api_client.voice_assistant_client  # noqa: F401,E402
+
+install_ros_stubs()
+
+import types
+from unittest.mock import MagicMock
+
+_pyaudio = types.ModuleType("pyaudio")
+_pyaudio.PyAudio = MagicMock()
+_pyaudio.paInt16 = 8
+_prev_pyaudio = sys.modules.get("pyaudio")
+sys.modules["pyaudio"] = _pyaudio
+
+_prev_google = sys.modules.get("google")
+_prev_genai = sys.modules.get("google.genai")
+_google = types.ModuleType("google")
+_genai = types.ModuleType("google.genai")
+_genai.Client = MagicMock()
+_google.genai = _genai
+sys.modules["google"] = _google
+sys.modules["google.genai"] = _genai
+
+from voice_assistant import audio_loop as audio_loop_module  # noqa: E402
+from voice_assistant.audio_loop import (  # noqa: E402
+    CloudSessionEnded,
+    GeminiAudioLoop,
+)
+from voice_assistant.cloud_session import (  # noqa: E402
+    CascadeResult,
+    CloudSession,
+    CloudSessionError,
+)
+
+# The stubs exist only to import the module under test. Leaving them in
+# sys.modules broke every later test that imports the real google package
+# ("ImportError ... unknown location" in test_provider_registry).
+for _name, _previous in (
+    ("google.genai", _prev_genai),
+    ("google", _prev_google),
+    ("pyaudio", _prev_pyaudio),
+):
+    if _previous is None:
+        sys.modules.pop(_name, None)
+    else:
+        sys.modules[_name] = _previous
+
+_LIVE_EPHEMERAL = "ephemeral-live-token-77-SECRET"
+_LIVE_MODEL = GEMINI_LIVE_MODEL
+
+
+def _cloud_session(
+    session_id: str = "sess-1",
+    *,
+    token: str = _LIVE_EPHEMERAL,
+    ttl_seconds: int = 600,
+) -> CloudSession:
+    return CloudSession(
+        session_id=session_id,
+        ephemeral_token=token,
+        issued_at="2026-01-01T00:00:00Z",
+        expires_at="2026-01-01T00:10:00Z",
+        ttl_seconds=ttl_seconds,
+        model=_LIVE_MODEL,
+        transport="websocket",
+        endpoint="wss://live.example/v1",
+        pre_hold_pib_tokens=1,
+        daily_slots_used=1,
+        daily_slots_limit=10,
+        daily_slots_remaining=9,
+    )
+
+
+def test_cloud_live_first_connect_uses_minted_token_not_api_key(caplog):
+    caplog.set_level("INFO")
+    usage_calls: list[tuple] = []
+
+    def provider(model, previous_session_id=None):
+        assert previous_session_id is None
+        assert model == _LIVE_MODEL
+        return _cloud_session()
+
+    def reporter(session_id, usage_metadata=None):
+        usage_calls.append((session_id, usage_metadata))
+
+    client_keys: list[str] = []
+
+    def client_factory(*, api_key):
+        client_keys.append(api_key)
+        return MagicMock()
+
+    original_client = audio_loop_module.genai.Client
+    audio_loop_module.genai.Client = client_factory
+    try:
+        loop = GeminiAudioLoop(
+            api_key="static-key-store-secret",
+            cloud_session_mode=True,
+            session_provider=provider,
+            usage_reporter=reporter,
+        )
+        loop._model = _LIVE_MODEL
+        loop._usage_metadata_accum["total_token_count"] = 7
+
+        async def exercise():
+            session = await loop._open_cloud_session(None)
+            audio_loop_module.genai.Client(api_key=session.ephemeral_token)
+            await loop._settle_cloud_usage()
+
+        asyncio.run(exercise())
+    finally:
+        audio_loop_module.genai.Client = original_client
+
+    assert client_keys == [_LIVE_EPHEMERAL]
+    assert _LIVE_EPHEMERAL not in caplog.text
+    assert "sess-1" in caplog.text
+    assert usage_calls == [("sess-1", {"total_token_count": 7})]
+
+
+def test_cloud_live_renewal_reports_usage_before_mint_with_previous_id():
+    mint_calls: list[str | None] = []
+    usage_calls: list[tuple] = []
+
+    def provider(model, previous_session_id=None):
+        mint_calls.append(previous_session_id)
+        if previous_session_id is None:
+            return _cloud_session("sess-a")
+        return _cloud_session("sess-b", token="token-b")
+
+    def reporter(session_id, usage_metadata=None):
+        usage_calls.append((session_id, usage_metadata))
+
+    loop = GeminiAudioLoop(
+        api_key="",
+        cloud_session_mode=True,
+        session_provider=provider,
+        usage_reporter=reporter,
+    )
+    loop._model = _LIVE_MODEL
+    loop._cloud_session_id = "sess-a"
+    loop._usage_metadata_accum["total_token_count"] = 7
+
+    async def exercise():
+        await loop._settle_cloud_usage("sess-a")
+        return await loop._open_cloud_session("sess-a")
+
+    session = asyncio.run(exercise())
+
+    assert mint_calls == ["sess-a"]
+    assert usage_calls == [("sess-a", {"total_token_count": 7})]
+    assert session.session_id == "sess-b"
+
+
+def test_cascade_result_ends_session_and_calls_callback():
+    reasons: list[str] = []
+
+    def provider(model, previous_session_id=None):
+        return CascadeResult(reason="budget")
+
+    loop = GeminiAudioLoop(
+        api_key="",
+        cloud_session_mode=True,
+        session_provider=provider,
+        usage_reporter=lambda *_a, **_k: None,
+        on_session_end=reasons.append,
+    )
+
+    async def exercise():
+        with pytest.raises(CloudSessionEnded, match="budget"):
+            await loop._open_cloud_session(None)
+
+    asyncio.run(exercise())
+    assert reasons == ["budget"]
+    assert loop._is_listening is False
+
+
+def test_cloud_session_error_ends_session_and_calls_callback():
+    reasons: list[str] = []
+
+    def provider(model, previous_session_id=None):
+        raise CloudSessionError("budget_exhausted", "no budget")
+
+    loop = GeminiAudioLoop(
+        api_key="",
+        cloud_session_mode=True,
+        session_provider=provider,
+        usage_reporter=lambda *_a, **_k: None,
+        on_session_end=reasons.append,
+    )
+
+    async def exercise():
+        with pytest.raises(CloudSessionEnded, match="budget_exhausted"):
+            await loop._open_cloud_session(None)
+
+    asyncio.run(exercise())
+    assert reasons == ["budget_exhausted"]
+    assert loop._is_listening is False
+
+
+def test_ephemeral_token_never_logged(caplog):
+    caplog.set_level("DEBUG")
+
+    async def exercise():
+        loop = GeminiAudioLoop(
+            api_key="",
+            cloud_session_mode=True,
+            session_provider=lambda *_a, **_k: _cloud_session(token=_LIVE_EPHEMERAL),
+            usage_reporter=lambda *_a, **_k: None,
+        )
+        await loop._open_cloud_session(None)
+
+    asyncio.run(exercise())
+    assert _LIVE_EPHEMERAL not in caplog.text
