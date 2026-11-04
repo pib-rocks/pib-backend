@@ -314,7 +314,8 @@ class _PlaybackSink:
                                 self._on_first_write(delay_ms)
                             except Exception:
                                 pass
-                self._last_write_end = time.monotonic()
+                if self._cancel_epoch == epoch:
+                    self._last_write_end = time.monotonic()
             self._writing = False
 
 
