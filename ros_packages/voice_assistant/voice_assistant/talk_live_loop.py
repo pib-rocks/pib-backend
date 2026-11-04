@@ -80,6 +80,7 @@ class _PlaybackSink:
         self._stream = None
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self._queued_at: float | None = None
 
     def start(self) -> None:
         if self._thread is not None:
@@ -98,6 +99,8 @@ class _PlaybackSink:
     def write(self, data: bytes) -> None:
         if not data:
             return
+        if self._queue.empty():
+            self._queued_at = time.monotonic()
         try:
             self._queue.put_nowait(data)
         except queue.Full:
@@ -139,10 +142,18 @@ class _PlaybackSink:
             stream = self._stream
             if stream is None:
                 continue
+            queued_at = self._queued_at
+            self._queued_at = None
             try:
                 stream.write(data)
             except Exception:
                 logger.exception("Playback write failed")
+                continue
+            if queued_at is not None:
+                logger.info(
+                    "playback wrote first chunk %d ms after it was queued",
+                    int((time.monotonic() - queued_at) * 1000),
+                )
 
 
 class TalkLiveLoop:
@@ -190,6 +201,8 @@ class TalkLiveLoop:
         self._turn_audio_bytes = 0
         self._uplink_chunks = 0
         self._max_uplink_depth = 0
+        self._speech_detected_at: float | None = None
+        self._first_audio_logged = False
         self._uplink_drops = 0
         self._event_count = 0
         self._last_event_at = 0.0
@@ -262,7 +275,11 @@ class TalkLiveLoop:
     def _on_speech_detected(self, message) -> None:
         """Instant barge-in: the operator spoke while pib was talking."""
 
-        if not getattr(message, "data", False) or not self._speaking:
+        if not getattr(message, "data", False):
+            return
+        self._speech_detected_at = time.monotonic()
+        logger.info("hw speech_detected")
+        if not self._speaking:
             return
         loop = self._loop
         session = self._session
@@ -496,8 +513,15 @@ class TalkLiveLoop:
 
                 if isinstance(event, rt.SpeechStarted):
                     self._turn = {"speech_start": now}
+                    self._first_audio_logged = False
                     self._turn_audio_bytes = 0
                 if isinstance(event, rt.OutputAudio):
+                    if self._speech_detected_at and not self._first_audio_logged:
+                        logger.info(
+                            "first audio event %d ms after hw speech_detected",
+                            int((now - self._speech_detected_at) * 1000),
+                        )
+                        self._first_audio_logged = True
                     self._turn.setdefault("first_audio", now)
                     self._turn_audio_bytes += len(event.data)
                     if self._speech_stopped_at is not None:
