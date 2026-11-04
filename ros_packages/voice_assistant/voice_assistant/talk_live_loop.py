@@ -93,8 +93,8 @@ START_EARCON_MUTE_S = 0.45
 #: Minimum RMS for speech when hardware VAD is active vs. acoustic-only.
 VAD_ASSISTED_RMS_FLOOR = 220.0
 ACOUSTIC_SPEECH_RMS_FLOOR = 380.0
-ACOUSTIC_BARGE_IN_RMS = 1100.0
-HARDWARE_BARGE_IN_RMS = 350.0
+ACOUSTIC_BARGE_IN_RMS = 1600.0
+HARDWARE_BARGE_IN_RMS = 1200.0
 
 LIVE_VOICE_DIRECTIVE = (
     "Du führst ein direktes Echtzeit-Sprachgespräch auf Deutsch. "
@@ -416,7 +416,7 @@ class TalkLiveLoop:
         self._preroll: deque[bytes] = deque(maxlen=PREROLL_CHUNKS)
         self._in_user_speech = False
         self._hangover_left = 0
-        self._noise_rms = 180.0
+        self._noise_rms = 80.0
         self._loud_barge_streak = 0
         self._mute_uplink_until = 0.0
         self._session_paused = False
@@ -614,12 +614,12 @@ class TalkLiveLoop:
 
         if self._player.is_playing:
             # While pib is speaking, check two-stage barge-in:
-            # 1) Hardware AEC/VAD + speech_detected with real acoustic energy
+            # 1) Hardware AEC/VAD + speech_detected with real acoustic energy (>=1200 RMS)
             # 2) Sustained loud voice above AEC residual (2 chunks = 128 ms)
-            hw_confirmed = (
-                hw_fresh and hw_speech_fresh and rms >= HARDWARE_BARGE_IN_RMS
-            ) or (hw_fresh and rms >= ACOUSTIC_SPEECH_RMS_FLOOR * 1.4)
-            if rms >= ACOUSTIC_BARGE_IN_RMS:
+            hw_confirmed = hw_fresh and hw_speech_fresh and rms >= HARDWARE_BARGE_IN_RMS
+            if rms >= ACOUSTIC_BARGE_IN_RMS or (
+                hw_fresh and rms >= HARDWARE_BARGE_IN_RMS
+            ):
                 self._loud_barge_streak += 1
             else:
                 self._loud_barge_streak = 0
