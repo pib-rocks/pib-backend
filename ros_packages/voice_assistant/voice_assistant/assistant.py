@@ -378,17 +378,15 @@ class VoiceAssistantNode(AssistantTurnCallbacksMixin, AssistantLatencyMixin, Nod
         return loop
 
     def _build_cloud_live_loop(self):
-        """Gemini live through pib.Cloud ephemeral session tokens."""
-        from voice_assistant.cloud_session import mint_session, report_usage
+        """Live through the vendored Hermes Talk provider (PR-2252).
 
-        self.get_logger().info("voice backend: gemini live via pib.Cloud session")
-        return GeminiAudioLoop(
-            api_key="",
-            cloud_session_mode=True,
-            session_provider=mint_session,
-            usage_reporter=report_usage,
-            on_session_end=self._on_cloud_live_session_end,
-        )
+        The mint still comes from pib.Cloud, so metering, slots and the pre-hold
+        are unchanged. The provider is the engine: audio, transcripts, barge-in.
+        """
+        from voice_assistant.talk_live_loop import TalkLiveLoop
+
+        self.get_logger().info("voice backend: talk provider via pib.Cloud session")
+        return TalkLiveLoop(self, on_session_end=self._on_cloud_live_session_end)
 
     def _on_cloud_live_session_end(self, reason: str) -> None:
         self.get_logger().info(f"pib.Cloud live session ended: {reason}")

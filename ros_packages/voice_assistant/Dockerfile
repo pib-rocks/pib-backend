@@ -57,6 +57,7 @@ RUN pip install --break-system-packages --ignore-installed \
         httpx==0.28.1 \
         pyaudio==0.2.14 \
         google-genai==2.28.0 \
+        aiohttp==3.13.2 \
         supertonic==1.3.1 \
         faster-whisper==1.2.1 \
         av==18.1.0 \
