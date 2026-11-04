@@ -304,7 +304,12 @@ MCP_TOOL_NAME_PREFIX = "mcp__pib__"
 
 def _manifest_skill_names(variant: str | None = None) -> tuple[str, ...]:
     """Ordered skill list from one capability manifest (default robot variant)."""
-    from pib_capability.manifest import load_manifest
+    try:
+        from pib_capability.manifest import load_manifest
+    except ModuleNotFoundError:
+        from pib_hermes_config.mcp_tool_text import MCP_TOOL_DESCRIPTIONS
+
+        return tuple(MCP_TOOL_DESCRIPTIONS.keys())
 
     manifest = load_manifest(variant)
     return tuple(manifest["skills"])

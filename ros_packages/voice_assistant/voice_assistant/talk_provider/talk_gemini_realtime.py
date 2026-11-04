@@ -291,17 +291,16 @@ def build_setup_message(setup: rt.SessionSetup) -> dict[str, Any]:
         # the speaker only until the next audio chunk arrives (observed on
         # 192.168.1.168: five "stop"s during one answer).
         "realtimeInputConfig": {
-            # The server VAD owns the turn boundary. With the defaults a turn
-            # ran ~9 s before it was cut, so answers referred to sentences from
-            # twenty seconds earlier (measured on 192.168.1.168). High
-            # sensitivity on both edges plus a 400 ms silence tail is what a
-            # conversational turn needs.
+            # The server VAD owns the turn boundary. Paired with the local
+            # pre-roll + digital-silence shaper on the robot uplink, 350 ms of
+            # silence cuts the turn deterministically without waiting 9-16 s on
+            # AGC-boosted room noise.
             "automaticActivityDetection": {
                 "disabled": False,
                 "startOfSpeechSensitivity": "START_SENSITIVITY_HIGH",
                 "endOfSpeechSensitivity": "END_SENSITIVITY_HIGH",
-                "prefixPaddingMs": 20,
-                "silenceDurationMs": 400,
+                "prefixPaddingMs": 60,
+                "silenceDurationMs": 350,
             },
             "activityHandling": "START_OF_ACTIVITY_INTERRUPTS",
         },
@@ -344,12 +343,6 @@ def build_setup_message(setup: rt.SessionSetup) -> dict[str, Any]:
         payload["tools"] = [
             {"functionDeclarations": [_tool_wire(t) for t in setup.tools]}
         ]
-        try:
-            import json as _json
-
-            open("/tmp/talk_setup.json", "w").write(_json.dumps(payload, indent=1))
-        except Exception:
-            pass
 
     return {"setup": payload}
 
@@ -607,17 +600,25 @@ class GeminiRealtimeSession:
     """Talk-neutral facade over the Gemini Live wire session."""
 
     def __init__(
-        self, *, auth_token: str, auth_source: str, aiohttp_module=None
+        self,
+        *,
+        auth_token: str,
+        auth_source: str,
+        aiohttp_module=None,
+        input_sample_rate: int = 24000,
     ) -> None:
         self.auth_token = auth_token
         self.auth_source = auth_source
+        self.input_sample_rate = int(input_sample_rate)
         self.state = rt.SessionState.NEW
         self._wire = _GeminiWireSession(
             auth_token=auth_token,
             auth_source=auth_source,
             aiohttp_module=aiohttp_module,
         )
-        self._resampler = Pcm24To16Resampler()
+        self._resampler = (
+            None if self.input_sample_rate == 16000 else Pcm24To16Resampler()
+        )
         self._pending: deque[rt.RealtimeEvent] = deque()
         self._call_names: dict[str, str] = {}
         #: Call ids the server cancelled mid-turn (``toolCallCancellation``).
@@ -799,7 +800,11 @@ class GeminiRealtimeSession:
             contexts[command.delegation_id] = command.content
         for command in commands:
             if isinstance(command, rt.AppendInputAudio):
-                pcm = self._resampler.feed(command.data)
+                pcm = (
+                    command.data
+                    if self._resampler is None
+                    else self._resampler.feed(command.data)
+                )
                 if pcm:
                     messages.append(_audio_message(pcm))
             elif isinstance(command, rt.SubmitDelegationResult):
@@ -883,7 +888,11 @@ class GeminiRealtimeSession:
         messages: list[dict[str, Any]] = []
         for command in commands:
             if isinstance(command, rt.AppendInputAudio):
-                pcm = self._resampler.feed(command.data)
+                pcm = (
+                    command.data
+                    if self._resampler is None
+                    else self._resampler.feed(command.data)
+                )
                 if pcm:  # a sub-trio remainder yields no frame yet
                     messages.append(_audio_message(pcm))
             elif isinstance(command, rt.AddInputText):
