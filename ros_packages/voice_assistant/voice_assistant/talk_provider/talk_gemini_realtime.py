@@ -286,6 +286,14 @@ def build_setup_message(setup: rt.SessionSetup) -> dict[str, Any]:
 
     payload: dict[str, Any] = {
         "model": _wire_model(setup.model),
+        # Server-side barge-in. Without START_OF_ACTIVITY_INTERRUPTS the model
+        # keeps generating while the operator speaks, so a local flush silences
+        # the speaker only until the next audio chunk arrives (observed on
+        # 192.168.1.168: five "stop"s during one answer).
+        "realtimeInputConfig": {
+            "automaticActivityDetection": {"disabled": False},
+            "activityHandling": "START_OF_ACTIVITY_INTERRUPTS",
+        },
         "generationConfig": {
             "responseModalities": ["AUDIO"],
             # Thinking is off: the live loop has no tool-rewarding turn and any

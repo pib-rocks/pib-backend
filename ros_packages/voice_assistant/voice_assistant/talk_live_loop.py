@@ -175,6 +175,13 @@ class TalkLiveLoop:
         self._pending_text: dict[bool, str] = {True: "", False: ""}
         #: When the operator stopped speaking, for the first-audio measurement.
         self._speech_stopped_at: float | None = None
+        #: Per-turn timeline; one TURN_TRACE line per completed turn.
+        self._turn: dict[str, float] = {}
+        self._turn_audio_bytes = 0
+        self._uplink_chunks = 0
+        self._uplink_drops = 0
+        self._event_count = 0
+        self._last_event_at = 0.0
         self._stream = None
 
     # ---------------------------------------------------------------- surface
@@ -411,6 +418,7 @@ class TalkLiveLoop:
             if not data:
                 continue
             sent += 1
+            self._uplink_chunks = sent
             self._note_activity()
             try:
                 await session.send(
@@ -426,10 +434,29 @@ class TalkLiveLoop:
         try:
             async for event in session:
                 self._note_activity()
+                now = time.monotonic()
+                self._event_count += 1
+                gap = (
+                    int((now - self._last_event_at) * 1000)
+                    if self._last_event_at
+                    else 0
+                )
+                self._last_event_at = now
                 if not isinstance(event, rt.OutputAudio):
-                    logger.info("live event: %s", type(event).__name__)
+                    logger.info(
+                        "live event: %s (+%dms) uplink=%d drops=%d",
+                        type(event).__name__,
+                        gap,
+                        self._uplink_chunks,
+                        self._uplink_drops,
+                    )
 
+                if isinstance(event, rt.SpeechStarted):
+                    self._turn = {"speech_start": now}
+                    self._turn_audio_bytes = 0
                 if isinstance(event, rt.OutputAudio):
+                    self._turn.setdefault("first_audio", now)
+                    self._turn_audio_bytes += len(event.data)
                     if self._speech_stopped_at is not None:
                         logger.info(
                             "first audio after end of speech: %d ms",
@@ -455,6 +482,8 @@ class TalkLiveLoop:
                     if not is_user:
                         self._set_speaking(event.final is False)
 
+                elif isinstance(event, rt.ResponseStarted):
+                    self._turn.setdefault("response_start", now)
                 elif isinstance(event, rt.FunctionCall):
                     output = await asyncio.to_thread(
                         self._run_tool, event.name, event.arguments
@@ -476,13 +505,16 @@ class TalkLiveLoop:
 
                 elif isinstance(event, rt.SpeechStopped):
                     self._speech_stopped_at = time.monotonic()
+                    self._turn.setdefault("speech_stop", now)
 
                 elif isinstance(event, rt.OutputInterrupted):
                     await asyncio.to_thread(self._player.flush)
                     self._set_speaking(False)
 
                 elif isinstance(event, rt.OutputTurnCompleted):
+                    self._turn.setdefault("turn_complete", now)
                     self._set_speaking(False)
+                    self._log_turn_trace()
         finally:
             self._set_speaking(False)
             await asyncio.to_thread(self._player.close)
