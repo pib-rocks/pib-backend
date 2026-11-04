@@ -26,7 +26,9 @@ def _identifier(value: str | None, field_name: str, *, optional: bool = False) -
         or len(value) > MAX_IDENTIFIER_CHARS
         or value != value.strip()
     ):
-        raise ValueError(f"{field_name} must be a non-empty, trimmed protocol identifier")
+        raise ValueError(
+            f"{field_name} must be a non-empty, trimmed protocol identifier"
+        )
 
 
 def _frozen_mapping(value: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -35,7 +37,9 @@ def _frozen_mapping(value: Mapping[str, Any]) -> Mapping[str, Any]:
 
 def _freeze_json(value):
     if isinstance(value, Mapping):
-        return MappingProxyType({key: _freeze_json(item) for key, item in value.items()})
+        return MappingProxyType(
+            {key: _freeze_json(item) for key, item in value.items()}
+        )
     if isinstance(value, (list, tuple)):
         return tuple(_freeze_json(item) for item in value)
     return value
@@ -88,7 +92,9 @@ class RealtimeTurnDetection:
         if self.semantic_eagerness is not None and not isinstance(
             self.semantic_eagerness, RealtimeSemanticEagerness
         ):
-            raise TypeError("semantic_eagerness must be None or RealtimeSemanticEagerness")
+            raise TypeError(
+                "semantic_eagerness must be None or RealtimeSemanticEagerness"
+            )
         if (
             self.semantic_eagerness is not None
             and self.mode is not RealtimeTurnDetectionMode.SEMANTIC_VAD
@@ -247,7 +253,11 @@ class Transcript(RealtimeEvent):
         for value in (self.start_ms, self.end_ms):
             if value is not None and (type(value) is not int or value < 0):
                 raise ValueError("Transcript offsets must be non-negative milliseconds")
-        if self.start_ms is not None and self.end_ms is not None and self.end_ms < self.start_ms:
+        if (
+            self.start_ms is not None
+            and self.end_ms is not None
+            and self.end_ms < self.start_ms
+        ):
             raise ValueError("Transcript interval must be ordered")
 
 
@@ -260,7 +270,9 @@ class DelegationRequested(RealtimeEvent):
 
     def __post_init__(self) -> None:
         _identifier(self.delegation_id, "delegation_id")
-        if self.offset_ms is not None and (type(self.offset_ms) is not int or self.offset_ms < 0):
+        if self.offset_ms is not None and (
+            type(self.offset_ms) is not int or self.offset_ms < 0
+        ):
             raise ValueError("Delegation offset must be non-negative milliseconds")
         if self.target != "client":
             raise ValueError("Only client delegation can enter the Hermes coordinator")
@@ -327,10 +339,15 @@ class ResponseFinished(RealtimeEvent):
         if self.status not in {None, "completed", "cancelled", "failed", "incomplete"}:
             raise ValueError("Invalid terminal response status")
         if self.output is not None:
-            if (not isinstance(self.output, (list, tuple)) or len(self.output) > 64
-                or any(not isinstance(item, Mapping) for item in self.output)):
+            if (
+                not isinstance(self.output, (list, tuple))
+                or len(self.output) > 64
+                or any(not isinstance(item, Mapping) for item in self.output)
+            ):
                 raise ValueError("Invalid terminal response output")
-            object.__setattr__(self, "output", tuple(_freeze_json(item) for item in self.output))
+            object.__setattr__(
+                self, "output", tuple(_freeze_json(item) for item in self.output)
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -371,7 +388,11 @@ class AddInputText(RealtimeCommand):
 
     def __post_init__(self) -> None:
         _identifier(self.item_id, "item_id")
-        if not isinstance(self.text, str) or not self.text.strip() or len(self.text) > 65536:
+        if (
+            not isinstance(self.text, str)
+            or not self.text.strip()
+            or len(self.text) > 65536
+        ):
             raise ValueError("Input text must be bounded original user text")
 
 
@@ -406,18 +427,30 @@ class StartResponse(RealtimeCommand):
         object.__setattr__(self, "metadata", _frozen_mapping(self.metadata))
         if self.conversation not in {None, "auto", "none"}:
             raise ValueError("Invalid response conversation")
-        if self.conversation == "none" and (self.input is None or self.allow_tools is not False):
-            raise ValueError("Isolated responses require explicit input and disabled tools")
+        if self.conversation == "none" and (
+            self.input is None or self.allow_tools is not False
+        ):
+            raise ValueError(
+                "Isolated responses require explicit input and disabled tools"
+            )
         if self.input is not None:
-            if (not isinstance(self.input, (list, tuple)) or len(self.input) > 128
-                or any(not isinstance(item, Mapping) for item in self.input)):
+            if (
+                not isinstance(self.input, (list, tuple))
+                or len(self.input) > 128
+                or any(not isinstance(item, Mapping) for item in self.input)
+            ):
                 raise ValueError("Invalid response input")
-            object.__setattr__(self, "input", tuple(_freeze_json(item) for item in self.input))
-        if self.instructions is not None and (not isinstance(self.instructions, str)
-                                             or len(self.instructions) > 16000):
+            object.__setattr__(
+                self, "input", tuple(_freeze_json(item) for item in self.input)
+            )
+        if self.instructions is not None and (
+            not isinstance(self.instructions, str) or len(self.instructions) > 16000
+        ):
             raise ValueError("Invalid response instructions")
-        if self.max_output_tokens is not None and (type(self.max_output_tokens) is not int
-                                                  or not 1 <= self.max_output_tokens <= 4096):
+        if self.max_output_tokens is not None and (
+            type(self.max_output_tokens) is not int
+            or not 1 <= self.max_output_tokens <= 4096
+        ):
             raise ValueError("Invalid response token bound")
 
 
@@ -459,7 +492,11 @@ class SubmitDelegationResult(RealtimeCommand):
 
     def __post_init__(self) -> None:
         _identifier(self.delegation_id, "delegation_id")
-        if not isinstance(self.content, str) or not self.content or len(self.content) > 16000:
+        if (
+            not isinstance(self.content, str)
+            or not self.content
+            or len(self.content) > 16000
+        ):
             raise ValueError("Delegation content must be bounded text")
         if self.kind not in {"commentary", "context"}:
             raise ValueError("Invalid delegation content kind")
@@ -473,7 +510,11 @@ class AppendLiveContext(RealtimeCommand):
 
     def __post_init__(self) -> None:
         _identifier(self.delegation_id, "delegation_id", optional=True)
-        if not isinstance(self.content, str) or not self.content or len(self.content) > 32000:
+        if (
+            not isinstance(self.content, str)
+            or not self.content
+            or len(self.content) > 32000
+        ):
             raise ValueError("Live context must be bounded text")
         if self.kind not in {"instructions", "context", "message"}:
             raise ValueError("Invalid Live context kind")
