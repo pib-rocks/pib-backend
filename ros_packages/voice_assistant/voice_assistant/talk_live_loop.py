@@ -254,9 +254,14 @@ class TalkLiveLoop:
                 logger.error("Live session did not become ready; uplink not started")
                 return
             await asyncio.sleep(0.05)
+        sent = 0
+        logger.info("uplink started")
         while not self._stop_event.is_set():
             message = await self._audio_in_queue.get()
             data = message.get("data", b"")
+            sent += 1
+            if sent % 100 == 0:
+                logger.info("uplink sent %s chunks (%s bytes)", sent, len(data))
             if not data:
                 continue
             self._note_activity()

@@ -639,7 +639,7 @@ class GeminiRealtimeSession:
         model = setup.model.removeprefix("models/")
         if model.startswith(("gemini-2.5-", "gemini-live-2.5-")):
             self._live_context_transport = "clientContent"
-        elif model.startswith("gemini-3.1-"):
+        elif model.startswith(("gemini-3.1-", "gemini-3.8-")):
             self._live_context_transport = "realtimeInput"
         self.supports_live_context = (
             self.uses_client_delegation and self._live_context_transport is not None
