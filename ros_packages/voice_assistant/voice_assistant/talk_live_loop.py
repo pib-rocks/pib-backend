@@ -213,10 +213,6 @@ class TalkLiveLoop:
         except Exception:
             logger.exception("Could not open the Talk session")
             return
-        # connect() returns only once the provider acknowledged the setup; the
-        # SessionReady event itself is consumed inside that call, so waiting for
-        # it in the downlink would block the uplink forever.
-        self._ready.set()
 
         bridge = RosAudioBridge(ROS_AUDIO_TOPIC, self._loop, self._audio_in_queue)
         bridge.start()
@@ -247,9 +243,17 @@ class TalkLiveLoop:
             await asyncio.sleep(0.2)
 
     async def _uplink(self, session) -> None:
-        # The provider only accepts audio once its setup is acknowledged; the
-        # downlink sets this on SessionReady.
-        await self._ready.wait()
+        # connect() returns while the handshake is still in flight; the wire
+        # answers 1007-class errors ("not connected") to audio sent too early.
+        deadline = time.monotonic() + 10.0
+        while (
+            session.state is not rt.SessionState.CONNECTED
+            and not self._stop_event.is_set()
+        ):
+            if time.monotonic() > deadline:
+                logger.error("Live session did not become ready; uplink not started")
+                return
+            await asyncio.sleep(0.05)
         while not self._stop_event.is_set():
             message = await self._audio_in_queue.get()
             data = message.get("data", b"")
