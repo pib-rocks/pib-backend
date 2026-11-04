@@ -13,6 +13,7 @@ one message per final transcript.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import threading
 import time
@@ -166,6 +167,43 @@ class TalkLiveLoop:
             except Exception:
                 logger.exception("speaking listener failed")
 
+    def _tool_definitions(self) -> tuple:
+        """The MCP catalogue as provider-neutral tool definitions."""
+
+        try:
+            from voice_assistant.direct_tool_loop import mcp_tool_declarations
+
+            return tuple(
+                rt.ToolDefinition(
+                    name=entry["name"],
+                    description=entry.get("description", ""),
+                    parameters=entry.get(
+                        "parameters", {"type": "object", "properties": {}}
+                    ),
+                )
+                for entry in mcp_tool_declarations()
+            )
+        except Exception:
+            logger.exception("Could not read the MCP tool declarations")
+            return ()
+
+    def _run_tool(self, name: str, arguments: str) -> str:
+        from voice_assistant.direct_tool_loop import execute_mcp_tool
+
+        try:
+            parsed = json.loads(arguments) if arguments else {}
+        except Exception:
+            parsed = {}
+        try:
+            outcome = execute_mcp_tool(name, parsed)
+        except Exception as exc:
+            logger.exception("Tool %s failed", name)
+            outcome = {
+                "ok": False,
+                "error": {"code": "tool_failed", "message": str(exc)},
+            }
+        return json.dumps(outcome, ensure_ascii=False)
+
     def _personality_text(self) -> str:
         try:
             from pib_api_client import voice_assistant_client
@@ -225,10 +263,12 @@ class TalkLiveLoop:
             auth_token=minted.ephemeral_token, auth_source="pib-cloud"
         )
         self._session = session
+        tools = await asyncio.to_thread(self._tool_definitions)
         setup = rt.SessionSetup(
             model=wire_model,
             voice=DEFAULT_VOICE,
             instructions=self._personality_text(),
+            tools=tools,
         )
         try:
             await session.connect(setup)
@@ -322,6 +362,13 @@ class TalkLiveLoop:
                         self._write_transcript(text, is_user=is_user)
                     if not is_user:
                         self._set_speaking(event.final is False)
+                elif isinstance(event, rt.FunctionCall):
+                    output = await asyncio.to_thread(
+                        self._run_tool, event.name, event.arguments
+                    )
+                    await session.send(
+                        [rt.SubmitToolResult(call_id=event.call_id, output=output)]
+                    )
                 elif isinstance(event, rt.OutputInterrupted):
                     self._set_speaking(False)
                 elif isinstance(event, rt.OutputTurnCompleted):
