@@ -57,6 +57,8 @@ from asyncio import QueueEmpty
 # service API to ChatNode (to avoid duplicating DB/publish logic here)
 from datatypes.srv import CreateOrUpdateChatMessage
 
+from voice_assistant.audio_queue import enqueue_pcm
+
 import queue
 import time
 
@@ -207,20 +209,7 @@ class RosAudioBridge:
 
                 def _enqueue(self, payload: bytes):
                     """Push a PCM payload into the asyncio queue (thread-safe)."""
-                    if self._stop_evt.is_set():
-                        return
-
-                    async def _put():
-                        await self._queue.put(
-                            {"data": payload, "mime_type": "audio/pcm"}
-                        )
-
-                    try:
-                        fut = asyncio.run_coroutine_threadsafe(_put(), self._loop)
-                        fut.result(timeout=0.25)
-                    except Exception:
-                        # If the loop is busy, drop late chunks rather than blocking.
-                        pass
+                    enqueue_pcm(self._loop, self._queue, self._stop_evt, payload)
 
                 def _cb_int16(self, msg: Int16MultiArray):
                     try:
@@ -782,6 +771,15 @@ class GeminiAudioLoop:
         try:
             while not self._stop_event.is_set():
                 msg = await self.out_queue.get()
+                if self._speaking:
+                    # pib's own voice reaches the microphone array on this
+                    # hardware (the array is capture-only, so its canceller has
+                    # no reference) and the model answered its own sentences,
+                    # switching language with every echo (heard on 192.168.1.168).
+                    # The uplink therefore closes while a turn is being spoken.
+                    # Barge-in over the live path is the price; the turn-based
+                    # path keeps its hardware barge-in.
+                    continue
                 if not admit_live_uplink(
                     now=time.monotonic(),
                     exclude_until=self._exclude_until,
