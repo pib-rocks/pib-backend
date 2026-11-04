@@ -87,6 +87,9 @@ class TalkLiveLoop:
         )
         self._audio_in_queue: asyncio.Queue = asyncio.Queue()
         self._ready = asyncio.Event()
+        #: Deltas of the current turn, per role, so one message is written per
+        #: turn instead of one per token.
+        self._pending_text: dict[bool, str] = {True: "", False: ""}
 
     # ---------------------------------------------------------------- surface
 
@@ -307,10 +310,17 @@ class TalkLiveLoop:
                     self._set_speaking(True)
                     await asyncio.to_thread(stream.write, event.data)
                 elif isinstance(event, rt.Transcript):
-                    self._write_transcript(
-                        event.text, is_user=event.role is rt.TranscriptRole.USER
-                    )
-                    if event.role is rt.TranscriptRole.ASSISTANT:
+                    is_user = event.role is rt.TranscriptRole.USER
+                    piece = event.text.strip()
+                    if piece:
+                        self._pending_text[is_user] = (
+                            self._pending_text[is_user] + " " + piece
+                        ).strip()
+                    if event.final:
+                        text = self._pending_text[is_user]
+                        self._pending_text[is_user] = ""
+                        self._write_transcript(text, is_user=is_user)
+                    if not is_user:
                         self._set_speaking(event.final is False)
                 elif isinstance(event, rt.OutputInterrupted):
                     self._set_speaking(False)
