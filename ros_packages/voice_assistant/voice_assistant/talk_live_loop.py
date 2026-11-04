@@ -213,6 +213,10 @@ class TalkLiveLoop:
         except Exception:
             logger.exception("Could not open the Talk session")
             return
+        # connect() returns only once the provider acknowledged the setup; the
+        # SessionReady event itself is consumed inside that call, so waiting for
+        # it in the downlink would block the uplink forever.
+        self._ready.set()
 
         bridge = RosAudioBridge(ROS_AUDIO_TOPIC, self._loop, self._audio_in_queue)
         bridge.start()
