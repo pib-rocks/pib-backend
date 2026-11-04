@@ -196,7 +196,7 @@ def test_error_message_never_contains_bearer_or_ephemeral(caplog):
 
 
 def test_report_usage_posts_metadata():
-    raw = json.dumps({"status": "settled", "settled_pib_tokens": 4}).encode()
+    raw = json.dumps({"status": "floor_clamped", "billed_pib_tokens": 0.42}).encode()
     opener, captured = _opener(raw)
     metadata = {"totalTokenCount": 99}
     result = report_usage(
@@ -205,6 +205,6 @@ def test_report_usage_posts_metadata():
         fetch=_unlocked_fetch(),
         opener=opener,
     )
-    assert result == CloudUsageResult(settled_pib_tokens=4, status="settled")
+    assert result == CloudUsageResult(settled_pib_tokens=0.42, status="floor_clamped")
     sent = json.loads(captured["body"].decode("utf-8"))
     assert sent == {"session_id": "sess-abc", "usage_metadata": metadata}
