@@ -522,6 +522,44 @@ def test_cloud_session_error_ends_session_and_calls_callback():
     assert loop._is_listening is False
 
 
+def test_an_unexpected_error_ends_the_session_so_the_button_is_not_stuck():
+    reasons: list[str] = []
+
+    loop = GeminiAudioLoop(
+        api_key="",
+        cloud_session_mode=True,
+        session_provider=lambda *a, **k: _cloud_session(),
+        usage_reporter=lambda *a, **k: None,
+        on_session_end=reasons.append,
+    )
+    loop._cloud_session_id = "sess-1"
+
+    async def exercise():
+        await loop._fail_session("connection_failed")
+
+    asyncio.run(exercise())
+    assert reasons == ["connection_failed"]
+    assert loop._is_listening is False
+    assert loop._cloud_session_id is None
+
+
+def test_the_run_error_path_closes_the_session():
+    source = AUDIO_LOOP.read_text(encoding="utf-8")
+    assert 'await self._fail_session("connection_failed")' in source
+
+
+def test_a_non_cloud_loop_leaves_the_error_path_alone():
+    reasons: list[str] = []
+
+    loop = GeminiAudioLoop(api_key="key", on_session_end=reasons.append)
+
+    async def exercise():
+        await loop._fail_session("connection_failed")
+
+    asyncio.run(exercise())
+    assert reasons == []
+
+
 def test_ephemeral_token_never_logged(caplog):
     caplog.set_level("DEBUG")
 

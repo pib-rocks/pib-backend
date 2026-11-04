@@ -1274,6 +1274,15 @@ class GeminiAudioLoop:
         )
         return result
 
+    async def _fail_session(self, reason: str) -> None:
+        """Close a session whose loop cannot continue.
+
+        Only the pib.Cloud path owns a session that the assistant tracks; the
+        plain Gemini path keeps its previous behaviour.
+        """
+        if self._cloud_session_mode:
+            await self._end_cloud_session(reason)
+
     async def _end_cloud_session(self, reason: str) -> None:
         if self._cloud_session_id:
             try:
@@ -1488,6 +1497,11 @@ class GeminiAudioLoop:
 
             except Exception:
                 logger.exception("GeminiAudioLoop.run: unexpected error")
+                # A failure that ends the loop must end the session too: the
+                # voice assistant otherwise stays "on" with a dead loop and the
+                # next button press only turns it off (observed with a 1011
+                # from the live upstream on 192.168.1.168).
+                await self._fail_session("connection_failed")
                 break
 
             finally:
