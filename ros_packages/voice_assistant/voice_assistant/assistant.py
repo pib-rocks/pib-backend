@@ -391,7 +391,7 @@ class VoiceAssistantNode(AssistantTurnCallbacksMixin, AssistantLatencyMixin, Nod
         )
 
     def _on_cloud_live_session_end(self, reason: str) -> None:
-        self.get_logger().info("pib.Cloud live session ended: %s", reason)
+        self.get_logger().info(f"pib.Cloud live session ended: {reason}")
         self.state.turned_on = False
         self.state.speaking = False
         self._publish_voice_state()
