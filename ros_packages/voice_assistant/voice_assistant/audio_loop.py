@@ -1470,6 +1470,10 @@ class GeminiAudioLoop:
                     break
 
             except LiveIdleTimeout:
+                # An idle stop must look like a stop: settle the session and tell
+                # the assistant, otherwise the button still shows "on" over a
+                # dead loop (seen on 192.168.1.168 after 60 s of silence).
+                await self._fail_session("idle_timeout")
                 self._stop_event.set()
                 break
 
