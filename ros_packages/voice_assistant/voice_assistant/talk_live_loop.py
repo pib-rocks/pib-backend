@@ -18,6 +18,7 @@ import threading
 import time
 import uuid
 
+import numpy as np
 import pyaudio
 
 from datatypes.srv import CreateOrUpdateChatMessage
@@ -41,6 +42,24 @@ logger = logging.getLogger("TalkLiveLoop")
 
 #: Voice name from the Gemini prebuilt set. The personality may override later.
 DEFAULT_VOICE = "Puck"
+
+
+def upsample_16k_to_24k(pcm: bytes) -> bytes:
+    """The provider expects 24 kHz and down-samples to 16 kHz itself.
+
+    The array already publishes 16 kHz. Feeding it raw made the provider treat it
+    as 24 kHz, so the model heard 10.7 kHz slow-motion speech and transcribed
+    nothing (measured on 192.168.1.168: healthy -14 dBFS input, zero events).
+    """
+
+    samples = np.frombuffer(pcm, dtype="<i2")
+    if samples.size == 0:
+        return pcm
+    positions = np.arange(int(round(samples.size * 1.5))) / 1.5
+    values = np.interp(positions, np.arange(samples.size), samples)
+    return values.astype("<i2").tobytes()
+
+
 #: How long a silent session may live before it is closed and settled.
 DEFAULT_IDLE_TIMEOUT_S = 180.0
 
@@ -266,7 +285,9 @@ class TalkLiveLoop:
                 continue
             self._note_activity()
             try:
-                await session.send([rt.AppendInputAudio(data=data)])
+                await session.send(
+                    [rt.AppendInputAudio(data=upsample_16k_to_24k(data))]
+                )
             except Exception:
                 logger.exception("Uploading a microphone chunk failed")
                 return
