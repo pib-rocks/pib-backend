@@ -242,6 +242,7 @@ services:
       # Sold cloud API, distinct from the robot-local Flask API above.
       - PIB_CLOUD_BASE_URL=${PIB_CLOUD_BASE_URL:-https://api.pib.rocks/v1}
       - PIB_CLOUD_STT_TIMEOUT_SECONDS=${PIB_CLOUD_STT_TIMEOUT_SECONDS:-3}
+      - PIB_CLOUD_SESSION_TIMEOUT_SECONDS=${PIB_CLOUD_SESSION_TIMEOUT_SECONDS:-20}
       - PIB_CLOUD_MODE=${PIB_CLOUD_MODE:-test}
       # Which live voice path answers: "gemini" (speech-to-speech) or "duplex"
       # (the pib.Cloud relay answers and speaks; transcription stays on the robot).
