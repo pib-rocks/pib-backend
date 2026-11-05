@@ -16,8 +16,18 @@ PROBE_CMD='source /opt/ros/jazzy/setup.bash && source /app/ros2_ws/install/setup
 
 log() { echo "[${LOG_PREFIX}] $*"; }
 
+docker_cmd() {
+    if docker ps >/dev/null 2>&1; then
+        docker "$@"
+    elif command -v sudo >/dev/null 2>&1 && sudo -n docker ps >/dev/null 2>&1; then
+        sudo -n docker "$@"
+    else
+        docker "$@"
+    fi
+}
+
 voice_container_exists() {
-    docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$CONTAINER"
+    docker_cmd ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$CONTAINER"
 }
 
 if ! voice_container_exists; then
@@ -28,7 +38,7 @@ fi
 attempt=1
 last_output=""
 while [ "$attempt" -le "$ATTEMPTS" ]; do
-    if last_output="$(docker exec "$CONTAINER" bash -lc "$PROBE_CMD" 2>&1)"; then
+    if last_output="$(docker_cmd exec "$CONTAINER" bash -lc "$PROBE_CMD" 2>&1)"; then
         log "ok"
         exit 0
     fi

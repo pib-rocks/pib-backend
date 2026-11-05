@@ -95,8 +95,8 @@ class VoiceAssistantNode(AssistantTurnCallbacksMixin, AssistantLatencyMixin, Nod
 
         if use_cloud_live is None:
             use_cloud_live = os.getenv(
-                "PIB_CLOUD_LIVE_SESSION", ""
-            ).strip().lower() in ("1", "true", "yes")
+                "PIB_CLOUD_LIVE_SESSION", "1"
+            ).strip().lower() not in ("0", "false", "no")
         self._use_cloud_live = use_cloud_live
 
         self.gemini_loop = GeminiAudioLoop(api_key="")

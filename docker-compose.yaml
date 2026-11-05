@@ -248,6 +248,7 @@ services:
       # (the pib.Cloud relay answers and speaks; transcription stays on the robot).
       # Default keeps the path every robot runs today; a robot opts in per host.
       - PIB_VOICE_BACKEND=${PIB_VOICE_BACKEND:-gemini}
+      - PIB_CLOUD_LIVE_SESSION=${PIB_CLOUD_LIVE_SESSION:-1}
       - PIB_CLOUD_VOICE_URL=${PIB_CLOUD_VOICE_URL:-wss://api.pib.rocks/v1/pib/stream}
       # Channels the array publishes. 1 unless the driver reports its raw channels.
       - PIB_MIC_CHANNELS=${PIB_MIC_CHANNELS:-1}

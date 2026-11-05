@@ -44,8 +44,21 @@ log() { echo "[${LOG_PREFIX}] $*"; }
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
+# During a fresh setup-pib.sh run, usermod -aG docker pib has not taken effect
+# in the already-running setup shell yet, so plain `docker` gets EACCES on
+# /var/run/docker.sock while `sudo -n docker` works.
+docker_cmd() {
+    if docker ps >/dev/null 2>&1; then
+        docker "$@"
+    elif have sudo && sudo -n docker ps >/dev/null 2>&1; then
+        sudo -n docker "$@"
+    else
+        docker "$@"
+    fi
+}
+
 container_running() {
-    docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$CONTAINER"
+    docker_cmd ps --format '{{.Names}}' 2>/dev/null | grep -qx "$CONTAINER"
 }
 
 version_of() {
@@ -59,7 +72,7 @@ installed_version() {
     fi
     # An older installation may sit inside the container's own filesystem; read it if the mount
     # copy is missing.
-    docker exec "$CONTAINER" cat "${DEST_IN_CONTAINER}/version.json" 2>/dev/null |
+    docker_cmd exec "$CONTAINER" cat "${DEST_IN_CONTAINER}/version.json" 2>/dev/null |
         python3 -c 'import json,sys; print(json.load(sys.stdin).get("version",""))' 2>/dev/null
 }
 
@@ -145,13 +158,13 @@ if mkdir -p "$APP_DIR/data" 2>/dev/null && [ -w "$APP_DIR/data" ]; then
     fi
 elif container_running; then
     log "unpacking into ${DEST_IN_CONTAINER} through ${CONTAINER} (host directory is not writable)"
-    docker cp "$archive" "${CONTAINER}:/tmp/robot-model.zip" || { log "cannot copy the archive into ${CONTAINER}"; exit 1; }
-    if ! echo "$UNPACK_PY" | docker exec -i "$CONTAINER" python - /tmp/robot-model.zip "$DEST_IN_CONTAINER"; then
-        docker exec "$CONTAINER" rm -f /tmp/robot-model.zip 2>/dev/null
+    docker_cmd cp "$archive" "${CONTAINER}:/tmp/robot-model.zip" || { log "cannot copy the archive into ${CONTAINER}"; exit 1; }
+    if ! echo "$UNPACK_PY" | docker_cmd exec -i "$CONTAINER" python - /tmp/robot-model.zip "$DEST_IN_CONTAINER"; then
+        docker_cmd exec "$CONTAINER" rm -f /tmp/robot-model.zip 2>/dev/null
         log "unpacking failed - the installed model was left untouched"
         exit 1
     fi
-    docker exec "$CONTAINER" rm -f /tmp/robot-model.zip 2>/dev/null
+    docker_cmd exec "$CONTAINER" rm -f /tmp/robot-model.zip 2>/dev/null
 else
     log "neither ${APP_DIR}/data is writable nor is ${CONTAINER} running - start the stack or run setup as root"
     exit 1
@@ -159,7 +172,7 @@ fi
 
 # Verify through the container when it is up: that is what the 3D tab talks to.
 if container_running; then
-    seen="$(docker exec "$CONTAINER" cat "${DEST_IN_CONTAINER}/version.json" 2>/dev/null |
+    seen="$(docker_cmd exec "$CONTAINER" cat "${DEST_IN_CONTAINER}/version.json" 2>/dev/null |
         python3 -c 'import json,sys; print(json.load(sys.stdin).get("version",""))' 2>/dev/null)"
     if [ "$seen" != "$TAG" ]; then
         log "installed, but ${CONTAINER} does not see ${DEST_IN_CONTAINER}/version.json (is /data mounted from ${APP_DIR}/data?)"
