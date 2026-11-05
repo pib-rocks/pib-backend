@@ -103,6 +103,7 @@ ensure_venv() {
         playwright \
         lark
     pip install -q -e "${REPO_ROOT}/pib_hermes_config" \
+        -e "${REPO_ROOT}/pib_capability" \
         -e "${REPO_ROOT}/pib_mcp_server" \
         -e "${REPO_ROOT}/public_api_client"
     playwright install chromium 2>/dev/null || true

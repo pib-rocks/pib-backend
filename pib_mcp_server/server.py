@@ -2,8 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Annotated, Any, Callable
+
+from pib_capability.manifest import (
+    capability_enforcement_enabled,
+    load_manifest,
+    remove_tools_not_in_manifest,
+    resolve_variant,
+)
 
 try:
     from mcp.server.fastmcp import FastMCP
@@ -16,6 +24,7 @@ from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from .backend import BackendError, PibBackend
+from .scene_tools import build_describe_scene_response, build_locate_object_response
 from .tool_budgets import (
     DEFAULT_TOOL_PAYLOAD_BUDGET_BYTES,
     TOOL_PAYLOAD_BUDGET_BYTES,
@@ -40,6 +49,8 @@ ACTUATING_TOOLS = {
     "trigger_smarthome_scene",
 }
 MAX_SOUL_LESSON_CHARS = 500
+
+logger = logging.getLogger(__name__)
 
 NonEmptyString = Annotated[str, Field(min_length=1, strict=True)]
 MotorPositionDegrees = Annotated[float, Field(strict=True)]
@@ -165,6 +176,36 @@ def create_server(
         """Side effect. Camera frame; default ref/metadata only."""
 
         return _invoke(robot.capture_image, detail)
+
+    def _scene_tool_failure(exc: BackendError) -> dict[str, Any]:
+        return {
+            "ok": False,
+            "summary": exc.message,
+            "detections_active": False,
+            "reason": exc.code,
+            "objects": [],
+            "people": [],
+        }
+
+    @server.tool(annotations=read_annotations, structured_output=True)
+    def pib_describe_scene() -> dict[str, Any]:
+        """Read-only. Live camera scene summary (objects, people, distances in metres)."""
+
+        try:
+            scene = robot.get_scene()
+        except BackendError as exc:
+            return _scene_tool_failure(exc)
+        return build_describe_scene_response(scene)
+
+    @server.tool(annotations=read_annotations, structured_output=True)
+    def pib_locate_object(name: NonEmptyString) -> dict[str, Any]:
+        """Read-only. Find a labelled scene object (metres); case-insensitive label match."""
+
+        try:
+            scene = robot.get_scene()
+        except BackendError as exc:
+            return {"ok": False, "reason": exc.code}
+        return build_locate_object_response(scene, name.strip())
 
     def _motor_limits_degrees(
         motor: dict[str, Any],
@@ -447,6 +488,22 @@ def create_server(
                 },
             )
         return _invoke(robot.soul_append, personality_id, lesson, detail)
+
+    # --- pib_memory ---
+    from pib_memory.mcp import register_memory_tools
+
+    register_memory_tools(server)
+
+    variant = resolve_variant()
+    manifest = load_manifest(variant)
+    if capability_enforcement_enabled():
+        remove_tools_not_in_manifest(server, manifest)
+    exposed = len(server._tool_manager.list_tools())
+    logger.info(
+        "MCP capability manifest variant=%s exposed_tools=%d",
+        variant,
+        exposed,
+    )
 
     _compact_tool_schemas(server)
     return server

@@ -598,8 +598,12 @@ function install_pib_python_packages() {
   print INFO "Installing pib-sdk and pib_mcp_server into system Python"
   pip install --break-system-packages pib-sdk \
     || print WARN "failed to install pib-sdk"
+  pip install --break-system-packages -e "$BACKEND_DIR/pib_capability" \
+    || print WARN "failed to install pib_capability"
   pip install --break-system-packages -e "$BACKEND_DIR/pib_mcp_server" \
     || print WARN "failed to install pib_mcp_server"
+  pip install --break-system-packages -e "$BACKEND_DIR/pib_memory" \
+    || print WARN "failed to install pib_memory"
   print SUCCESS "Installed pib Python packages system-wide"
 }
 
@@ -2083,6 +2087,8 @@ elif is_ubuntu_noble || is_supported_raspbian; then
   # docker_install.sh runs its own run_step calls, one per service it sets up.
   source "$SETUP_INSTALLATION_DIR/docker_install.sh" || print ERROR "failed to install Cerebra via Docker"
 fi
+run_step "Verify voice assistant" bash "$SETUP_INSTALLATION_DIR/voice_healthcheck.sh" \
+    || print ERROR "voice assistant is not healthy - see the reason above"
 # Fresh installations used to come up without it: the 3D tab then answers 404 for
 # /robot-model/model.json. The model is a release asset, not part of the images.
 run_step "Install robot model" bash "$SETUP_INSTALLATION_DIR/install_robot_model.sh" || print ERROR "failed to install the robot model (the 3D tab will answer 404)"

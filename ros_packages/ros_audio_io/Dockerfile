@@ -53,9 +53,10 @@ RUN set -eu; \
     echo "ALSA Pulse plugin: $module"
 
 COPY ./pib_api/client ./client
+COPY ./pib_capability /tmp/pib_capability
 COPY ./pib_hermes_config /tmp/pib_hermes_config
 # In-repo packages without dependencies; --no-deps keeps pip from re-resolving the environment.
-RUN pip install --break-system-packages --no-deps ./client /tmp/pib_hermes_config
+RUN pip install --break-system-packages --no-deps ./client /tmp/pib_capability /tmp/pib_hermes_config
 
 COPY ./ros_packages/datatypes ros2_ws/datatypes
 COPY ./ros_packages/ros_audio_io ros2_ws/ros_audio_io

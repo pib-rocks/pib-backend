@@ -38,7 +38,12 @@ from pib_hermes_config.visible_state import (
     VOICE_USING_FALLBACK_TOPIC,
     engine_is_fallback,
 )
-from pib_hermes_config.voice_backends import CLOUD_TTS_ROUTE, resolve_tts_route
+from pib_hermes_config.voice_backends import (
+    CLOUD_TTS_ROUTE,
+    effective_tts_engine,
+    resolve_tts_route,
+)
+from pib_hermes_config.voice_catalogue import resolve_voice_id
 from public_api_client import public_voice_client
 from voice_assistant.cloud_token import CloudTokenError, resolve_cloud_token
 from voice_assistant.pib_cloud_stream import pib_cloud_base_url
@@ -55,10 +60,20 @@ JOIN_WAIT_TIMEOUT_SECONDS = 120.0
 #: from ``PIB_CLOUD_BASE_URL``. The response is a WAV container, 16 kHz PCM16
 #: little-endian, mono, so the existing wave clause fragmenting applies.
 CLOUD_SPEECH_PATH = "/audio/speech"
-CLOUD_TTS_TIMEOUT_SECONDS = 30.0
+CLOUD_TTS_TIMEOUT_ENV = "PIB_CLOUD_TTS_TIMEOUT_SECONDS"
+#: Per-clause POST timeout. A slow or hung cloud call falls back to Supertone.
+CLOUD_TTS_TIMEOUT_SECONDS = float(os.getenv(CLOUD_TTS_TIMEOUT_ENV, "3"))
 #: Statuses that mean the credential or the budget is done for this turn.
 _CLOUD_TTS_AUTH_STATUS_CODES = frozenset({401, 403})
 _CLOUD_TTS_BUDGET_STATUS_CODE = 402
+#: Response headers the speech endpoint may return for usage and cost.
+_CLOUD_TTS_USAGE_HEADERS = (
+    ("X-Usage-Speech-Characters", "speech_characters"),
+    ("X-Speech-Characters", "speech_characters"),
+    ("X-Usage-Speech-Cost", "speech_cost"),
+    ("X-Speech-Cost", "speech_cost"),
+    ("X-Budget-Remaining-Speech", "budget_remaining_speech"),
+)
 
 
 class CloudTTSError(Exception):
@@ -87,17 +102,43 @@ def cloud_language_code(value: object) -> str:
     return "de"
 
 
-#: The cloud speech codes for the two voices the personality editor offers. ``F3`` is Bella,
-#: ``M3`` is Adam; both are stock ElevenLabs voices the endpoint accepts by name
-#: (``pib_cloud/routes/audio_speech.py:VOICE_IDS``), so the robot never sends a raw voice id.
-VOICE_FEMALE = "F3"
-VOICE_MALE = "M3"
-
-
 def cloud_voice(value: object) -> str:
-    """``F3`` or ``M3``, from the personality's gender (the dialog's "Voice" dropdown)."""
-    text = value.strip().lower() if isinstance(value, str) else ""
-    return VOICE_MALE if text.startswith("m") else VOICE_FEMALE
+    """``F2`` or ``M3``, from the personality gender or an explicit ``voice_id``."""
+    return resolve_voice_id(value)
+
+
+def _header_value(headers: object, name: str) -> object:
+    if headers is None:
+        return None
+    try:
+        getter = getattr(headers, "get", None)
+        if getter is not None:
+            value = getter(name)
+            if value not in (None, ""):
+                return value
+    except Exception:
+        return None
+    try:
+        for key, value in headers.items():
+            if str(key).lower() == name.lower() and value not in (None, ""):
+                return value
+    except Exception:
+        return None
+    return None
+
+
+def _cloud_tts_usage_from_response(response: object) -> dict[str, object]:
+    """Usage and cost headers from one speech response, omitting missing values."""
+    detail: dict[str, object] = {}
+    headers = getattr(response, "headers", None)
+    for header_name, field in _CLOUD_TTS_USAGE_HEADERS:
+        if field in detail:
+            continue
+        raw = _header_value(headers, header_name)
+        if raw in (None, ""):
+            continue
+        detail[field] = raw
+    return detail
 
 
 # The audio thread is the only writer. The service thread only enqueues items.
@@ -474,7 +515,7 @@ class AudioPlayerNode(Node):
                 )
             return response
 
-        route = resolve_tts_route(getattr(request, "tts_engine", "") or "")
+        route = self._resolve_tts_route(request)
         if route not in ("local", CLOUD_TTS_ROUTE):
             self.get_logger().error(
                 f"tts backend {request.tts_engine} is not the local Supertone "
@@ -487,6 +528,8 @@ class AudioPlayerNode(Node):
         self._cloud_tts_fallback_noted = False
         self._cloud_tts_turn_token = None
         self._cloud_tts_turn_voice = None
+        self._cloud_tts_turn_characters = 0
+        self._cloud_tts_turn_usage: dict[str, object] = {}
 
         pieces = clauses_to_synthesize(speech)
         last_item = None
@@ -533,7 +576,40 @@ class AudioPlayerNode(Node):
 
         if request.join and last_item is not None:
             self._wait_playback_finished(last_item, context="play_audio_from_speech")
+        self._log_cloud_tts_turn_usage()
         return response
+
+    def _cloud_speech_available(self) -> bool:
+        try:
+            resolve_cloud_token()
+        except CloudTokenError:
+            return False
+        return True
+
+    def _resolve_tts_route(self, request: PlayAudioFromSpeech.Request) -> str:
+        stored = getattr(request, "tts_engine", "") or ""
+        engine = effective_tts_engine(
+            stored, cloud_speech_available=self._cloud_speech_available()
+        )
+        return resolve_tts_route(engine)
+
+    def _cloud_speech_voice(self, request: PlayAudioFromSpeech.Request) -> str:
+        voice_id = getattr(request, "voice_id", None)
+        if isinstance(voice_id, str) and voice_id.strip():
+            return voice_id.strip()
+        return resolve_voice_id(getattr(request, "gender", None))
+
+    def _log_cloud_tts_turn_usage(self) -> None:
+        if self._cloud_tts_turn_characters <= 0 and not self._cloud_tts_turn_usage:
+            return
+        parts = [f"speech_characters_sent={self._cloud_tts_turn_characters}"]
+        for key in sorted(self._cloud_tts_turn_usage):
+            parts.append(f"{key}={self._cloud_tts_turn_usage[key]}")
+        self.get_logger().info("cloud speech turn usage " + " ".join(parts))
+
+    def _merge_cloud_tts_usage(self, response: object) -> None:
+        for key, value in _cloud_tts_usage_from_response(response).items():
+            self._cloud_tts_turn_usage[key] = value
 
     def _synthesize_clause(self, text: str, request: PlayAudioFromSpeech.Request):
         """One clause of audio, from pib.Cloud when that engine is chosen.
@@ -542,21 +618,27 @@ class AudioPlayerNode(Node):
         spoken by the local Supertone engine instead, after one logged reason
         for the turn.
         """
-        route = resolve_tts_route(getattr(request, "tts_engine", "") or "")
+        route = self._resolve_tts_route(request)
         if route == CLOUD_TTS_ROUTE:
             try:
                 data, encoding = self._synthesize_cloud_clause(text, request)
                 self._publish_engine_fallback("")
             except CloudTTSError as exc:
                 self._note_cloud_tts_fallback(exc.reason)
-                data, encoding = self._synthesize_local_clause(text, request)
+                data, encoding = self._synthesize_local_clause(
+                    text, request, from_cloud_fallback=True
+                )
         else:
             data, encoding = self._synthesize_local_clause(text, request)
         self._last_clause_encoding = encoding
         return self.adjust_data_granularity(data, _bytes_per_chunk(encoding)), encoding
 
     def _synthesize_local_clause(
-        self, text: str, request: PlayAudioFromSpeech.Request
+        self,
+        text: str,
+        request: PlayAudioFromSpeech.Request,
+        *,
+        from_cloud_fallback: bool = False,
     ) -> tuple[Iterable[bytes], AudioEncoding]:
         try:
             wav_bytes = self.tts_engine.synthesize(
@@ -565,9 +647,10 @@ class AudioPlayerNode(Node):
                 voice=request.gender or "F1",
                 emotion="expressive",
             )
-            self._publish_engine_fallback(
-                getattr(self.tts_engine, "active_backend", "")
-            )
+            if not from_cloud_fallback:
+                self._publish_engine_fallback(
+                    getattr(self.tts_engine, "active_backend", "")
+                )
             return self._wav_chunks_and_encoding(wav_bytes)
         except Exception as exc:
             self.get_logger().warning(
@@ -601,8 +684,9 @@ class AudioPlayerNode(Node):
         body = {
             "input": text,
             "language": cloud_language_code(request.language),
-            "voice": cloud_voice(request.gender),
+            "voice": self._cloud_speech_voice(request),
         }
+        self._cloud_tts_turn_characters += len(text)
         if self._cloud_tts_turn_voice != body["voice"]:
             # Once per turn, so a wrong voice is visible in the log without per-clause noise.
             self._cloud_tts_turn_voice = body["voice"]
@@ -642,6 +726,7 @@ class AudioPlayerNode(Node):
             raise CloudTTSError("cloud_invalid_wav") from exc
         if not chunks:
             raise CloudTTSError("cloud_empty_audio")
+        self._merge_cloud_tts_usage(response)
         return chunks, encoding
 
     def _cloud_tts_token(self) -> str:
@@ -658,6 +743,7 @@ class AudioPlayerNode(Node):
         if getattr(self, "_cloud_tts_fallback_noted", False):
             return
         self._cloud_tts_fallback_noted = True
+        self._publish_engine_fallback("fallback")
         self.get_logger().warning(
             f"pib.Cloud speech backend failed ({reason}); falling back to the "
             "local Supertone engine for this turn"

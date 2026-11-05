@@ -166,6 +166,8 @@ class ChatHermesMixin:
                     goal_handle.publish_feedback(feedback)
                     first_chunk_emitted = True
                     published_speech.append(immediate)
+                    if not getattr(self, "_turn_episode_outcome", ""):
+                        self._turn_episode_outcome = immediate.strip()
                     elapsed_ms = (_chat().time.monotonic() - t0) * 1000.0
                     self._remember_first_token_latency(chat_id, elapsed_ms)
                     self._record_local_turn_stage("first_token", t0)
@@ -218,6 +220,8 @@ class ChatHermesMixin:
                     prev_text_type = _chat().Chat.Goal.TEXT_TYPE_SENTENCE
                     if not first_sentence_flushed:
                         first_sentence_flushed = True
+                        if not getattr(self, "_turn_episode_outcome", ""):
+                            self._turn_episode_outcome = sentence.strip()
                         elapsed_ms = (_chat().time.monotonic() - t0) * 1000.0
                         self._record_local_turn_stage("first_sentence_flushed", t0)
                         self.get_logger().info(
@@ -299,6 +303,10 @@ class ChatHermesMixin:
         if prev_text_type == _chat().Chat.Goal.TEXT_TYPE_CODE_VISUAL:
             return prev_text, prev_text_type, curr_text
 
+        # The episode records the answer, not the first token: the first chunk
+        # is often one word ("Ich") and says nothing about the turn.
+        if raw_answer.strip():
+            self._turn_episode_outcome = raw_answer.strip()
         speech_tail = speech_result_tail(raw_answer, published_speech)
         return None, None, speech_tail
 
@@ -333,6 +341,8 @@ class ChatHermesMixin:
             goal_handle.publish_feedback(feedback)
             if not flushed_any and t0 is not None:
                 elapsed_ms = (_chat().time.monotonic() - t0) * 1000.0
+                if not getattr(self, "_turn_episode_outcome", ""):
+                    self._turn_episode_outcome = delta.strip()
                 self._record_local_turn_stage("first_sentence_flushed", t0)
                 self.get_logger().info(
                     f"[PERF_TRACE] FIRST_SENTENCE_FLUSHED chat={chat_id} "
@@ -960,6 +970,7 @@ class ChatHermesMixin:
             if goal_handle.is_cancel_requested:
                 self._finish_cancelled_turn(chat_id, goal_handle)
                 return _chat().Chat.Result()
+            self._record_text_turn_episode(chat_id, turn_id, content)
             self._finalize_message_meta(chat_id)
             if turn_id:
                 self._emit_turn_state(turn_id, STATE_COMPLETED, chat_id)

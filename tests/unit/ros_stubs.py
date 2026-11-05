@@ -59,6 +59,7 @@ def install_ros_stubs():
 
     executors = ensure("rclpy.executors")
     executors.MultiThreadedExecutor = MagicMock()
+    executors.SingleThreadedExecutor = MagicMock()
 
     node_mod = ensure("rclpy.node")
 
@@ -111,7 +112,11 @@ def install_ros_stubs():
 
     std_msgs_msg.Bool = _Bool
 
-    # --- datatypes ---
+    class _Int16MultiArray:
+        def __init__(self):
+            self.data = []
+
+    std_msgs_msg.Int16MultiArray = _Int16MultiArray
     ensure("datatypes")
     action = ensure("datatypes.action")
 

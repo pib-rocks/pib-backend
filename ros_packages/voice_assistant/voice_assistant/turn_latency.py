@@ -46,7 +46,7 @@ EIGHT_STAGES = (
 )
 
 # Recorded when they happen, but they do not count toward stages=n/8.
-EXTRA_STAGES = ("text_received", "stream_done")
+EXTRA_STAGES = ("text_received", "stream_done", "barge_in_stop")
 
 # The stages the audio player reports. The turn owner only accepts them once
 # this turn's first answer clause has been handed to the synthesiser, because a
@@ -69,6 +69,7 @@ DELTA_SPECS = (
     ("sentence_to_first_audio", "first_sentence_flushed", "first_audio"),
     ("audio", "first_audio", "last_audio"),
     ("eos_to_turn_end", "end_of_speech", "turn_end"),
+    ("eos_to_barge_in_stop", "end_of_speech", "barge_in_stop"),
 )
 
 HEADER_FIELDS = (

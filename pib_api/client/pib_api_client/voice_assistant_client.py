@@ -6,6 +6,7 @@ from pib_api_client import send_request, URL_PREFIX
 
 ASSISTANT_MODEL_URL = URL_PREFIX + "/assistant-model/%s"
 PROVIDER_DEFAULT_URL = URL_PREFIX + "/provider/default"
+PERSONALITY_LIST_URL = URL_PREFIX + "/voice-assistant/personality"
 PERSONALITY_URL = URL_PREFIX + "/voice-assistant/personality/%s"
 CHAT_URL = URL_PREFIX + "/voice-assistant/chat/%s"
 CHAT_MESSAGES_URL = URL_PREFIX + "/voice-assistant/chat/%s/messages"
@@ -38,6 +39,7 @@ class Personality:
         self.description = personality_dto.get("description")
         self.stt_engine = personality_dto.get("sttEngine", "local_whisper")
         self.tts_engine = personality_dto.get("ttsEngine", "supertone")
+        self.voice_id = personality_dto.get("voiceId") or ""
         applies = personality_dto.get("localVoiceApplies", True)
         self.local_voice_applies = True if applies is None else bool(applies)
         self.live_voice_note = personality_dto.get("liveVoiceNote")
@@ -133,6 +135,25 @@ def get_personality(personality_id: str) -> Tuple[bool, Personality]:
         successful = False
         personality = None
     return successful, personality
+
+
+def get_all_personalities() -> Tuple[bool, List[Personality]]:
+    request = Request(PERSONALITY_LIST_URL, method="GET")
+    successful, body = send_request(request)
+    if not successful or not isinstance(body, dict):
+        return False, []
+    raw_list = body.get("voiceAssistantPersonalities")
+    if not isinstance(raw_list, list):
+        return False, []
+    personalities: List[Personality] = []
+    for personality_dto in raw_list:
+        if not isinstance(personality_dto, dict):
+            return False, []
+        try:
+            personalities.append(Personality(personality_dto))
+        except Exception:
+            return False, []
+    return True, personalities
 
 
 def record_first_token_latency(chat_id: str, latency_ms: float) -> bool:

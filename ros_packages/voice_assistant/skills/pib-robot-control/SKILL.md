@@ -5,7 +5,8 @@ description: Use schema-validated pib MCP tools for robot capabilities.
 
 # pib robot control
 
-Use the `pib_*` MCP tools. The `terminal` toolset stays disabled; do not use a
+Use the `mcp__pib__*` MCP tools (Hermes registers `mcp__` + server + `__` + tool).
+The `terminal` toolset stays disabled; do not use a
 shell, `curl`, arbitrary commands, or raw ROS calls to control the robot.
 
 Treat actuator writes and program execution as side effects: perform them only
@@ -14,22 +15,22 @@ invent identifiers or payload fields. Prefer a read tool before a write.
 
 ## MCP tool surface
 
-- Inspect with `pib_list_motors`, `pib_get_state`, `pib_list_poses`, and
-  `pib_list_programs`.
-- Ask `pib_get_motion_model` for the robot's joints with their axes, degree
+- Inspect with `mcp__pib__list_motors`, `mcp__pib__get_state`, `mcp__pib__list_poses`, and
+  `mcp__pib__list_programs`.
+- Ask `mcp__pib__get_motion_model` for the robot's joints with their axes, degree
   limits and named postures before planning a movement. Use that answer instead
   of asking for a URDF, a CAD file or another document: the model is already
   installed. It takes no arguments and returns the rendered model plus a joint
   table, so read the limits from it rather than guessing a range.
-- Capture a camera frame with `pib_capture_image`.
-- Actuate only on explicit request with `pib_move_motor`, `pib_apply_pose`,
-  `pib_run_program`, `pib_set_led`, or `pib_set_relay`. The actuator gate is
+- Capture a camera frame with `mcp__pib__capture_image`.
+- Actuate only on explicit request with `mcp__pib__move_motor`, `mcp__pib__apply_pose`,
+  `mcp__pib__run_program`, `mcp__pib__set_led`, or `mcp__pib__set_relay`. The actuator gate is
   open by default.
 - A gesture or a head turn while you are speaking an answer is an MCP tool
-  call: `apply_pose` or `move_motor`. Issue that call as the body language of
+  call: `mcp__pib__apply_pose` or `mcp__pib__move_motor`. Issue that call as the body language of
   the answer. Do not describe the motion instead of calling the tool, and do
   not use a separate gesture channel. The actuation gate still applies.
-- Append one durable lesson with `pib_soul_append`. Lessons must be non-empty
+- Append one durable lesson with `mcp__pib__soul_append`. Lessons must be non-empty
   and no longer than 500 characters; this operation never replaces the SOUL.
 
 ## Backend reference

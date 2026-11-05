@@ -196,6 +196,10 @@ class FakeBackend:
         self.calls.append(("trigger_smarthome_scene", scene_name))
         return self.control_smarthome_device(scene_name, "activate")
 
+    def get_scene(self):
+        self.calls.append(("get_scene",))
+        return {"stamp_ms": 0, "objects": [], "people": []}
+
 
 def _tools(server):
     return asyncio.run(server.list_tools())
@@ -268,6 +272,10 @@ def test_tool_discovery_exposes_complete_declared_surface():
         "control_smarthome_device",
         "trigger_smarthome_scene",
         "soul_append",
+        "pib_recall",
+        "pib_describe_scene",
+        "pib_locate_object",
+        "pib_remember",
     }
 
 

@@ -77,6 +77,7 @@ from .face_crop import (
     translate_gaze,
 )
 from .parsed_detections import published_field, translate_detections
+from .scene_model_mixin import SceneModelMixin
 from .qr_detection import (
     QR_MODEL_ID,
     decode_qr_detections,
@@ -275,6 +276,7 @@ class CameraNode(
     HandTrackingMixin,
     PipelineBuildersMixin,
     BranchCaptureMixin,
+    SceneModelMixin,
     Node,
 ):
     """Own and publish the OAK-D Lite camera and its on-board BMI270 IMU.
@@ -413,6 +415,7 @@ class CameraNode(
             logger=self.get_logger(),
         )
         self.last_detections = {}
+        self._init_scene_model()
 
         if self.camera_available:
             self.get_camera_image_service = self.create_service(
@@ -605,6 +608,14 @@ class CameraNode(
         publisher = self.detection_publishers.get(model_id)
         if publisher is not None:
             publisher.publish(message)
+        scene_model = getattr(self, "scene_model", None)
+        if scene_model is not None:
+            scene_model.ingest(
+                self._scene_detection_dicts(detections),
+                frame_width,
+                frame_height,
+                self._stamp_ms(),
+            )
 
     def _publish_qr_detections(self, packet):
         frame = self._decode_current_frame()

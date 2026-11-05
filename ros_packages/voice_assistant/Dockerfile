@@ -57,6 +57,7 @@ RUN pip install --break-system-packages --ignore-installed \
         httpx==0.28.1 \
         pyaudio==0.2.14 \
         google-genai==2.28.0 \
+        aiohttp==3.13.2 \
         supertonic==1.3.1 \
         faster-whisper==1.2.1 \
         av==18.1.0 \
@@ -99,6 +100,8 @@ RUN cp /tmp/provider_registry.py \
     "$(python3 -c 'import sysconfig; print(sysconfig.get_path("purelib"))')/provider_registry.py"
 
 COPY ./pib_mcp_server ./pib_mcp_server
+COPY ./pib_capability ./pib_capability
+COPY ./pib_memory ./pib_memory
 # The in-repo packages declare no dependencies beyond what is installed above (pib_mcp_server:
 # mcp, websocket-client). --no-deps keeps this layer from re-resolving the environment and
 # reporting conflicts in it.
@@ -106,7 +109,9 @@ RUN pip install --break-system-packages --no-deps \
         ./client \
         ./pib_hermes_config/ \
         ./public_api_client/ \
-        ./pib_mcp_server/
+        ./pib_mcp_server/ \
+        ./pib_capability/ \
+        ./pib_memory/
 
 COPY ./ros_packages/datatypes ros2_ws/datatypes
 COPY ./ros_packages/voice_assistant ros2_ws/voice_assistant

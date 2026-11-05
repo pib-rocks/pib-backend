@@ -89,9 +89,15 @@ _CLEAR_PLAYBACK_ACK_LOG_SECONDS = 5.0
 
 class VoiceAssistantNode(AssistantTurnCallbacksMixin, AssistantLatencyMixin, Node):
 
-    def __init__(self):
+    def __init__(self, *, use_cloud_live: bool | None = None):
 
         super().__init__("voice_assistant")
+
+        if use_cloud_live is None:
+            use_cloud_live = os.getenv(
+                "PIB_CLOUD_LIVE_SESSION", ""
+            ).strip().lower() in ("1", "true", "yes")
+        self._use_cloud_live = use_cloud_live
 
         self.gemini_loop = GeminiAudioLoop(api_key="")
 
@@ -136,6 +142,8 @@ class VoiceAssistantNode(AssistantTurnCallbacksMixin, AssistantLatencyMixin, Nod
         self.is_executing_program = False
         # Clauses already handed to the synthesizer for the current answer.
         self._streaming_speech = StreamingSpeech()
+        self._turn_episode_task = ""
+        self._turn_episode_outcome = ""
         self._filler_timer: Optional[threading.Timer] = None
         self._filler_lock = threading.Lock()
         self._first_token_seen = False
@@ -246,6 +254,8 @@ class VoiceAssistantNode(AssistantTurnCallbacksMixin, AssistantLatencyMixin, Nod
         self.voice_backend = os.getenv("PIB_VOICE_BACKEND", "gemini").strip().lower()
         if self.voice_backend == "duplex":
             self.gemini_loop = self._build_duplex_loop()
+        elif self._use_cloud_live:
+            self.gemini_loop = self._build_cloud_live_loop()
 
         self.play_audio_from_file_client: Client = self.create_client(
             PlayAudioFromFile, "play_audio_from_file"
@@ -366,6 +376,23 @@ class VoiceAssistantNode(AssistantTurnCallbacksMixin, AssistantLatencyMixin, Nod
             return self.gemini_loop
         self.get_logger().info(f"voice backend: duplex relay at {url}")
         return loop
+
+    def _build_cloud_live_loop(self):
+        """Live through the vendored Hermes Talk provider (PR-2252).
+
+        The mint still comes from pib.Cloud, so metering, slots and the pre-hold
+        are unchanged. The provider is the engine: audio, transcripts, barge-in.
+        """
+        from voice_assistant.talk_live_loop import TalkLiveLoop
+
+        self.get_logger().info("voice backend: talk provider via pib.Cloud session")
+        return TalkLiveLoop(self, on_session_end=self._on_cloud_live_session_end)
+
+    def _on_cloud_live_session_end(self, reason: str) -> None:
+        self.get_logger().info(f"pib.Cloud live session ended: {reason}")
+        self.state.turned_on = False
+        self.state.speaking = False
+        self._publish_voice_state()
 
     def _request_duplex_transcription(self, on_text) -> None:
         """One utterance from the existing recorder, then hand the text to the relay.
@@ -522,9 +549,8 @@ class VoiceAssistantNode(AssistantTurnCallbacksMixin, AssistantLatencyMixin, Nod
         request.gender = gender
         request.language = language
         request.join = on_stopped_playing is not None
-        request.tts_engine = (
-            getattr(self.personality, "tts_engine", None) or "supertone"
-        )
+        request.tts_engine = getattr(self.personality, "tts_engine", None) or ""
+        request.voice_id = getattr(self.personality, "voice_id", None) or ""
         request.turn_id = getattr(self, "_speech_turn_id", "") or ""
         if speech and str(speech).strip():
             self._note_spoken_answer(str(speech))
@@ -677,6 +703,7 @@ class VoiceAssistantNode(AssistantTurnCallbacksMixin, AssistantLatencyMixin, Nod
             self.stop_recording()
             self.set_is_listening(request.chat_id, False)
             self._start_spoken_turn()
+            self._turn_episode_task = (request.content or "").strip()
             self.chat(
                 request.content,
                 self.state.chat_id,

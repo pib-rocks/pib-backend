@@ -30,7 +30,11 @@ services:
       PIB_MCP_API_BASE_URL: http://flask-app:5000
       PIB_MCP_ROSBRIDGE_URL: ws://rosbridge-ws:9090
       PIB_MCP_ENABLE_ACTUATION: "true"
+      # Same episodic store as the voice container; the daemon runs its own MCP
+      # server for Hermes turns and must read the same file.
+      PIB_MEMORY_DB_PATH: ${PIB_MEMORY_DB_PATH:-/data/pib_memory/episodic.db}
     volumes:
+      - ${PIB_MEMORY_DIR:-/data/pib_memory}:/data/pib_memory
       # Same filtered view the voice container uses: profiles plus the agent
       # sources, with the .env files covered by prepare-view.
       - type: bind
@@ -263,6 +267,9 @@ services:
       # Where the turn daemon listens FROM THE NODE'S POINT OF VIEW. Default is the
       # hermes-daemon service: the agent needs Python 3.14, this container has 3.12.
       - PIB_HERMES_DAEMON_URL=${PIB_HERMES_DAEMON_URL:-http://hermes-daemon:8088}
+      # Episodic memory must survive a container recreate: the default path sits
+      # inside the image's home and loses every episode on the next deploy.
+      - PIB_MEMORY_DB_PATH=${PIB_MEMORY_DB_PATH:-/data/pib_memory/episodic.db}
       # Empty means read /etc/pib_smart_chats. 0 disables the Hermes channel.
       - PIB_SMART_CHATS=${PIB_SMART_CHATS:-}
       # GEMINI_API_KEY / GOOGLE_API_KEY are deliberately NOT listed here: they
@@ -281,6 +288,8 @@ services:
       - PULSE_SERVER=unix:${XDG_RUNTIME_DIR:-/run/user/1000}/pulse/native
     volumes:
       - ${PIB_VOICE_DATA_DIR:-/data/voice}:/data/voice
+      # Episodic memory outlives the container; see PIB_MEMORY_DB_PATH above.
+      - ${PIB_MEMORY_DIR:-/data/pib_memory}:/data/pib_memory
       - /dev/snd:/dev/snd
       - /dev/dsp:/dev/dsp
       - ${XDG_RUNTIME_DIR:-/run/user/1000}:/run/user/1000

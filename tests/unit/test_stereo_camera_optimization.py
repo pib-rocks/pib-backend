@@ -114,6 +114,29 @@ except ImportError:
     sys.modules["std_msgs"] = std_msgs
     sys.modules["std_msgs.msg"] = std_msgs_msg
 
+try:
+    import std_srvs.srv  # noqa: F401
+except ImportError:
+    std_srvs = types.ModuleType("std_srvs")
+    std_srvs_srv = types.ModuleType("std_srvs.srv")
+
+    class _TriggerRequest:
+        pass
+
+    class _TriggerResponse:
+        def __init__(self):
+            self.success = False
+            self.message = ""
+
+    class _Trigger:
+        Request = _TriggerRequest
+        Response = _TriggerResponse
+
+    std_srvs_srv.Trigger = _Trigger
+    std_srvs.srv = std_srvs_srv
+    sys.modules["std_srvs"] = std_srvs
+    sys.modules["std_srvs.srv"] = std_srvs_srv
+
 
 class _CompressedImage:
     def __init__(self):

@@ -62,7 +62,12 @@ jobs:
       - name: Run unit tests
         env:
           PYTHONPATH: ${{ github.workspace }}
-        run: bash tests/run_unit_suite.sh
+        run: |
+          set +e
+          bash tests/run_unit_suite.sh 2>&1 | tee /tmp/unit.log
+          status=${PIPESTATUS[0]}
+          grep -E "^(FAILED|ERROR)" /tmp/unit.log | while read -r line; do echo "::error::$line"; done
+          exit $status
 
   jest:
     runs-on: ubuntu-latest
