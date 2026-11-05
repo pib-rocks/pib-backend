@@ -79,7 +79,7 @@ DEFAULT_IDLE_TIMEOUT_S = 180.0
 PLAYBACK_SLICE_BYTES = playback_slice_bytes(RECEIVE_SAMPLE_RATE, 2, CHANNELS)
 
 #: Acoustic tail after the last slice is written to ALSA before the speaker is quiet.
-PLAYBACK_TAIL_S = 0.20
+PLAYBACK_TAIL_S = 0.35
 
 #: Pre-roll chunks kept before speech onset (5 * 64 ms = 320 ms).
 PREROLL_CHUNKS = 5
@@ -166,6 +166,7 @@ class _PlaybackSink:
         self._cancel_epoch = 0
         self._queued_at: float | None = None
         self._writing = False
+        self._playhead = 0.0
         self._last_write_end = 0.0
         self._playing = False
         self._on_playing_change = on_playing_change
@@ -175,9 +176,8 @@ class _PlaybackSink:
     def is_playing(self) -> bool:
         if self._writing or not self._queue.empty():
             return True
-        if (
-            self._last_write_end > 0.0
-            and (time.monotonic() - self._last_write_end) < PLAYBACK_TAIL_S
+        if self._last_write_end > 0.0 and time.monotonic() < (
+            self._last_write_end + PLAYBACK_TAIL_S
         ):
             return True
         return False
@@ -267,6 +267,7 @@ class _PlaybackSink:
             pass
         self._queued_at = None
         self._writing = False
+        self._playhead = 0.0
         self._last_write_end = 0.0
         with self._stream_lock:
             stream = self._stream
@@ -346,7 +347,17 @@ class _PlaybackSink:
                             except Exception:
                                 pass
                 if self._cancel_epoch == epoch:
-                    self._last_write_end = time.monotonic()
+                    now_w = time.monotonic()
+                    if self._playhead < now_w:
+                        self._playhead = now_w
+                    self._playhead += len(slice_pcm) / (2.0 * RECEIVE_SAMPLE_RATE)
+                    self._last_write_end = self._playhead
+                    while (
+                        not self._stop.is_set()
+                        and self._cancel_epoch == epoch
+                        and (self._playhead - time.monotonic()) > 0.040
+                    ):
+                        self._stop.wait(0.010)
             self._writing = False
 
 
@@ -609,33 +620,47 @@ class TalkLiveLoop:
             return b"\x00" * len(pcm)
 
         rms = pcm_rms(pcm)
-        hw_fresh = (now - self._hw_vad_at) <= 1.2 and self._hw_vad_active
-        hw_speech_fresh = (now - self._hw_speech_at) <= 0.4
+        hw_vad_online = self._hw_vad_at > 0.0 and (now - self._hw_vad_at) < 5.0
+        hw_fresh = (now - self._hw_vad_at) <= 0.35 and self._hw_vad_active
+        hw_speech_fresh = (now - self._hw_speech_at) <= 0.35
 
         if self._player.is_playing:
-            # While pib is speaking, check two-stage barge-in:
-            # 1) Hardware AEC/VAD + speech_detected with real acoustic energy (>=1200 RMS)
-            # 2) Sustained loud voice above AEC residual (2 chunks = 128 ms)
+            self._in_user_speech = False
+            self._hangover_left = 0
+            # While pib is speaking, require hardware AEC/VAD confirmation when
+            # /voice_activity is online so AGC-boosted speaker echo (where the
+            # XVF3000 DSP reports VOICEACTIVITY=0 / hw_fresh=False) never
+            # self-interrupts or pollutes the pre-roll buffer.
             hw_confirmed = hw_fresh and hw_speech_fresh and rms >= HARDWARE_BARGE_IN_RMS
-            if rms >= ACOUSTIC_BARGE_IN_RMS or (
-                hw_fresh and rms >= HARDWARE_BARGE_IN_RMS
-            ):
-                self._loud_barge_streak += 1
+            if hw_vad_online:
+                if hw_fresh and rms >= HARDWARE_BARGE_IN_RMS:
+                    self._loud_barge_streak += 1
+                else:
+                    self._loud_barge_streak = 0
+                    self._preroll.clear()
             else:
-                self._loud_barge_streak = 0
+                if rms >= ACOUSTIC_BARGE_IN_RMS:
+                    self._loud_barge_streak += 1
+                else:
+                    self._loud_barge_streak = 0
 
             if hw_confirmed or self._loud_barge_streak >= 2:
-                reason = "hw_aec_vad" if hw_confirmed else "acoustic_rms"
+                reason = "hw_aec_vad" if hw_fresh else "acoustic_rms"
                 self._trigger_barge_in(reason, rms)
                 # Fall through to open user speech and flush pre-roll!
             else:
-                self._preroll.append(pcm)
+                if hw_fresh:
+                    self._preroll.append(pcm)
                 self._uplink_silence_chunks += 1
                 return b"\x00" * len(pcm)
 
-        speech_threshold = max(ACOUSTIC_SPEECH_RMS_FLOOR, self._noise_rms * 2.2)
-        vad_threshold = max(VAD_ASSISTED_RMS_FLOOR, self._noise_rms * 1.4)
-        is_speech = rms >= speech_threshold or (hw_fresh and rms >= vad_threshold)
+        speech_threshold = max(ACOUSTIC_SPEECH_RMS_FLOOR, self._noise_rms * 2.5)
+        vad_threshold = max(VAD_ASSISTED_RMS_FLOOR, self._noise_rms * 1.5)
+        if not self._in_user_speech and hw_vad_online:
+            # Speech onset requires hardware VAD when the ReSpeaker VAD topic is active.
+            is_speech = hw_fresh and rms >= vad_threshold
+        else:
+            is_speech = rms >= speech_threshold or (hw_fresh and rms >= vad_threshold)
 
         if is_speech:
             self._note_activity()
