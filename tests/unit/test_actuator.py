@@ -487,6 +487,32 @@ def test_tinkerforge_drive_sign_matches_legacy_invert(
     assert bricklet.commanded_positions == [(2, expected_bricklet_position)]
 
 
+@pytest.mark.parametrize(
+    ("upper_endpoint", "commanded", "raw_bricklet_pos"),
+    [
+        ("max", 3000, 3000),
+        ("min", 3000, -3000),
+        ("min", -9000, 9000),
+    ],
+)
+def test_servo_actuator_get_position_and_get_current_position_apply_direction_sign(
+    upper_endpoint, commanded, raw_bricklet_pos
+):
+    """Reading back from a ServoBrickletActuator converts raw bricklet sign back to motor space."""
+    bricklet = FakeServoBricklet(current_position=raw_bricklet_pos)
+    bricklet.get_position = lambda _pin: raw_bricklet_pos
+    actuator_module = _load_actuator_module({SERVO_UID: bricklet})
+    actuator = actuator_module.create_actuator(
+        "tinkerforge_bricklet", 2, SERVO_UID, upper_endpoint
+    )
+
+    assert actuator.set_position(commanded) is True
+    assert bricklet.commanded_positions == [(2, raw_bricklet_pos)]
+    assert actuator.get_position() == commanded
+    assert actuator.get_current_position() == commanded
+    assert actuator.has_reached_target() is True
+
+
 def test_the_legacy_servo_kind_name_still_resolves():
     """the database calls the family tinkerforge_bricklet; the name this build used before stays valid"""
     actuator_module = _load_actuator_module()

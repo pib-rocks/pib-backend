@@ -69,3 +69,33 @@ def test_voice_health_skip_before_unconditional_failure():
     fail_idx = text.find("exit 1")
     assert skip_idx != -1 and fail_idx != -1
     assert skip_idx < fail_idx, "skip path must come before exit 1"
+
+
+def test_setup_scripts_use_sudo_docker_fallback_and_respeaker_profile_3():
+    """Fresh setup-pib.sh runs before relogin, so docker commands need sudo -n docker fallback."""
+    install_model = (
+        REPO_ROOT / "setup" / "installation_scripts" / "install_robot_model.sh"
+    ).read_text(encoding="utf-8")
+    voice_health = VOICE_HEALTH.read_text(encoding="utf-8")
+    setup_pib = SETUP_PIB.read_text(encoding="utf-8")
+    compose = (REPO_ROOT / "docker-compose.yaml").read_text(encoding="utf-8")
+    assistant = (
+        REPO_ROOT
+        / "ros_packages"
+        / "voice_assistant"
+        / "voice_assistant"
+        / "assistant.py"
+    ).read_text(encoding="utf-8")
+
+    assert "docker_cmd()" in install_model
+    assert "sudo -n docker" in install_model
+    assert "docker_cmd()" in voice_health
+    assert "sudo -n docker" in voice_health
+    assert "wpctl set-profile" in setup_pib
+    assert "PIB_CLOUD_LIVE_SESSION=${PIB_CLOUD_LIVE_SESSION:-1}" in compose
+    assert (
+        "PIB_CLOUD_SESSION_TIMEOUT_SECONDS=${PIB_CLOUD_SESSION_TIMEOUT_SECONDS:-20}"
+        in compose
+    )
+    assert "PIB_DISPLAY_PASSWORD_PROMPT=0" in compose
+    assert '"PIB_CLOUD_LIVE_SESSION", "1"' in assistant

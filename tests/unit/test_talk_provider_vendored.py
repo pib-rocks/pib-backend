@@ -156,6 +156,99 @@ def test_uplink_silence_shaper_and_barge_in(monkeypatch):
     assert out_barge.endswith(loud)
 
 
+def test_hw_vad_gates_self_echo_during_playback_and_allows_real_barge_in(monkeypatch):
+    """When /voice_activity is online, speaker echo (hw_vad=False) cannot barge in or enter preroll."""
+    from ros_stubs import install_ros_stubs
+
+    install_ros_stubs()
+    _pyaudio = types.ModuleType("pyaudio")
+    _pyaudio.PyAudio = MagicMock()
+    _pyaudio.paInt16 = 8
+    monkeypatch.setitem(sys.modules, "pyaudio", _pyaudio)
+    _google = types.ModuleType("google")
+    _genai = types.ModuleType("google.genai")
+    _genai.Client = MagicMock()
+    _google.genai = _genai
+    monkeypatch.setitem(sys.modules, "google", _google)
+    monkeypatch.setitem(sys.modules, "google.genai", _genai)
+
+    from voice_assistant.talk_live_loop import PLAYBACK_TAIL_S, TalkLiveLoop
+
+    node = MagicMock()
+    loop = TalkLiveLoop(node)
+    loop._mute_uplink_until = 0.0
+
+    loud = (np.ones(1024, dtype="<i2") * 3000).tobytes()
+
+    # /voice_activity is online, but hardware VAD says no speech (pure speaker bleed)
+    loop._hw_vad_at = 20.0
+    loop._hw_vad_active = False
+    loop._player._writing = True
+    loop._server_generating = True
+
+    for i in range(6):
+        out = loop._shape_uplink_chunk(loud, 20.05 + i * 0.064)
+        assert out == b"\x00" * len(loud)
+        assert loop._barge_in_fenced is False
+        assert len(loop._preroll) == 0
+
+    # Even right after playback finishes, loud room tail without hw_vad=True does not start speech
+    loop._player._writing = False
+    loop._server_generating = False
+    out_after = loop._shape_uplink_chunk(loud, 20.6)
+    assert out_after == b"\x00" * len(loud)
+    assert loop._in_user_speech is False
+
+    # Playback real-time playhead & tail keeps is_playing True until _last_write_end + PLAYBACK_TAIL_S
+    now = 30.0
+    from voice_assistant import talk_live_loop as tll
+
+    monkeypatch.setattr(tll, "time", types.SimpleNamespace(monotonic=lambda: now))
+    loop._player._playhead = 30.2
+    loop._player._last_write_end = 30.2
+    assert loop._player.is_playing is True
+    now = 30.2 + PLAYBACK_TAIL_S + 0.05
+    assert loop._player.is_playing is False
+    loop._player._playhead = 40.0
+    loop._player._last_write_end = 40.0
+    loop._player.flush()
+    assert loop._player._playhead == 0.0
+    assert loop._player._last_write_end == 0.0
+    assert loop._player.is_playing is False
+
+
+def test_setup_message_omits_unsupported_thinking_config_for_live_model():
+    """gemini-2.0-flash-live-001 closes with 1007 if thinkingConfig is sent in setup."""
+    message = provider.build_setup_message(_setup())
+    gen_cfg = message["setup"]["generationConfig"]
+    assert "thinkingConfig" not in gen_cfg
+
+
+def test_each_session_creates_fresh_audio_queue_for_its_event_loop():
+    """Re-starting a conversation in a second asyncio.run loop must not reuse a loop-bound Queue."""
+    import asyncio
+    import inspect
+    from voice_assistant import talk_live_loop
+
+    src = inspect.getsource(talk_live_loop.TalkLiveLoop._session_main)
+    assert "self._audio_in_queue = asyncio.Queue(maxsize=64)" in src
+
+    for _ in range(2):
+        ev_loop = asyncio.new_event_loop()
+        try:
+            q = None
+
+            async def _run():
+                nonlocal q
+                q = asyncio.Queue(maxsize=64)
+                q.put_nowait(b"\x00" * 64)
+                assert await q.get() == b"\x00" * 64
+
+            ev_loop.run_until_complete(_run())
+        finally:
+            ev_loop.close()
+
+
 def test_resumption_handle_and_usage_metadata_tracking():
     """Setup forwards a resumption handle and decode records usageMetadata."""
     msg = provider.build_setup_message(_setup(), resumption_handle="resume-tok-42")

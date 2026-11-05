@@ -315,3 +315,60 @@ def test_power_off_stops_the_joint_state_publisher(monkeypatch):
 
     assert calls == []
     assert published == []
+
+
+def test_publish_joint_states_falls_back_to_connected_tinkerforge_motors(monkeypatch):
+    """On a Tinkerforge Servo Bricklet robot (0 Feetech ports), /joint_states publishes motor positions."""
+    import math
+    from pib_motors import joint_state_sweep
+
+    tinkerforge_motors = [
+        SimpleNamespace(
+            name="elbow_left",
+            check_if_motor_is_connected=lambda: True,
+            get_current_position=lambda: 3000,
+        ),
+        SimpleNamespace(
+            name="index_left_stretch",
+            check_if_motor_is_connected=lambda: True,
+            get_current_position=lambda: -9000,
+        ),
+        SimpleNamespace(
+            name="disconnected_joint",
+            check_if_motor_is_connected=lambda: False,
+            get_current_position=lambda: 4500,
+        ),
+    ]
+    module = _load_motor_control_for_batch({}, tinkerforge_motors)
+    empty = joint_state_sweep.JointStateSweepResult({}, 0.0, 0, 0)
+    monkeypatch.setattr(module, "sweep_feetech_joint_positions", lambda _m: empty)
+    monkeypatch.setattr(
+        module,
+        "JointState",
+        lambda: SimpleNamespace(
+            header=FakeHeader(), name=[], position=[], velocity=[], effort=[]
+        ),
+    )
+
+    published = []
+    node = SimpleNamespace(
+        _motor_power_is_off=lambda: False,
+        joint_state_publisher=SimpleNamespace(
+            publish=lambda msg: published.append(msg)
+        ),
+        get_clock=lambda: SimpleNamespace(
+            now=lambda: SimpleNamespace(
+                to_msg=lambda: SimpleNamespace(sec=10, nanosec=20)
+            )
+        ),
+        get_logger=lambda: SimpleNamespace(
+            info=lambda *_a, **_k: None, debug=lambda *_a, **_k: None
+        ),
+    )
+    module.MotorControl._publish_joint_states.__get__(node, module.MotorControl)()
+
+    assert len(published) == 1
+    msg = published[0]
+    assert list(msg.name) == ["elbow_left", "index_left_stretch"]
+    assert math.isclose(msg.position[0], math.radians(30.0), rel_tol=1e-6)
+    assert math.isclose(msg.position[1], math.radians(-90.0), rel_tol=1e-6)
