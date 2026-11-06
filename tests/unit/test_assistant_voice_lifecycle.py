@@ -558,7 +558,7 @@ def test_wake_word_standby_waits_for_hey_pib_and_runs_wake_up_and_go_sleep_progr
     assert started_live == []
     assert dispatched_programs == []
     assert node.record_audio.call_count == 1
-    assert node.record_audio.call_args.kwargs.get("stt_engine") == "local_whisper"
+    assert node.record_audio.call_args.kwargs.get("stt_engine") == "cloud_whisper"
 
     # Unrelated speech re-arms wake-word listening without waking up
     wake_cb = node.record_audio.call_args.args[3]

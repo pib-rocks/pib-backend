@@ -380,6 +380,8 @@ class AudioRecorderNode(Node):
 
             # Determine if this chunk is "silent"
             if self.is_silent(data_chunk):
+                if not speech_started and len(chunks) > 8:
+                    del chunks[:-8]
                 # Accumulate silence time
                 silent_time_accum += chunk_duration_secs
 
@@ -402,6 +404,10 @@ class AudioRecorderNode(Node):
 
         with self.audio_chunks_lock:
             self._recording_active = False
+
+        if not speech_started:
+            goal_handle.succeed()
+            return self.create_result("")
 
         # Recording phase has ended; notify client that we are transcribing.
         # end_of_speech is this decision, one pause threshold after the last

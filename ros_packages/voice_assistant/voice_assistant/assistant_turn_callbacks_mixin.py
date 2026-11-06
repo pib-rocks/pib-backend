@@ -625,13 +625,18 @@ class AssistantTurnCallbacksMixin:
         callback = self.if_cycle_not_changed(
             self._on_wake_word_transcript, require_voice_on=True
         )
+        wake_stt_engine = (
+            "cloud_whisper"
+            if self._cloud_session_allowed()
+            else (getattr(self.personality, "stt_engine", None) or "local_whisper")
+        )
         try:
             self.record_audio(
                 _assistant().MAX_SILENT_SECONDS_BEFORE,
                 0.6,
                 None,
                 callback,
-                stt_engine="local_whisper",
+                stt_engine=wake_stt_engine,
             )
         except TypeError:
             self.record_audio(
@@ -648,6 +653,8 @@ class AssistantTurnCallbacksMixin:
             or not getattr(self, "_waiting_for_wake_word", False)
         ):
             return
+        if transcribed_text and transcribed_text.strip():
+            self.get_logger().info(f"wake-word standby heard: {transcribed_text!r}")
         from pib_hermes_config.wake_word import matches_wake_word
 
         if not matches_wake_word(transcribed_text):

@@ -9,8 +9,8 @@ WAKE_WORD_PHRASE = "Hey, pib!"
 
 # Common Whisper / STT phonetic transcriptions for "Hey, pib!" in German and English.
 _WAKE_WORD_PATTERNS = (
-    r"\b(?:hey|hi|hallo|hello|okay|ok)\s*[,!.?\-]*\s*(?:pib|pip|pep|pipp|peb|piip|bip)\b",
-    r"\b(?:heypib|heypip|heypep|hallopib|hipib)\b",
+    r"\b(?:hey|hi|hallo|hello|okay|ok|ey|he|na)\s*[,!.?\-]*\s*(?:pib|pip|pep|pipp|peb|piip|bip|pit|pete|piep|pick|püb|püp|kib|kip|tip|tipp)\b",
+    r"\b(?:heypib|heypip|heypep|heypit|heypete|hallopib|hipib)\b",
 )
 _WAKE_WORD_REGEX = re.compile("|".join(_WAKE_WORD_PATTERNS), re.IGNORECASE)
 
