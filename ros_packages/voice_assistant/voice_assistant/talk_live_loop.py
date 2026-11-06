@@ -803,6 +803,15 @@ class TalkLiveLoop:
         self._session_paused = True
         try:
             outcome = execute_mcp_tool(name, parsed)
+            if (
+                name == "pib_remember"
+                and isinstance(outcome, dict)
+                and outcome.get("ok") is True
+                and self._personality_id
+            ):
+                note = str(parsed.get("text") or "").strip()
+                if note:
+                    self._append_profile_memory(self._personality_id, note)
         except Exception as exc:
             logger.exception("Tool %s failed", name)
             outcome = {
@@ -813,6 +822,29 @@ class TalkLiveLoop:
             self._mute_uplink_until = time.monotonic() + PLAYBACK_TAIL_S
             self._session_paused = False
         return json.dumps(outcome, ensure_ascii=False)
+
+    @staticmethod
+    def _append_profile_memory(personality_id: str, note: str) -> None:
+        """Mirror a pib_remember note into the Hermes profile's MEMORY.md."""
+        try:
+            from pib_hermes_config.memory import (
+                ENTRY_DELIMITER,
+                parse_entries,
+                read_memory,
+                write_memory,
+            )
+
+            existing = read_memory(personality_id)
+            entries = parse_entries(existing)
+            if note not in entries:
+                entries.append(note)
+                write_memory(personality_id, ENTRY_DELIMITER.join(entries))
+        except Exception:
+            logger.debug(
+                "Could not mirror pib_remember into MEMORY.md for %s",
+                personality_id,
+                exc_info=True,
+            )
 
     def _personality_text(self) -> str:
         """Assemble SOUL.md + robot_context + MEMORY.md + USER.md + live voice rules."""

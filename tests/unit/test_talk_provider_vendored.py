@@ -279,3 +279,22 @@ def test_resumption_handle_and_usage_metadata_tracking():
         "response_token_count": 45,
         "total_token_count": 165,
     }
+
+
+def test_pib_remember_mirrors_into_hermes_profile_memory_md(monkeypatch, tmp_path):
+    """pib_remember writes both to episodic SQLite and to the Hermes profile's MEMORY.md."""
+    from pib_hermes_config import memory as hermes_memory
+    from voice_assistant.talk_live_loop import TalkLiveLoop
+
+    monkeypatch.setattr(
+        hermes_memory, "profile_dir_for", lambda pid: str(tmp_path / f"pib_{pid}")
+    )
+    TalkLiveLoop._append_profile_memory("pers-1", "Lieblingsgetränk ist Espresso.")
+    TalkLiveLoop._append_profile_memory("pers-1", "Lieblingsgetränk ist Espresso.")
+    TalkLiveLoop._append_profile_memory("pers-1", "Heißt Jürgen.")
+
+    stored = hermes_memory.read_memory("pers-1")
+    assert hermes_memory.parse_entries(stored) == [
+        "Lieblingsgetränk ist Espresso.",
+        "Heißt Jürgen.",
+    ]
