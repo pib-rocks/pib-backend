@@ -124,6 +124,23 @@ class PersonalitySchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):
         allow_none=True,
         validate=validate.Length(max=255),
     )
+    use_wake_word = fields.Boolean(
+        required=False, load_default=False, dump_default=False
+    )
+    wake_up_program = fields.String(
+        required=False,
+        allow_none=True,
+        load_default=None,
+        dump_default=None,
+        validate=validate.Length(max=255),
+    )
+    go_sleep_program = fields.String(
+        required=False,
+        allow_none=True,
+        load_default=None,
+        dump_default=None,
+        validate=validate.Length(max=255),
+    )
     live_model = fields.Method("get_live_model", dump_only=True)
     voice_start_mode = fields.Method("get_voice_start_mode", dump_only=True)
     needs_new_model = fields.Method("get_needs_new_model", dump_only=True)

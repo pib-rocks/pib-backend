@@ -518,3 +518,68 @@ def test_a_missing_stored_voice_keeps_the_current_one(assistant_node):
     _call_real_refresh(node)
 
     assert node.personality.gender == "Male"
+
+
+def test_wake_word_standby_waits_for_hey_pib_and_runs_wake_up_and_go_sleep_programs(
+    assistant_node,
+):
+    from pib_hermes_config.wake_word import matches_wake_word, normalize_program_choice
+
+    assert matches_wake_word("Hey, pib!") is True
+    assert matches_wake_word("hey pib wie geht es dir") is True
+    assert matches_wake_word("Hallo pip") is True
+    assert matches_wake_word("Guten Morgen") is False
+    assert normalize_program_choice("  prog-42  ") == "prog-42"
+    assert normalize_program_choice("") is None
+    assert normalize_program_choice(None) is None
+
+    node = assistant_node
+    node.personality.use_wake_word = True
+    node.personality.wake_up_program = "prog-wake"
+    node.personality.go_sleep_program = "prog-sleep"
+    node.personality.voice_start_mode = "live"
+    node.personality.live_model = "gemini-3.8-live"
+    node.personality.live_idle_timeout = 60
+    node._cloud_session_allowed = lambda: True
+
+    started_live = []
+    node.gemini_loop = SimpleNamespace(
+        is_listening=False,
+        start=lambda **kw: started_live.append(kw),
+        stop=MagicMock(),
+    )
+    dispatched_programs = []
+    node.run_program_by_number = lambda p: dispatched_programs.append(p) if p else None
+
+    assert node.update_state(True, "chat-a") is True
+    assert node.state.turned_on is True
+    assert node._waiting_for_wake_word is True
+    assert node._dialog_active is False
+    assert started_live == []
+    assert dispatched_programs == []
+    assert node.record_audio.call_count == 1
+    assert node.record_audio.call_args.kwargs.get("stt_engine") == "local_whisper"
+
+    # Unrelated speech re-arms wake-word listening without waking up
+    wake_cb = node.record_audio.call_args.args[3]
+    wake_cb("Heute ist schönes Wetter")
+    assert node._waiting_for_wake_word is True
+    assert started_live == []
+    assert dispatched_programs == []
+    assert node.record_audio.call_count == 2
+
+    # Saying "Hey, pib!" triggers wake_up_program and starts the live dialog
+    wake_cb2 = node.record_audio.call_args.args[3]
+    wake_cb2("Hey, pib!")
+    assert node._waiting_for_wake_word is False
+    assert node._dialog_active is True
+    assert dispatched_programs == ["prog-wake"]
+    assert len(started_live) == 1
+    assert started_live[0]["chat_id"] == "chat-a"
+
+    # When the live session ends on idle timeout, go_sleep_program runs and it returns to standby
+    node._on_cloud_live_session_end("idle_timeout")
+    assert dispatched_programs == ["prog-wake", "prog-sleep"]
+    assert node.state.turned_on is True
+    assert node._waiting_for_wake_word is True
+    assert node._dialog_active is False

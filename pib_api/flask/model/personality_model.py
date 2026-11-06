@@ -95,3 +95,13 @@ class Personality(db.Model):
     # existing setting is left as it is. A new personality is created with
     # "none"; existing rows are not backfilled.
     reasoning_effort = db.Column(db.String(32), nullable=True)
+    # PR-1153: Wait for "Hey, pib!" before opening the active dialog, and run
+    # optional Blockly programs on wake-up and go-sleep transitions.
+    use_wake_word = db.Column(
+        db.Boolean,
+        nullable=False,
+        default=False,
+        server_default="0",
+    )
+    wake_up_program = db.Column(db.String(255), nullable=True)
+    go_sleep_program = db.Column(db.String(255), nullable=True)

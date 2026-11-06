@@ -165,6 +165,8 @@ class VoiceAssistantNode(AssistantTurnCallbacksMixin, AssistantLatencyMixin, Nod
         self._turn_trace_max_seconds = _turn_trace_max_seconds()
         self._text_turn_registry = TextTurnRegistry()
         self._barge_in_detector = BargeInDetector()
+        self._waiting_for_wake_word = False
+        self._dialog_active = False
 
         # services ----------------------------------------------------------------------
 
@@ -390,6 +392,17 @@ class VoiceAssistantNode(AssistantTurnCallbacksMixin, AssistantLatencyMixin, Nod
 
     def _on_cloud_live_session_end(self, reason: str) -> None:
         self.get_logger().info(f"pib.Cloud live session ended: {reason}")
+        pers = getattr(self, "personality", None)
+        if getattr(self, "_dialog_active", False):
+            self._dialog_active = False
+            self.run_program_by_number(getattr(pers, "go_sleep_program", None))
+        if (
+            getattr(self.state, "turned_on", False)
+            and not getattr(self, "turning_off", False)
+            and bool(getattr(pers, "use_wake_word", False))
+        ):
+            self._enter_wake_word_standby(getattr(self.state, "chat_id", ""))
+            return
         self.state.turned_on = False
         self.state.speaking = False
         self._publish_voice_state()
@@ -425,13 +438,17 @@ class VoiceAssistantNode(AssistantTurnCallbacksMixin, AssistantLatencyMixin, Nod
         max_silent_seconds_after: float,
         on_stopped_recording: Callable[[], None] = None,
         on_transcribed_text_received: Callable[[str], None] = None,
+        *,
+        stt_engine: Optional[str] = None,
     ) -> None:
 
         goal = RecordAudio.Goal()
         goal.max_silent_seconds_before = max_silent_seconds_before
         goal.max_silent_seconds_after = max_silent_seconds_after
         goal.stt_engine = (
-            getattr(self.personality, "stt_engine", None) or "local_whisper"
+            stt_engine
+            or getattr(self.personality, "stt_engine", None)
+            or "local_whisper"
         )
         feedback_callback = (
             None if on_stopped_recording is None else lambda _: on_stopped_recording()
@@ -598,6 +615,23 @@ class VoiceAssistantNode(AssistantTurnCallbacksMixin, AssistantLatencyMixin, Nod
         self.stop_program_execution = self.digest_goal_handle_future(
             future, result_callback
         )
+
+    def run_program_by_number(self, program_number: Optional[str]) -> None:
+        """Fire-and-forget a saved Blockly program by its programNumber (PR-1153)."""
+        cleaned = (
+            program_number.strip()
+            if isinstance(program_number, str) and program_number.strip()
+            else ""
+        )
+        if not cleaned:
+            return
+        client = getattr(self, "run_program_client", None)
+        if client is None:
+            return
+        goal = RunProgram.Goal()
+        goal.source_type = getattr(RunProgram.Goal, "SOURCE_PROGRAM_NUMBER", 0)
+        goal.source = cleaned
+        client.send_goal_async(goal)
 
     # serivce callbacks -----------------------------------------------------------------
 

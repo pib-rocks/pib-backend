@@ -92,6 +92,17 @@ class AssistantTurnCallbacksMixin:
             # window follows - measured on the test robot as seven
             # self-triggered turns with empty transcripts in four minutes
             # (PC-40). So: no chat turn, no speech, just listen again.
+            if bool(getattr(self.personality, "use_wake_word", False)):
+                self.get_logger().info(
+                    "nothing transcribed in active window; returning to wake-word standby"
+                )
+                if getattr(self, "_dialog_active", False):
+                    self._dialog_active = False
+                    runner = getattr(self, "run_program_by_number", None)
+                    if callable(runner):
+                        runner(getattr(self.personality, "go_sleep_program", None))
+                self._enter_wake_word_standby(self.state.chat_id)
+                return
             self.get_logger().info(
                 "nothing transcribed in this window; no chat turn, listening again"
             )
@@ -453,6 +464,13 @@ class AssistantTurnCallbacksMixin:
 
         # ---------- TURNING OFF ----------
         if not turned_on:
+            was_dialog_active = bool(getattr(self, "_dialog_active", False))
+            self._waiting_for_wake_word = False
+            self._dialog_active = False
+            if was_dialog_active and self.personality is not None:
+                runner = getattr(self, "run_program_by_number", None)
+                if callable(runner):
+                    runner(getattr(self.personality, "go_sleep_program", None))
             # Releasing the channel ends a live session. A turn-based session
             # still uses the legacy cleanup below.
             if self.gemini_loop.is_listening:
@@ -564,6 +582,91 @@ class AssistantTurnCallbacksMixin:
             self.gemini_loop.stop()
 
         self.personality = pers
+        if bool(getattr(pers, "use_wake_word", False)):
+            if (
+                turned_on == self.state.turned_on
+                and effective_chat_id == self.state.chat_id
+                and (
+                    getattr(self, "_waiting_for_wake_word", False)
+                    or getattr(self, "_dialog_active", False)
+                )
+            ):
+                return True
+            self.stop_chat(effective_chat_id)
+            self._invalidate_voice_async_work()
+            self._enter_wake_word_standby(effective_chat_id)
+            return True
+
+        self._waiting_for_wake_word = False
+        self._dialog_active = True
+        runner = getattr(self, "run_program_by_number", None)
+        if callable(runner):
+            runner(getattr(pers, "wake_up_program", None))
+        return self._start_active_dialog(effective_chat_id, pers, already_on_guard=True)
+
+    def _enter_wake_word_standby(self, chat_id: str) -> None:
+        """Wait locally for 'Hey, pib!' without opening a cloud session (PR-1153)."""
+        self._waiting_for_wake_word = True
+        self._dialog_active = False
+        self.waiting_for_transcribed_text = False
+        self.state.turned_on = True
+        self.state.chat_id = chat_id
+        self.state.speaking = False
+        self.set_is_listening(chat_id, True)
+        self._listen_for_wake_word()
+
+    def _listen_for_wake_word(self) -> None:
+        if (
+            not getattr(self.state, "turned_on", False)
+            or getattr(self, "turning_off", False)
+            or not getattr(self, "_waiting_for_wake_word", False)
+        ):
+            return
+        callback = self.if_cycle_not_changed(
+            self._on_wake_word_transcript, require_voice_on=True
+        )
+        try:
+            self.record_audio(
+                _assistant().MAX_SILENT_SECONDS_BEFORE,
+                0.6,
+                None,
+                callback,
+                stt_engine="local_whisper",
+            )
+        except TypeError:
+            self.record_audio(
+                _assistant().MAX_SILENT_SECONDS_BEFORE,
+                0.6,
+                None,
+                callback,
+            )
+
+    def _on_wake_word_transcript(self, transcribed_text: str) -> None:
+        if (
+            not getattr(self.state, "turned_on", False)
+            or getattr(self, "turning_off", False)
+            or not getattr(self, "_waiting_for_wake_word", False)
+        ):
+            return
+        from pib_hermes_config.wake_word import matches_wake_word
+
+        if not matches_wake_word(transcribed_text):
+            self._listen_for_wake_word()
+            return
+        self.get_logger().info(
+            f"wake word detected ({transcribed_text!r}); starting active dialog"
+        )
+        self._waiting_for_wake_word = False
+        self._dialog_active = True
+        pers = self.personality
+        runner = getattr(self, "run_program_by_number", None)
+        if callable(runner) and pers is not None:
+            runner(getattr(pers, "wake_up_program", None))
+        self._start_active_dialog(self.state.chat_id, pers, already_on_guard=False)
+
+    def _start_active_dialog(
+        self, effective_chat_id: str, pers: Any, *, already_on_guard: bool = True
+    ) -> bool:
         start_live = (
             getattr(pers, "voice_start_mode", None) == VOICE_MODE_LIVE
             and bool(getattr(pers, "live_model", None))
@@ -600,12 +703,11 @@ class AssistantTurnCallbacksMixin:
             if self.turning_off:
                 raise Exception("voice assistant is currently turning off")
             if (
-                turned_on == self.state.turned_on
+                already_on_guard
+                and True == self.state.turned_on
                 and effective_chat_id == self.state.chat_id
             ):
-                raise Exception(
-                    f"voice assistant is already turned {'on' if turned_on else 'off'}."
-                )
+                raise Exception("voice assistant is already turned on.")
 
             self.stop_chat(effective_chat_id)
             self.set_is_listening(effective_chat_id, False)
