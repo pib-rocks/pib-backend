@@ -298,3 +298,38 @@ def test_pib_remember_mirrors_into_hermes_profile_memory_md(monkeypatch, tmp_pat
         "Lieblingsgetränk ist Espresso.",
         "Heißt Jürgen.",
     ]
+
+
+def test_go_to_sleep_tool_marks_sleep_requested_and_stops_after_farewell(monkeypatch):
+    """go_to_sleep sets _sleep_requested so _idle_watchdog closes the session once playback ends."""
+    import asyncio
+    import json
+    from ros_stubs import install_ros_stubs
+
+    install_ros_stubs()
+    _pyaudio = types.ModuleType("pyaudio")
+    _pyaudio.PyAudio = MagicMock()
+    _pyaudio.paInt16 = 8
+    monkeypatch.setitem(sys.modules, "pyaudio", _pyaudio)
+    _google = types.ModuleType("google")
+    _genai = types.ModuleType("google.genai")
+    _genai.Client = MagicMock()
+    _google.genai = _genai
+    monkeypatch.setitem(sys.modules, "google", _google)
+    monkeypatch.setitem(sys.modules, "google.genai", _genai)
+
+    from voice_assistant.talk_live_loop import GO_TO_SLEEP_TOOL, TalkLiveLoop
+
+    assert GO_TO_SLEEP_TOOL.name == "go_to_sleep"
+    node = MagicMock()
+    loop = TalkLiveLoop(node)
+    res = json.loads(loop._run_tool("go_to_sleep", "{}"))
+    assert res["ok"] is True
+    assert loop._sleep_requested is True
+
+    loop._stop_event.clear()
+    loop._server_generating = False
+    loop._player._writing = False
+    loop._player._last_write_end = 0.0
+    asyncio.run(loop._idle_watchdog())
+    assert loop._stop_event.is_set() is True

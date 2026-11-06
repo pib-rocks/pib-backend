@@ -101,8 +101,10 @@ LIVE_VOICE_DIRECTIVE = (
     "Antworte natürlich, präzise und ohne Markdown-Formatierung in 1 bis 3 "
     "gesprochenen Sätzen, sofern der Nutzer keine ausführliche Erklärung "
     "wünscht. Nutze für Fragen zur Kameraszene sofort pib_describe_scene oder "
-    "capture_image, für Erinnerungen pib_recall bzw. pib_remember und für "
-    "komplexe Recherchen oder externe Skills ask_hermes_agent."
+    "capture_image, für Erinnerungen pib_recall bzw. pib_remember, zum "
+    "Beenden/Schlafengehen auf Wunsch des Nutzers ('Geh schlafen', 'Pause', "
+    "'Tschüss') go_to_sleep und für komplexe Recherchen oder externe Skills "
+    "ask_hermes_agent."
 )
 
 ASK_HERMES_TOOL = rt.ToolDefinition(
@@ -121,6 +123,19 @@ ASK_HERMES_TOOL = rt.ToolDefinition(
             }
         },
         "required": ["task"],
+    },
+)
+
+GO_TO_SLEEP_TOOL = rt.ToolDefinition(
+    name="go_to_sleep",
+    description=(
+        "Beendet das aktive Live-Sprachgespräch nach einer kurzen Verabschiedung "
+        "und versetzt pib in den Ruhezustand (wartend auf das Wake-Word 'Hey, pib!'), "
+        "wenn der Nutzer sagt 'Geh schlafen', 'Pause', 'Stopp' oder sich verabschiedet."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {},
     },
 )
 
@@ -504,6 +519,7 @@ class TalkLiveLoop:
         self._chat_id = chat_id or ""
         self._idle_timeout_s = float(idle_timeout_s or DEFAULT_IDLE_TIMEOUT_S)
         self._stop_event.clear()
+        self._sleep_requested = False
         self._listening = True
         self._speaking = False
         self._server_generating = False
@@ -747,12 +763,12 @@ class TalkLiveLoop:
                         ),
                     )
                     for entry in decls
-                ) + (ASK_HERMES_TOOL,)
+                ) + (ASK_HERMES_TOOL, GO_TO_SLEEP_TOOL)
                 _CACHED_MCP_TOOLS = tools
                 return tools
             except Exception:
                 logger.exception("Could not read the MCP tool declarations")
-                return (ASK_HERMES_TOOL,)
+                return (ASK_HERMES_TOOL, GO_TO_SLEEP_TOOL)
 
     def _run_tool(self, name: str, arguments: str) -> str:
         self._tools_called.append(name)
@@ -760,6 +776,13 @@ class TalkLiveLoop:
             parsed = json.loads(arguments) if arguments else {}
         except Exception:
             parsed = {}
+
+        if name == "go_to_sleep":
+            self._sleep_requested = True
+            return json.dumps(
+                {"ok": True, "status": "going_to_sleep_after_farewell"},
+                ensure_ascii=False,
+            )
 
         if name == "ask_hermes_agent":
             task = str(parsed.get("task") or "").strip()
@@ -1324,9 +1347,15 @@ class TalkLiveLoop:
     async def _idle_watchdog(self) -> None:
         while not self._stop_event.is_set():
             await asyncio.sleep(0.5)
-            if self._player.is_playing:
+            if self._player.is_playing or self._server_generating:
                 self._note_activity()
                 continue
+            if getattr(self, "_sleep_requested", False):
+                logger.info(
+                    "go_to_sleep tool completed farewell; stopping live session."
+                )
+                self._stop_event.set()
+                return
             if time.monotonic() - self._last_activity > self._idle_timeout_s:
                 logger.info(
                     "Live session idle for %.0fs; stopping so it does not keep billing.",
