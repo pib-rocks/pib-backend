@@ -30,9 +30,10 @@ import json
 import logging
 import os
 import queue
+import subprocess
 import threading
 import time
-from typing import Callable
+from typing import Any, Callable
 import uuid
 
 import numpy as np
@@ -147,6 +148,59 @@ GO_TO_SLEEP_TOOL = rt.ToolDefinition(
 _CACHED_MCP_TOOLS: tuple[rt.ToolDefinition, ...] | None = None
 _CACHED_MCP_TOOLS_LOCK = threading.Lock()
 
+RESPEAKER_CARD_NAME = "alsa_card.usb-SEEED_ReSpeaker_4_Mic_Array__UAC1.0_-00"
+RESPEAKER_PROFILE_3 = "output:analog-stereo+input:analog-surround-51"
+RESPEAKER_SINK_NAME = (
+    "alsa_output.usb-SEEED_ReSpeaker_4_Mic_Array__UAC1.0_-00.analog-stereo"
+)
+RESPEAKER_SOURCE_NAME = (
+    "alsa_input.usb-SEEED_ReSpeaker_4_Mic_Array__UAC1.0_-00.analog-surround-51"
+)
+
+
+def ensure_respeaker_profile_3() -> bool:
+    """Ensure PipeWire has the ReSpeaker 4-Mic Array on Profile 3 (6ch AEC) before live audio starts."""
+    if not os.getenv("PULSE_SERVER", "").strip():
+        return False
+    run_kwargs: dict[str, Any] = {
+        "capture_output": True,
+        "text": True,
+        "timeout": 3,
+    }
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        run_kwargs["user"] = 1000
+        run_kwargs["group"] = 1000
+    try:
+        sources = subprocess.run(
+            ["pactl", "list", "sources", "short"], **run_kwargs
+        ).stdout
+        if RESPEAKER_SOURCE_NAME not in sources:
+            subprocess.run(
+                [
+                    "pactl",
+                    "set-card-profile",
+                    RESPEAKER_CARD_NAME,
+                    RESPEAKER_PROFILE_3,
+                ],
+                **run_kwargs,
+            )
+            subprocess.run(
+                ["pactl", "set-default-sink", RESPEAKER_SINK_NAME],
+                **run_kwargs,
+            )
+            subprocess.run(
+                ["pactl", "set-default-source", RESPEAKER_SOURCE_NAME],
+                **run_kwargs,
+            )
+            logger.info(
+                "Switched ReSpeaker PipeWire profile to %s (6-channel AEC)",
+                RESPEAKER_PROFILE_3,
+            )
+            return True
+    except Exception:
+        logger.debug("Could not enforce ReSpeaker profile via pactl", exc_info=True)
+    return False
+
 
 def pcm_rms(pcm: bytes) -> float:
     """Root-mean-square amplitude of a s16le mono PCM chunk."""
@@ -216,6 +270,7 @@ class _PlaybackSink:
         if self._thread is not None and self._thread.is_alive():
             return
         self._stop.clear()
+        ensure_respeaker_profile_3()
         with self._stream_lock:
             if self._pyaudio is None:
                 self._pyaudio = pyaudio.PyAudio()
