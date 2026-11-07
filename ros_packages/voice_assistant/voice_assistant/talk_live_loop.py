@@ -103,27 +103,28 @@ LIVE_VOICE_DIRECTIVE = (
     "Antworte natürlich, präzise und ohne Markdown-Formatierung in 1 bis 3 "
     "gesprochenen Sätzen, sofern der Nutzer keine ausführliche Erklärung "
     "wünscht. Nutze für Fragen zur Kameraszene sofort pib_describe_scene oder "
-    "capture_image, für Erinnerungen pib_recall bzw. pib_remember, für "
-    "aktuelle Internet-Informationen (Wetter, Fahrpläne, Veranstaltungen, "
-    "Nachrichten) pib_web_search und sage dabei kurz „Moment, ich recherchiere.“, "
-    "zum Beenden/Schlafengehen auf Wunsch des Nutzers ('Geh schlafen', 'Pause', "
-    "'Tschüss') go_to_sleep und für komplexe Recherchen oder externe Skills "
-    "ask_hermes_agent."
+    "capture_image, für Erinnerungen pib_recall bzw. pib_remember, für ALLE "
+    "aktuellen Informationen aus dem Internet (Wetter, Standorte, Fahrpläne, "
+    "Veranstaltungen, Nachrichten, allgemeine Fakten) IMMER pib_web_search "
+    "(niemals ask_hermes_agent!) und sage dabei kurz „Moment, ich recherchiere.“, "
+    "und zum Beenden/Schlafengehen auf Wunsch des Nutzers ('Geh schlafen', "
+    "'Pause', 'Tschüss') go_to_sleep."
 )
 
 ASK_HERMES_TOOL = rt.ToolDefinition(
     name="ask_hermes_agent",
     description=(
-        "Delegiert komplexe Aufgaben, Web-Recherchen, Skills oder mehrstufige "
-        "Workflows an den vollständigen Hermes-Agenten dieser Persönlichkeit und "
-        "liefert dessen Antwort zurück."
+        "Delegiert ausschließlich interne mehrstufige System-Workflows an den "
+        "lokalen Hermes-Agenten. Für Internet-Suche, Wetter, Fahrpläne, "
+        "Veranstaltungen, Nachrichten oder Wissensfragen NIEMALS dieses Tool "
+        "nutzen, sondern IMMER pib_web_search verwenden."
     ),
     parameters={
         "type": "object",
         "properties": {
             "task": {
                 "type": "string",
-                "description": "Die genaue Frage oder Aufgabe für den Hermes-Agenten.",
+                "description": "Die genaue System-Aufgabe für den Hermes-Agenten.",
             }
         },
         "required": ["task"],
@@ -823,13 +824,22 @@ class TalkLiveLoop:
                 )
                 if reply:
                     return json.dumps({"ok": True, "reply": reply}, ensure_ascii=False)
-                return json.dumps(
-                    {"ok": False, "error": err or "daemon_no_reply"},
-                    ensure_ascii=False,
+            except Exception:
+                logger.info(
+                    "ask_hermes_agent daemon unavailable; falling back to pib_web_search"
                 )
-            except Exception as exc:
-                logger.exception("ask_hermes_agent failed")
-                return json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)
+            try:
+                from pib_hermes_config.cloud_search import search_cloud
+
+                search_res = search_cloud(task)
+                if search_res.get("ok"):
+                    return json.dumps(search_res, ensure_ascii=False)
+            except Exception:
+                pass
+            return json.dumps(
+                {"ok": False, "error": "daemon_no_reply"},
+                ensure_ascii=False,
+            )
 
         from pib_hermes_config.visible_state import (
             ANSWER_GESTURE_TOOLS,

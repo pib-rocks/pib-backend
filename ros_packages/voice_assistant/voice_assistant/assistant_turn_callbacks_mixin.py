@@ -302,6 +302,9 @@ class AssistantTurnCallbacksMixin:
         "could not hear you" line, which would hide a broken engine behind a
         sentence about silence.
         """
+        if getattr(self, "_waiting_for_wake_word", False):
+            self._listen_for_wake_word()
+            return
         cause = (msg.data or "").strip()
         self._stt_failure_cause = cause
         self.waiting_for_transcribed_text = False
