@@ -13,7 +13,9 @@ from typing import Any
 # 4452, ceiling 4485 with 33 characters of headroom.
 # PR-2231: pib_remember adds 177 characters; measured total 4629, ceiling 4660
 # with 31 characters of headroom.
-CHAT_MCP_TOOL_SCHEMA_BUDGET_CHARS = 4660
+# PR-2259: pib_web_search adds 226 characters; measured total 4855, ceiling 4885
+# with 30 characters of headroom.
+CHAT_MCP_TOOL_SCHEMA_BUDGET_CHARS = 4885
 
 DEFAULT_TOOL_PAYLOAD_BUDGET_BYTES = 8 * 1024
 
@@ -27,6 +29,7 @@ TOOL_PAYLOAD_BUDGET_BYTES: dict[str, int] = {
     "apply_joint_trajectory": 8 * 1024,
     "pib_describe_scene": 6 * 1024,
     "pib_locate_object": 2 * 1024,
+    "pib_web_search": 4 * 1024,
 }
 
 

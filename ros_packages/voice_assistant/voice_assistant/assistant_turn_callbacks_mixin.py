@@ -736,3 +736,11 @@ class AssistantTurnCallbacksMixin:
 
         self._publish_voice_state()
         return True
+
+    def speak_filler_notice(self, text: str) -> None:
+        if not text or not text.strip():
+            return
+        try:
+            self.text_to_speech(text.strip(), self.get_TtsEngine(), lambda: None)
+        except Exception as exc:
+            self.get_logger().warning(f"speak_filler_notice failed: {exc}")

@@ -96,13 +96,17 @@ ACOUSTIC_SPEECH_RMS_FLOOR = 380.0
 ACOUSTIC_BARGE_IN_RMS = 1600.0
 HARDWARE_BARGE_IN_RMS = 1200.0
 
+SEARCH_FILLER_TEXT = "Moment, ich recherchiere."
+
 LIVE_VOICE_DIRECTIVE = (
     "Du führst ein direktes Echtzeit-Sprachgespräch auf Deutsch. "
     "Antworte natürlich, präzise und ohne Markdown-Formatierung in 1 bis 3 "
     "gesprochenen Sätzen, sofern der Nutzer keine ausführliche Erklärung "
     "wünscht. Nutze für Fragen zur Kameraszene sofort pib_describe_scene oder "
-    "capture_image, für Erinnerungen pib_recall bzw. pib_remember, zum "
-    "Beenden/Schlafengehen auf Wunsch des Nutzers ('Geh schlafen', 'Pause', "
+    "capture_image, für Erinnerungen pib_recall bzw. pib_remember, für "
+    "aktuelle Internet-Informationen (Wetter, Fahrpläne, Veranstaltungen, "
+    "Nachrichten) pib_web_search und sage dabei kurz „Moment, ich recherchiere.“, "
+    "zum Beenden/Schlafengehen auf Wunsch des Nutzers ('Geh schlafen', 'Pause', "
     "'Tschüss') go_to_sleep und für komplexe Recherchen oder externe Skills "
     "ask_hermes_agent."
 )
@@ -770,12 +774,29 @@ class TalkLiveLoop:
                 logger.exception("Could not read the MCP tool declarations")
                 return (ASK_HERMES_TOOL, GO_TO_SLEEP_TOOL)
 
+    def _emit_search_filler(self, tool_name: str) -> None:
+        logger.info("Emitting spoken filler cue for %s", tool_name)
+        speak = getattr(self._node, "speak_filler_notice", None)
+        if not callable(speak):
+            return
+        try:
+            speak(SEARCH_FILLER_TEXT)
+        except Exception:
+            pass
+
     def _run_tool(self, name: str, arguments: str) -> str:
         self._tools_called.append(name)
         try:
             parsed = json.loads(arguments) if arguments else {}
         except Exception:
             parsed = {}
+
+        if (
+            name in ("pib_web_search", "ask_hermes_agent")
+            and self._turn_audio_bytes == 0
+            and not self._player.is_playing
+        ):
+            self._emit_search_filler(name)
 
         if name == "go_to_sleep":
             self._sleep_requested = True

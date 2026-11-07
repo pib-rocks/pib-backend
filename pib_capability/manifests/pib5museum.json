@@ -24,7 +24,8 @@
     "pib_recall",
     "pib_remember",
     "pib_describe_scene",
-    "pib_locate_object"
+    "pib_locate_object",
+    "pib_web_search"
   ],
   "learned_skills": [],
   "limits": {
