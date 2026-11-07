@@ -399,3 +399,43 @@ def test_talk_live_pib_web_search_skips_filler_when_turn_audio_started(monkeypat
 
     loop._run_tool("pib_web_search", '{"query": "Wetter heute"}')
     node.speak_filler_notice.assert_not_called()
+
+
+def test_ensure_respeaker_profile_3_switches_card_when_surround_51_missing(monkeypatch):
+    """ensure_respeaker_profile_3 runs pactl as uid 1000 and sets profile 3 when surround-51 is absent."""
+    import subprocess
+    from ros_stubs import install_ros_stubs
+
+    install_ros_stubs()
+    _pyaudio = types.ModuleType("pyaudio")
+    _pyaudio.PyAudio = MagicMock()
+    _pyaudio.paInt16 = 8
+    monkeypatch.setitem(sys.modules, "pyaudio", _pyaudio)
+    _google = types.ModuleType("google")
+    _genai = types.ModuleType("google.genai")
+    _genai.Client = MagicMock()
+    _google.genai = _genai
+    monkeypatch.setitem(sys.modules, "google", _google)
+    monkeypatch.setitem(sys.modules, "google.genai", _genai)
+
+    from voice_assistant.talk_live_loop import (
+        RESPEAKER_CARD_NAME,
+        RESPEAKER_PROFILE_3,
+        ensure_respeaker_profile_3,
+    )
+
+    monkeypatch.setenv("PULSE_SERVER", "unix:/run/user/1000/pulse/native")
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append((cmd, kwargs))
+        return types.SimpleNamespace(
+            stdout="58\talsa_input.usb-SEEED_ReSpeaker.analog-surround-21\tRUNNING\n"
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert ensure_respeaker_profile_3() is True
+    assert any(
+        cmd == ["pactl", "set-card-profile", RESPEAKER_CARD_NAME, RESPEAKER_PROFILE_3]
+        for cmd, _ in calls
+    )
