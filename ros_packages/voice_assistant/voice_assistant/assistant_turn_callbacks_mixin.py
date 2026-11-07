@@ -594,6 +594,9 @@ class AssistantTurnCallbacksMixin:
                 return True
             self.stop_chat(effective_chat_id)
             self._invalidate_voice_async_work()
+            runner = getattr(self, "run_program_by_number", None)
+            if callable(runner):
+                runner(getattr(pers, "go_sleep_program", None))
             self._enter_wake_word_standby(effective_chat_id)
             return True
 
