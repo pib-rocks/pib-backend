@@ -556,7 +556,7 @@ def test_wake_word_standby_waits_for_hey_pib_and_runs_wake_up_and_go_sleep_progr
     assert node._waiting_for_wake_word is True
     assert node._dialog_active is False
     assert started_live == []
-    assert dispatched_programs == ["4"]
+    assert dispatched_programs == ["prog-sleep"]
     dispatched_programs.clear()
     assert node.record_audio.call_count == 1
     assert node.record_audio.call_args.kwargs.get("stt_engine") == "cloud_whisper"
