@@ -333,3 +333,69 @@ def test_go_to_sleep_tool_marks_sleep_requested_and_stops_after_farewell(monkeyp
     loop._player._last_write_end = 0.0
     asyncio.run(loop._idle_watchdog())
     assert loop._stop_event.is_set() is True
+
+
+def test_talk_live_pib_web_search_emits_search_filler_when_silent(monkeypatch):
+    from ros_stubs import install_ros_stubs
+
+    install_ros_stubs()
+    _pyaudio = types.ModuleType("pyaudio")
+    _pyaudio.PyAudio = MagicMock()
+    _pyaudio.paInt16 = 8
+    monkeypatch.setitem(sys.modules, "pyaudio", _pyaudio)
+    _google = types.ModuleType("google")
+    _genai = types.ModuleType("google.genai")
+    _genai.Client = MagicMock()
+    _google.genai = _genai
+    monkeypatch.setitem(sys.modules, "google", _google)
+    monkeypatch.setitem(sys.modules, "google.genai", _genai)
+
+    import json
+
+    from voice_assistant.talk_live_loop import SEARCH_FILLER_TEXT, TalkLiveLoop
+
+    node = MagicMock()
+    loop = TalkLiveLoop(node)
+    loop._turn_audio_bytes = 0
+    loop._player._writing = False
+    loop._player._last_write_end = 0.0
+
+    monkeypatch.setattr(
+        "voice_assistant.direct_tool_loop.execute_mcp_tool",
+        lambda name, args: {"ok": True, "answer": "sonnig"},
+    )
+
+    loop._run_tool("pib_web_search", '{"query": "Wetter heute"}')
+    node.speak_filler_notice.assert_called_once_with(SEARCH_FILLER_TEXT)
+
+
+def test_talk_live_pib_web_search_skips_filler_when_turn_audio_started(monkeypatch):
+    from ros_stubs import install_ros_stubs
+
+    install_ros_stubs()
+    _pyaudio = types.ModuleType("pyaudio")
+    _pyaudio.PyAudio = MagicMock()
+    _pyaudio.paInt16 = 8
+    monkeypatch.setitem(sys.modules, "pyaudio", _pyaudio)
+    _google = types.ModuleType("google")
+    _genai = types.ModuleType("google.genai")
+    _genai.Client = MagicMock()
+    _google.genai = _genai
+    monkeypatch.setitem(sys.modules, "google", _google)
+    monkeypatch.setitem(sys.modules, "google.genai", _genai)
+
+    from voice_assistant.talk_live_loop import TalkLiveLoop
+
+    node = MagicMock()
+    loop = TalkLiveLoop(node)
+    loop._turn_audio_bytes = 960
+    loop._player._writing = False
+    loop._player._last_write_end = 0.0
+
+    monkeypatch.setattr(
+        "voice_assistant.direct_tool_loop.execute_mcp_tool",
+        lambda name, args: {"ok": True, "answer": "sonnig"},
+    )
+
+    loop._run_tool("pib_web_search", '{"query": "Wetter heute"}')
+    node.speak_filler_notice.assert_not_called()

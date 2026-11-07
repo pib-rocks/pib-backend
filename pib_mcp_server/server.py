@@ -207,6 +207,14 @@ def create_server(
             return {"ok": False, "reason": exc.code}
         return build_locate_object_response(scene, name.strip())
 
+    @server.tool(annotations=read_annotations, structured_output=True)
+    def pib_web_search(query: NonEmptyString) -> dict[str, Any]:
+        """Read-only. Search the web via pib.Cloud for current information (weather, timetables, events, news)."""
+
+        from pib_hermes_config.cloud_search import search_cloud
+
+        return search_cloud(query.strip())
+
     def _motor_limits_degrees(
         motor: dict[str, Any],
     ) -> tuple[float, float] | None:

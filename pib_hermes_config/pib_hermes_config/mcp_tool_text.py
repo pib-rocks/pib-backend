@@ -64,6 +64,10 @@ MCP_TOOL_DESCRIPTIONS: dict[str, str] = {
         "Findet ein beschriftetes Objekt in der Szene (Entfernung in Metern); "
         "Groß-/Kleinschreibung beim Label ist egal."
     ),
+    "pib_web_search": (
+        "Recherchiert aktuelle Informationen aus dem Internet (Wetter, Fahrpläne, "
+        "Veranstaltungen, Nachrichten, Fakten) über pib.Cloud."
+    ),
 }
 
 

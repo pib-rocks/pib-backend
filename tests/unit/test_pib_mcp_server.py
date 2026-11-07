@@ -1,6 +1,8 @@
 """Unit coverage for the schema and safety boundary of the pib MCP server."""
 
 import asyncio
+import json
+import urllib.error
 
 import pytest
 
@@ -276,6 +278,7 @@ def test_tool_discovery_exposes_complete_declared_surface():
         "pib_describe_scene",
         "pib_locate_object",
         "pib_remember",
+        "pib_web_search",
     }
 
 
@@ -495,4 +498,92 @@ def test_soul_append_rejects_oversized_lesson_before_backend():
             {"personality_id": "personality-1", "lesson": "x" * 501},
         )
 
+    assert backend.calls == []
+
+
+def test_search_cloud_rejects_empty_query():
+    from pib_hermes_config.cloud_search import search_cloud
+
+    assert search_cloud("") == {"ok": False, "reason": "query_empty"}
+    assert search_cloud("   \n") == {"ok": False, "reason": "query_empty"}
+
+
+def test_search_cloud_success(monkeypatch):
+    from pib_hermes_config.cloud_search import search_cloud
+
+    monkeypatch.setenv("PIB_CLOUD_TOKEN", "test-token")
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def read(self):
+            return json.dumps(
+                {
+                    "query": "Wetter Berlin",
+                    "answer": "Sonnig, 18°C",
+                    "sources": [{"title": "Example", "url": "https://example.com"}],
+                }
+            ).encode("utf-8")
+
+    captured = {}
+
+    def fake_urlopen(request, timeout=None):
+        captured["auth"] = request.headers.get("Authorization")
+        captured["body"] = json.loads(request.data.decode("utf-8"))
+        return _Resp()
+
+    monkeypatch.setattr(
+        "pib_hermes_config.cloud_search.urllib.request.urlopen", fake_urlopen
+    )
+
+    result = search_cloud("  Wetter Berlin  ")
+    assert result["ok"] is True
+    assert result["answer"] == "Sonnig, 18°C"
+    assert captured["body"]["query"] == "Wetter Berlin"
+    assert captured["auth"] == "Bearer test-token"
+    assert "test-token" not in json.dumps(result)
+
+
+def test_search_cloud_http_error_redacts_token(monkeypatch):
+    from pib_hermes_config.cloud_search import search_cloud
+
+    secret = "leak-me-not"
+    monkeypatch.setenv("PIB_CLOUD_TOKEN", secret)
+
+    def fake_urlopen(request, timeout=None):
+        raise urllib.error.HTTPError(request.full_url, 502, "Bad Gateway", {}, None)
+
+    monkeypatch.setattr(
+        "pib_hermes_config.cloud_search.urllib.request.urlopen", fake_urlopen
+    )
+
+    result = search_cloud("Nachrichten")
+    assert result == {"ok": False, "reason": "http_502"}
+    assert secret not in str(result)
+    assert secret not in repr(result)
+
+
+def test_pib_web_search_mcp_tool(monkeypatch):
+    from pib_hermes_config import cloud_search
+
+    monkeypatch.setattr(
+        cloud_search,
+        "search_cloud",
+        lambda query: {
+            "ok": True,
+            "query": query,
+            "answer": "done",
+            "sources": [],
+        },
+    )
+
+    backend = FakeBackend()
+    server = create_server(backend)
+    result = _call(server, "pib_web_search", {"query": "Verkehr A81"})
+    assert result["ok"] is True
+    assert result["answer"] == "done"
     assert backend.calls == []
