@@ -25,6 +25,16 @@ def _resolve_bearer_token() -> str:
     if token:
         return token
     try:
+        from pib_api_client.key_store_client import read_provider_key
+
+        state = read_provider_key("pib-cloud")
+        if isinstance(state, dict) and state.get("mode") == "unlocked":
+            secret = state.get("secret")
+            if isinstance(secret, str) and secret.strip():
+                return secret.strip()
+    except Exception:
+        pass
+    try:
         if _TOKEN_FILE.is_file():
             return _TOKEN_FILE.read_text(encoding="utf-8").strip()
     except OSError:
