@@ -191,7 +191,14 @@ class Log:
     warning = error = info
 
 
-def recorder(tmp_path, monkeypatch, local_text="local sentence", local_error=None):
+def recorder(
+    tmp_path,
+    monkeypatch,
+    local_text="local sentence",
+    local_error=None,
+    *,
+    hardware_vad=None,
+):
     # Compile the actual production record_audio method, not a rewritten test
     # implementation. Only ROS message/types are substituted; its routing,
     # failure handling, WAV bytes and goal lifecycle all execute unchanged.
@@ -246,6 +253,7 @@ def recorder(tmp_path, monkeypatch, local_text="local sentence", local_error=Non
         mic_channels=1,
         sample_rate=16000,
         stt_language="de",
+        _hardware_vad=hardware_vad,
         stt_engine=types.SimpleNamespace(
             transcribe=transcribe, active_backend="faster-whisper-small"
         ),
@@ -351,3 +359,15 @@ def test_unsupported_engine_never_uploads(tmp_path, monkeypatch):
     )
     assert run("foreign_engine").transcribed_text == ""
     assert events == ["abort"] and not calls
+
+
+def test_recorder_hardware_vad_false_skips_upload_without_abort(tmp_path, monkeypatch):
+    """A genuinely silent window with explicit hardware VAD must not hit STT."""
+    run, events, calls, log = recorder(tmp_path, monkeypatch, hardware_vad=False)
+    monkeypatch.setattr(
+        dispatch,
+        "transcribe",
+        lambda *a, **kw: pytest.fail("silent window must not upload"),
+    )
+    assert run().transcribed_text == ""
+    assert events == ["succeed"] and not calls

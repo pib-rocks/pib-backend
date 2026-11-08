@@ -405,7 +405,10 @@ class AudioRecorderNode(Node):
         with self.audio_chunks_lock:
             self._recording_active = False
 
-        if not speech_started:
+        # Amplitude-only "never spoke" is not grounds to skip STT: quiet speech can
+        # sit under the threshold. Only skip upload when hardware VAD explicitly
+        # reports no speech for the whole window (None => no VAD yet, always transcribe).
+        if not speech_started and self._hardware_vad is False:
             goal_handle.succeed()
             return self.create_result("")
 

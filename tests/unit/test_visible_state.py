@@ -250,7 +250,18 @@ def test_direct_turn_issues_a_gesture_through_the_mcp_execute():
 
 
 def test_surfaces_read_the_same_state():
-    assistant = ASSISTANT.read_text(encoding="utf-8")
+    # The node's source now spans assistant.py plus its mixins (PR-2260 split
+    # playback helpers into assistant_playback_mixin.py). The surfaces read the
+    # same state, so the markers are checked across the combined node source.
+    assistant = "\n".join(
+        (ASSISTANT.parent / name).read_text(encoding="utf-8")
+        for name in (
+            "assistant.py",
+            "assistant_turn_callbacks_mixin.py",
+            "assistant_latency_mixin.py",
+            "assistant_playback_mixin.py",
+        )
+    )
     face = EXPRESSION.read_text(encoding="utf-8")
     ring = RING.read_text(encoding="utf-8")
     direct = DIRECT.read_text(encoding="utf-8")
