@@ -201,6 +201,7 @@ def test_extracted_modules_obey_logger_contract():
         PKG / "chat_hermes_mixin.py",
         PKG / "assistant_latency_mixin.py",
         PKG / "assistant_turn_callbacks_mixin.py",
+        PKG / "assistant_playback_mixin.py",
     ):
         _no_logger_exc_info(path)
 

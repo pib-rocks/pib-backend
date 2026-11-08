@@ -29,8 +29,8 @@ def test_pib5edu_soul_section_lists_all_manifest_tools():
     section = _build_mcp_tools_soul_section("pib5edu")
     for skill in manifest["skills"]:
         assert f"### {mcp_tool_name(skill)}" in section
-    assert len(manifest["skills"]) == 22
-    assert section.count(MCP_TOOL_NAME_PREFIX) == 22
+    assert len(manifest["skills"]) == 23
+    assert section.count(MCP_TOOL_NAME_PREFIX) == 23
 
 
 def test_skill_without_description_is_reported():
