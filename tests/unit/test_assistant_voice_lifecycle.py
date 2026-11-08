@@ -139,9 +139,11 @@ def assistant_node(monkeypatch):
     from voice_assistant.assistant_turn_callbacks_mixin import (
         AssistantTurnCallbacksMixin,
     )
+    from voice_assistant.assistant_playback_mixin import AssistantPlaybackMixin
 
     ns["AssistantLatencyMixin"] = AssistantLatencyMixin
     ns["AssistantTurnCallbacksMixin"] = AssistantTurnCallbacksMixin
+    ns["AssistantPlaybackMixin"] = AssistantPlaybackMixin
 
     tree = ast.parse(SOURCE.read_text())
     cls = next(
@@ -494,12 +496,12 @@ def test_an_edited_voice_applies_to_the_next_turn(assistant_node):
     The refresh used to read only the pause threshold and the filler, so a changed voice
     stayed inaudible until a restart and looked like the setting had no effect.
     """
-    from voice_assistant import assistant as assistant_stub
+    from pib_api_client import voice_assistant_client
 
     node = assistant_node
     node.personality.gender = "Female"
     fresh = SimpleNamespace(pause_threshold=0.5, thinking_filler="", gender="Male")
-    assistant_stub.voice_assistant_client.get_personality = lambda _pid: (True, fresh)
+    voice_assistant_client.get_personality = lambda _pid: (True, fresh)
 
     # The fixture stubs the method on the instance; call the real one.
     _call_real_refresh(node)
@@ -508,12 +510,12 @@ def test_an_edited_voice_applies_to_the_next_turn(assistant_node):
 
 
 def test_a_missing_stored_voice_keeps_the_current_one(assistant_node):
-    from voice_assistant import assistant as assistant_stub
+    from pib_api_client import voice_assistant_client
 
     node = assistant_node
     node.personality.gender = "Male"
     fresh = SimpleNamespace(pause_threshold=0.5, thinking_filler="", gender=None)
-    assistant_stub.voice_assistant_client.get_personality = lambda _pid: (True, fresh)
+    voice_assistant_client.get_personality = lambda _pid: (True, fresh)
 
     _call_real_refresh(node)
 
