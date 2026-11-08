@@ -523,7 +523,14 @@ class MotorControl(Node):
             return
         started = time.monotonic()
         sweep = sweep_feetech_joint_positions(motors)
-        positions = sweep.positions_centideg
+        positions = dict(sweep.positions_centideg)
+        if not positions and sweep.ports_attempted == 0 and not sweep.ports_unreachable:
+            for motor in motors:
+                try:
+                    if motor.check_if_motor_is_connected():
+                        positions[motor.name] = int(round(motor.get_current_position()))
+                except Exception:
+                    continue
         if not positions:
             return
 

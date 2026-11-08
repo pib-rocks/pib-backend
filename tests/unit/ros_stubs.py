@@ -147,6 +147,19 @@ def install_ros_stubs():
 
     action.Chat = _Chat
 
+    class _RunProgramGoal:
+        SOURCE_PROGRAM_NUMBER = 0
+        SOURCE_CODE_VISUAL = 1
+
+        def __init__(self):
+            self.source_type = 0
+            self.source = ""
+
+    class _RunProgram:
+        Goal = _RunProgramGoal
+
+    action.RunProgram = _RunProgram
+
     msg = ensure("datatypes.msg")
 
     class _ChatMessage:
@@ -186,6 +199,17 @@ def install_ros_stubs():
     srv.GetCameraImage = _GetCameraImage
     srv.VisionPrompt = _VisionPrompt
     srv.CreateOrUpdateChatMessage = _CreateOrUpdateChatMessage
+
+    class _PlayAudioFromFile:
+        class Request:
+            pass
+
+    class _PlayAudioFromSpeech:
+        class Request:
+            pass
+
+    srv.PlayAudioFromFile = _PlayAudioFromFile
+    srv.PlayAudioFromSpeech = _PlayAudioFromSpeech
 
     # --- pib / public api clients (if not already importable) ---
     if "pib_api_client" not in sys.modules:

@@ -60,6 +60,19 @@ class Personality:
         self.effective_channel = (
             reported if reported in ("smart", "direct") else self.channel
         )
+        self.use_wake_word = bool(personality_dto.get("useWakeWord", False))
+        raw_wake_up = personality_dto.get("wakeUpProgram")
+        self.wake_up_program = (
+            raw_wake_up.strip()
+            if isinstance(raw_wake_up, str) and raw_wake_up.strip()
+            else None
+        )
+        raw_go_sleep = personality_dto.get("goSleepProgram")
+        self.go_sleep_program = (
+            raw_go_sleep.strip()
+            if isinstance(raw_go_sleep, str) and raw_go_sleep.strip()
+            else None
+        )
         self.assistant_model = self._resolve_assistant_model(personality_dto)
 
     def _resolve_assistant_model(

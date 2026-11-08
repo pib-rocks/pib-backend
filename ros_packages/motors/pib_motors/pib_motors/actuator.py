@@ -168,7 +168,7 @@ class ServoBrickletActuator:
         target = self._target_position
         if target is None:
             return True
-        current_position = self.get_current_position()
+        current_position = self.get_current_position() * self.direction_sign
 
         return abs(current_position - target) <= self.POSITION_TOLERANCE
 
@@ -177,7 +177,7 @@ class ServoBrickletActuator:
         if not self.is_connected():
             return 0
         try:
-            return self.bricklet.get_position(self.pin)
+            return int(self.bricklet.get_position(self.pin)) * self.direction_sign
         except Exception:
             return 0
 
@@ -186,8 +186,8 @@ class ServoBrickletActuator:
         if not self.is_connected():
             return 0
         try:
-            position = self.bricklet.get_current_position(self.pin)
-            return position
+            position = int(self.bricklet.get_current_position(self.pin))
+            return position * self.direction_sign
         except Exception:
             return 0
 

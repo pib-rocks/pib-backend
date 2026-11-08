@@ -500,11 +500,11 @@ class DisplayNode(Node):
     def offer_password_prompt(self) -> None:
         """Open the password page on this screen while the store is locked.
 
-        A key store that cannot be read yet is retried. It does not fail the
-        display. After the last attempt the face stays up and the robot
-        remains in degraded mode.
+        Disabled by default (`PIB_DISPLAY_PASSWORD_PROMPT=0`): key-store setup
+        and unlocking happen in Cerebra, never as a blocking overlay on the
+        robot's face display.
         """
-        if os.environ.get("PIB_DISPLAY_PASSWORD_PROMPT", "1") == "0":
+        if os.environ.get("PIB_DISPLAY_PASSWORD_PROMPT", "0") != "1":
             self._prompt_timer.cancel()
             return
         # The prompt replaces the face; "ready" has to be on the topic before "web".

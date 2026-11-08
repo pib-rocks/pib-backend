@@ -298,7 +298,7 @@ function install_wireplumber_respeaker_mic_array() {
   fi
 
   if command_exists wpctl; then
-    local attempt
+    local attempt respeaker_id
     for attempt in 1 2 3 4 5 6 7 8 9 10; do
       if sudo -u pib XDG_RUNTIME_DIR="/run/user/${pib_uid}" \
         wpctl status >/dev/null 2>&1; then
@@ -306,6 +306,12 @@ function install_wireplumber_respeaker_mic_array() {
       fi
       sleep 1
     done
+    respeaker_id="$(sudo -u pib XDG_RUNTIME_DIR="/run/user/${pib_uid}" wpctl status 2>/dev/null \
+      | awk '/Audio/{f=1} f && /Sinks:/{exit} f && /ReSpeaker/{gsub(/[^0-9]/,"",$2); print $2; exit}')"
+    if [ -n "$respeaker_id" ]; then
+      sudo -u pib XDG_RUNTIME_DIR="/run/user/${pib_uid}" \
+        wpctl set-profile "$respeaker_id" 3 >/dev/null 2>&1 || true
+    fi
   fi
 
   print SUCCESS "Restarted wireplumber for user 'pib'"

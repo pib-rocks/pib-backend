@@ -41,6 +41,7 @@ from pib_hermes_config.live_session import (
 )
 from pib_hermes_config.memory import write_memory
 from pib_hermes_config.turn_taking import normalize_thinking_filler
+from pib_hermes_config.wake_word import normalize_program_choice
 from pib_hermes_config.voice_backends import (
     CLOUD_STT_ID,
     CLOUD_TTS_ID,
@@ -524,6 +525,27 @@ def _apply_thinking_filler(personality: Personality, personality_dto: Any) -> No
     )
 
 
+def _apply_wake_word_settings(
+    personality: Personality, personality_dto: Any, *, creating: bool
+) -> None:
+    if creating or "use_wake_word" in personality_dto:
+        personality.use_wake_word = bool(personality_dto.get("use_wake_word", False))
+    if creating or "wake_up_program" in personality_dto:
+        try:
+            personality.wake_up_program = normalize_program_choice(
+                personality_dto.get("wake_up_program")
+            )
+        except ValueError as exc:
+            raise ValidationError({"wakeUpProgram": [str(exc)]}) from exc
+    if creating or "go_sleep_program" in personality_dto:
+        try:
+            personality.go_sleep_program = normalize_program_choice(
+                personality_dto.get("go_sleep_program")
+            )
+        except ValueError as exc:
+            raise ValidationError({"goSleepProgram": [str(exc)]}) from exc
+
+
 def _tool_calling_value(personality_dto: Any, default: bool) -> bool:
     if "tool_calling" not in personality_dto:
         return default
@@ -652,6 +674,7 @@ def create_personality(personality_dto: Any) -> Personality:
     )
     _apply_live_chat_settings(personality, personality_dto, creating=True)
     _apply_thinking_filler(personality, personality_dto)
+    _apply_wake_word_settings(personality, personality_dto, creating=True)
     _apply_provider_choice(personality, personality_dto, creating=True)
     _store_derived_voice_mode(personality)
     # The STT default follows the chosen model, so it runs after that choice.
@@ -760,6 +783,7 @@ def update_personality(personality_id: str, personality_dto: Any) -> Personality
     _apply_live_chat_settings(personality, personality_dto, creating=False)
     _apply_voice_backends(personality, personality_dto, creating=False)
     _apply_thinking_filler(personality, personality_dto)
+    _apply_wake_word_settings(personality, personality_dto, creating=False)
     _apply_memory(personality, personality_dto)
     db.session.flush()
     return personality

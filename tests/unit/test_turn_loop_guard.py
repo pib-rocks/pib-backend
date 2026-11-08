@@ -35,6 +35,7 @@ def _assistant_combined_source() -> str:
     for mixin_name in (
         "assistant_latency_mixin.py",
         "assistant_turn_callbacks_mixin.py",
+        "assistant_playback_mixin.py",
     ):
         mixin_path = VOICE_ROOT / "voice_assistant" / mixin_name
         if mixin_path.is_file():
@@ -58,28 +59,29 @@ def test_only_spoken_text_opens_a_turn():
 def test_the_assistant_asks_that_question_before_it_chats():
     source = _assistant_combined_source()
     assert "transcript_opens_turn(" in source
-    # The guard sits in on_transcribed_text_received, before _start_spoken_turn
-    # and before the chat call.
     received = source.index("def on_transcribed_text_received")
-    block = source[received : received + 1600]
+    block = source[received : received + 4000]
     assert "transcript_opens_turn(" in block
-    assert block.index("transcript_opens_turn(") < block.index("self.chat(")
-    # And it must not start a spoken turn for an empty window.
-    assert block.index("transcript_opens_turn(") < block.index(
-        "self._start_spoken_turn()"
-    )
+    turn_guard = block.index("transcript_opens_turn(")
+    spoken_turn = block.index("self._start_spoken_turn()")
+    chat_call = block.index("self.chat(")
+    assert turn_guard < spoken_turn < chat_call
 
 
 def test_an_empty_window_only_restarts_the_listening_cycle():
-    """No chat, no speech: the start signal re-opens the recording window."""
+    """No chat, no speech: wake-word standby or the start tone re-opens listening."""
     source = _assistant_combined_source()
     received = source.index("def on_transcribed_text_received")
-    block = source[received : received + 1600]
-    assert "nothing transcribed in this window" in block
-    assert "START_SIGNAL_FILE" in block
-    # The empty branch returns before anything is played to the user.
-    empty_branch = block[block.index("nothing transcribed in this window") :]
-    assert "play_audio_from_speech" not in empty_branch.split("def ", 1)[0]
+    block = source[received : received + 4000]
+    assert "transcript_opens_turn(" in block
+    turn_guard = block.index("if not transcript_opens_turn(")
+    spoken_turn = block.index("self._start_spoken_turn()")
+    empty_branch = block[turn_guard:spoken_turn]
+    assert "self.chat(" not in empty_branch
+    assert (
+        "_enter_wake_word_standby(" in empty_branch
+        or "START_SIGNAL_FILE" in empty_branch
+    )
 
 
 def test_a_recording_window_waits_for_the_answer_audio_to_drain():

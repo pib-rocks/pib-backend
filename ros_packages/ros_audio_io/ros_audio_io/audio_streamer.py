@@ -87,6 +87,7 @@ class AudioStreamer(Node):
         )
 
     def _open_device(self):
+        self._ensure_respeaker_profile_3()
         if self.py_audio is None:
             self.py_audio = pyaudio.PyAudio()
         self.input_device_index = None
@@ -162,6 +163,35 @@ class AudioStreamer(Node):
             self.processed_channel_index = 0
 
         return dev_name, backend
+
+    def _ensure_respeaker_profile_3(self) -> None:
+        if not os.getenv("PULSE_SERVER", "").strip():
+            return
+        import subprocess
+
+        run_kwargs = {"capture_output": True, "text": True, "timeout": 3}
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            run_kwargs["user"] = 1000
+            run_kwargs["group"] = 1000
+        target_source = (
+            "alsa_input.usb-SEEED_ReSpeaker_4_Mic_Array__UAC1.0_-00.analog-surround-51"
+        )
+        try:
+            sources = subprocess.run(
+                ["pactl", "list", "sources", "short"], **run_kwargs
+            ).stdout
+            if target_source not in sources:
+                subprocess.run(
+                    [
+                        "pactl",
+                        "set-card-profile",
+                        "alsa_card.usb-SEEED_ReSpeaker_4_Mic_Array__UAC1.0_-00",
+                        "output:analog-stereo+input:analog-surround-51",
+                    ],
+                    **run_kwargs,
+                )
+        except Exception:
+            pass
 
     def _attempt_open_device(self):
         self.open_attempts += 1

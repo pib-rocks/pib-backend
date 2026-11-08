@@ -242,11 +242,13 @@ services:
       # Sold cloud API, distinct from the robot-local Flask API above.
       - PIB_CLOUD_BASE_URL=${PIB_CLOUD_BASE_URL:-https://api.pib.rocks/v1}
       - PIB_CLOUD_STT_TIMEOUT_SECONDS=${PIB_CLOUD_STT_TIMEOUT_SECONDS:-3}
+      - PIB_CLOUD_SESSION_TIMEOUT_SECONDS=${PIB_CLOUD_SESSION_TIMEOUT_SECONDS:-20}
       - PIB_CLOUD_MODE=${PIB_CLOUD_MODE:-test}
       # Which live voice path answers: "gemini" (speech-to-speech) or "duplex"
       # (the pib.Cloud relay answers and speaks; transcription stays on the robot).
       # Default keeps the path every robot runs today; a robot opts in per host.
       - PIB_VOICE_BACKEND=${PIB_VOICE_BACKEND:-gemini}
+      - PIB_CLOUD_LIVE_SESSION=${PIB_CLOUD_LIVE_SESSION:-1}
       - PIB_CLOUD_VOICE_URL=${PIB_CLOUD_VOICE_URL:-wss://api.pib.rocks/v1/pib/stream}
       # Channels the array publishes. 1 unless the driver reports its raw channels.
       - PIB_MIC_CHANNELS=${PIB_MIC_CHANNELS:-1}
@@ -395,6 +397,7 @@ services:
       - PIB_DISPLAY_POLL_MS=5
       - PIB_UPDATE_DIR=/app/.update
       - FLASK_API_BASE_URL=http://flask-app:5000
+      - PIB_DISPLAY_PASSWORD_PROMPT=0
       - PIB_KEY_STORE_PROMPT_URL=http://127.0.0.1:5000/system/key-store/display
       - XDG_RUNTIME_DIR=/run/user/1000
       - WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-wayland-0}
