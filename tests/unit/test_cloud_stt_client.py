@@ -363,9 +363,7 @@ def test_unsupported_engine_never_uploads(tmp_path, monkeypatch):
 
 def test_recorder_hardware_vad_false_skips_upload_without_abort(tmp_path, monkeypatch):
     """A genuinely silent window with explicit hardware VAD must not hit STT."""
-    run, events, calls, log = recorder(
-        tmp_path, monkeypatch, hardware_vad=False
-    )
+    run, events, calls, log = recorder(tmp_path, monkeypatch, hardware_vad=False)
     monkeypatch.setattr(
         dispatch,
         "transcribe",
