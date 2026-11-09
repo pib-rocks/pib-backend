@@ -71,6 +71,12 @@ def _run(script, store, option, *, asset_url, asset_sha, cache):
     env["PIB_MODEL_ASSET_URL"] = asset_url
     env["PIB_MODEL_ASSET_SHA256"] = asset_sha
     env["PIB_WHISPER_DOWNLOAD"] = "0"
+    # Hermetic: whisper_repo_root() falls back to BACKEND_DIR ("$HOME/app/pib-backend")
+    # when the fixture lacks voice/whisper-model.yaml. On an installed robot that points
+    # at the real checkout, so the whisper/supertone steps would run and fail (weights
+    # absent + download disabled). Point HOME at a scratch dir so those steps see no
+    # voice-model.yaml and skip, exactly as they do on a clean CI host.
+    env["HOME"] = str(cache.parent)
     return subprocess.run(
         ["bash", str(script), option],
         text=True,
