@@ -157,6 +157,9 @@ run_check() {
     cerebra_target="$REMOTE_TARGET"
     cerebra_error="$REMOTE_ERROR"
 
+    git -C "$BACKEND_DIR" fetch --tags --force --quiet origin >/dev/null 2>&1 || log "pib-backend tag fetch skipped"
+    git -C "$CEREBRA_DIR" fetch --tags --force --quiet origin >/dev/null 2>&1 || log "cerebra tag fetch skipped"
+
     local checked_at spec_file releases_file
     checked_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     spec_file="$UPDATE_DIR/.check-spec.json"

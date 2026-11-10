@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -275,6 +277,81 @@ def test_classify_github_release_matches_pair_releases_draft_rule():
         == "prerelease"
     )
     assert releases.classify_github_release(_release("v1.0.0")) == "published"
+
+
+def test_resolve_commit_prefers_local_git_before_default_transport(monkeypatch):
+    transport_calls: list[str] = []
+
+    def counting_transport(url: str):
+        transport_calls.append(url)
+        return 404, {}
+
+    monkeypatch.setattr(releases, "_default_transport", counting_transport)
+    monkeypatch.setattr(
+        releases, "_resolve_local_tag_commit", lambda _repo, _tag: SHA_A
+    )
+    sha = releases.resolve_commit(
+        releases.BACKEND_REPO, "v1.0.0", releases._default_transport
+    )
+    assert sha == SHA_A
+    assert transport_calls == []
+
+
+def test_resolve_commit_custom_transport_skips_local_until_http_fails(
+    monkeypatch, tmp_path
+):
+    local_calls: list[tuple[str, str]] = []
+
+    def local(repo: str, tag: str) -> str | None:
+        local_calls.append((repo, tag))
+        return SHA_B
+
+    monkeypatch.setattr(releases, "_resolve_local_tag_commit", local)
+    monkeypatch.setenv("PIB_BACKEND_DIR", str(tmp_path))
+
+    def transport(url: str):
+        return 200, {"sha": SHA_A}
+
+    sha = releases.resolve_commit(releases.BACKEND_REPO, "v1.0.0", transport)
+    assert sha == SHA_A
+    assert local_calls == []
+
+    def failing_transport(url: str):
+        return 404, {}
+
+    sha = releases.resolve_commit(releases.BACKEND_REPO, "v1.0.0", failing_transport)
+    assert sha == SHA_B
+    assert local_calls == [(releases.BACKEND_REPO, "v1.0.0")]
+
+
+def test_resolve_local_tag_commit_reads_peeled_tag(tmp_path, monkeypatch):
+    repo = tmp_path / "backend"
+    repo.mkdir()
+    env = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": "test",
+        "GIT_AUTHOR_EMAIL": "test@example.com",
+        "GIT_COMMITTER_NAME": "test",
+        "GIT_COMMITTER_EMAIL": "test@example.com",
+    }
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "init"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        env=env,
+    )
+    subprocess.run(["git", "tag", "v1.0.0"], cwd=repo, check=True, capture_output=True)
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    monkeypatch.setenv("PIB_BACKEND_DIR", str(repo))
+    assert releases._resolve_local_tag_commit(releases.BACKEND_REPO, "v1.0.0") == head
 
 
 def test_changed_commit_map_does_not_rewrite_an_already_paired_document():
