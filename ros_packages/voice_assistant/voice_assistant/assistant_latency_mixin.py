@@ -15,11 +15,16 @@ from voice_assistant.turn_latency import (
     append_record,
     audio_event_belongs_to_turn,
     default_log_path,
+    format_event,
     format_perf_trace_tts_first_audio,
     now_ms,
     parse_event,
     render_line,
     tts_first_audio_elapsed_ms,
+)
+
+_CLOUD_LIVE_SESSION_NORMAL_END_REASONS = frozenset(
+    {"closed", "stopped", "idle_timeout"}
 )
 
 
@@ -339,6 +344,30 @@ class AssistantLatencyMixin:
             self._close_latency_turn(incomplete=True)
         except Exception as exc:
             self.get_logger().warning(f"turn trace watchdog failed: {exc}")
+
+    def _publish_abnormal_live_session_ended_trace(self, reason: str) -> None:
+        """Publish ``live_session_ended`` when pib.Cloud ends the session abnormally."""
+        if not reason or reason in _CLOUD_LIVE_SESSION_NORMAL_END_REASONS:
+            return
+        publisher = getattr(self, "_turn_trace_publisher", None)
+        if publisher is None:
+            return
+        try:
+            from std_msgs.msg import String
+
+            message = String()
+            message.data = format_event(
+                "live_session_ended",
+                ts_ms=now_ms(),
+                source="pib-cloud",
+                chat_id=getattr(self.state, "chat_id", "") or "",
+                detail={"reason": reason},
+            )
+            publisher.publish(message)
+        except Exception as exc:
+            self.get_logger().warning(
+                f"live_session_ended trace was not published: {exc}"
+            )
 
     def _schedule_voice_callback(self, callback: Callable) -> None:
         """Timers admit work on the single ROS executor, never across teardown."""

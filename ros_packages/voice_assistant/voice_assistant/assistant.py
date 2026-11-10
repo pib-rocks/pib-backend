@@ -396,6 +396,7 @@ class VoiceAssistantNode(
 
     def _on_cloud_live_session_end(self, reason: str) -> None:
         self.get_logger().info(f"pib.Cloud live session ended: {reason}")
+        self._publish_abnormal_live_session_ended_trace(reason)
         pers = getattr(self, "personality", None)
         if getattr(self, "_dialog_active", False):
             self._dialog_active = False
