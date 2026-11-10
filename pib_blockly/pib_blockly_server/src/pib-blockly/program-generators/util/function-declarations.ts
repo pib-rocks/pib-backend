@@ -693,7 +693,7 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(side: str = "both", parts: str = "al
                 "shoulder_vertical_right": -7300.0,
                 "upper_arm_right_rotation": 0.0,
                 "elbow_right": 500.0,
-                "lower_arm_right_rotation": 1100.0,
+                "lower_arm_right_rotation": -1100.0,
                 "shoulder_horizontal_right": 7500.0,
             }
             if side in ("both", "left"):
@@ -732,7 +732,7 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(side: str = "both", parts: str = "al
                     sh_v = 5000.0 - wy * 13.0 - 2000.0
                     targets["upper_arm_right_rotation"] = -0.5 * sh_h
                     targets["shoulder_vertical_right"] = 0.5 * sh_v - 1000.0
-                    targets["lower_arm_right_rotation"] = 7400.0
+                    targets["lower_arm_right_rotation"] = -7400.0
                     targets["elbow_right"] = 3700.0
                 if parts in ("all", "fingers"):
                     targets["thumb_right_opposition"] = -3.0 * (
