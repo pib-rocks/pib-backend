@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -394,6 +395,49 @@ def _require_repo(repo: str) -> None:
         raise ValueError(f"unsupported repository: {repo}")
 
 
+def _local_repo_dir(repo: str) -> str | None:
+    if repo == BACKEND_REPO:
+        directory = os.environ.get("PIB_BACKEND_DIR", "/home/pib/app/pib-backend")
+    elif repo == CEREBRA_REPO:
+        directory = os.environ.get("PIB_CEREBRA_DIR", "/home/pib/app/cerebra")
+    else:
+        return None
+    directory = directory.strip()
+    if directory and os.path.isdir(directory):
+        return directory
+    return None
+
+
+def _resolve_local_tag_commit(repo: str, tag: str) -> str | None:
+    """Return the peeled commit for a local tag ref, if the checkout has it."""
+    repo_dir = _local_repo_dir(repo)
+    if repo_dir is None:
+        return None
+    try:
+        completed = subprocess.run(
+            [
+                "git",
+                "-C",
+                repo_dir,
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                f"refs/tags/{tag}^{{commit}}",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if completed.returncode != 0:
+        return None
+    sha = completed.stdout.strip()
+    if SHA.fullmatch(sha):
+        return sha
+    return None
+
+
 def list_releases(repo: str, transport: Transport) -> list[object]:
     _require_repo(repo)
     collected: list[object] = []
@@ -415,12 +459,17 @@ def resolve_commit(repo: str, tag: str, transport: Transport) -> str | None:
         raise ValueError(
             "refusing to resolve a tag that is not a stable system release"
         )
+    if transport is _default_transport:
+        local_sha = _resolve_local_tag_commit(repo, tag)
+        if local_sha is not None:
+            return local_sha
     status, payload = transport(f"{API}/repos/{repo}/commits/{tag}")
-    if status != 200 or not isinstance(payload, dict):
-        return None
-    sha = payload.get("sha")
-    if isinstance(sha, str) and SHA.fullmatch(sha):
-        return sha
+    if status == 200 and isinstance(payload, dict):
+        sha = payload.get("sha")
+        if isinstance(sha, str) and SHA.fullmatch(sha):
+            return sha
+    if _local_repo_dir(repo) is not None:
+        return _resolve_local_tag_commit(repo, tag)
     return None
 
 
