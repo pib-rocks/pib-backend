@@ -46,4 +46,6 @@ export const RESERVED_WORDS = [
     "StopModel",
     "DetectionArray",
     "_blockly_model_manager",
+    "_imitate_hands_state",
+    "imitate_hands",
 ].join(",");

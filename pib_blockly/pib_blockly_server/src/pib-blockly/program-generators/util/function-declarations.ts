@@ -593,6 +593,196 @@ export const GET_HEAD_POSE_DETECTIONS_FUNCTION = (
 `,
   );
 
+export const IMITATE_HANDS_FUNCTION = (generator: typeof pythonGenerator) => `
+_imitate_hands_state = {
+    "sub": None,
+    "msg": None,
+    "seq": 0,
+    "last_seq": -1,
+    "future": None,
+    "last_cdeg": {},
+    "no_hand_sent": False,
+}
+
+def ${generator.FUNCTION_NAME_PLACEHOLDER_}(side: str = "both", parts: str = "all") -> None:
+    if _imitate_hands_state["sub"] is None:
+
+        def _on_hand_msg(msg):
+            _imitate_hands_state["msg"] = msg
+            _imitate_hands_state["seq"] += 1
+
+        _imitate_hands_state["sub"] = node.create_subscription(
+            DetectionArray,
+            "/detections/hand_tracking_fast",
+            _on_hand_msg,
+            10,
+        )
+        deadline = time.monotonic() + 0.5
+        while _imitate_hands_state["msg"] is None and time.monotonic() < deadline:
+            rclpy.spin_once(node, timeout_sec=0.1)
+
+    rclpy.spin_once(node, timeout_sec=0.02)
+    if _imitate_hands_state["seq"] == _imitate_hands_state["last_seq"]:
+        spin_deadline = time.monotonic() + 0.08
+        while (
+            _imitate_hands_state["seq"] == _imitate_hands_state["last_seq"]
+            and time.monotonic() < spin_deadline
+        ):
+            rclpy.spin_once(node, timeout_sec=0.01)
+
+    if _imitate_hands_state["msg"] is None:
+        return
+    if _imitate_hands_state["seq"] == _imitate_hands_state["last_seq"]:
+        return
+    if (
+        _imitate_hands_state["future"] is not None
+        and not _imitate_hands_state["future"].done()
+    ):
+        return
+
+    _imitate_hands_state["last_seq"] = _imitate_hands_state["seq"]
+    msg = _imitate_hands_state["msg"]
+    fw = float(msg.frame_width or 1280.0)
+    fh = float(msg.frame_height or 720.0)
+
+    valid_hands = [
+        det
+        for det in msg.detections
+        if len(det.keypoint_x) >= 21
+        and len(det.keypoint_y) >= 21
+        and len(det.keypoint_z) >= 21
+    ]
+
+    def _handedness(det):
+        if "handedness" in det.scalar_names:
+            index = det.scalar_names.index("handedness")
+            if index < len(det.scalar_values):
+                return float(det.scalar_values[index])
+        return 0.5
+
+    def _clamp_joint(name, val):
+        if name in ("elbow_left", "elbow_right"):
+            return max(-4500.0, min(9000.0, val))
+        return max(-9000.0, min(9000.0, val))
+
+    def _bend_angle(pts, i0, i1, i2, i3):
+        v1 = (pts[i0][0] - pts[i1][0], pts[i0][1] - pts[i1][1], pts[i0][2] - pts[i1][2])
+        v2 = (pts[i2][0] - pts[i3][0], pts[i2][1] - pts[i3][1], pts[i2][2] - pts[i3][2])
+        n1 = math.sqrt(v1[0] * v1[0] + v1[1] * v1[1] + v1[2] * v1[2])
+        n2 = math.sqrt(v2[0] * v2[0] + v2[1] * v2[1] + v2[2] * v2[2])
+        if n1 < 1e-6 or n2 < 1e-6:
+            return 0.0
+        cos_a = max(
+            -1.0,
+            min(1.0, (v1[0] * v2[0] + v1[1] * v2[1] + v1[2] * v2[2]) / (n1 * n2)),
+        )
+        return math.acos(cos_a)
+
+    targets = {}
+
+    if len(valid_hands) == 0:
+        if parts in ("all", "arms") and not _imitate_hands_state["no_hand_sent"]:
+            rest_left = {
+                "shoulder_vertical_left": -7900.0,
+                "upper_arm_left_rotation": 0.0,
+                "elbow_left": 0.0,
+                "lower_arm_left_rotation": 0.0,
+                "shoulder_horizontal_left": 9000.0,
+            }
+            rest_right = {
+                "shoulder_vertical_right": -7300.0,
+                "upper_arm_right_rotation": 0.0,
+                "elbow_right": 500.0,
+                "lower_arm_right_rotation": 1100.0,
+                "shoulder_horizontal_right": 7500.0,
+            }
+            if side in ("both", "left"):
+                targets.update(rest_left)
+            if side in ("both", "right"):
+                targets.update(rest_right)
+            _imitate_hands_state["no_hand_sent"] = True
+    else:
+        _imitate_hands_state["no_hand_sent"] = False
+        for det in valid_hands:
+            handedness = _handedness(det)
+            is_person_right = handedness > 0.5
+            robot_side = "left" if is_person_right else "right"
+            if side not in ("both", robot_side):
+                continue
+
+            pts = [
+                (
+                    det.keypoint_x[k] / fw,
+                    det.keypoint_y[k] / fw,
+                    det.keypoint_z[k],
+                )
+                for k in range(21)
+            ]
+            wx = (det.keypoint_x[0] / fw) * 1152.0
+            wy = (det.keypoint_y[0] / fh) * 648.0
+            a_thumb = _bend_angle(pts, 1, 2, 4, 3)
+            a_idx = _bend_angle(pts, 5, 6, 8, 7)
+            a_mid = _bend_angle(pts, 9, 10, 12, 11)
+            a_rng = _bend_angle(pts, 13, 14, 16, 15)
+            a_ltl = _bend_angle(pts, 17, 18, 20, 19)
+
+            if robot_side == "right":
+                if parts in ("all", "arms"):
+                    sh_h = wx * 13.0 - 10000.0
+                    sh_v = 5000.0 - wy * 13.0 - 2000.0
+                    targets["upper_arm_right_rotation"] = -0.5 * sh_h
+                    targets["shoulder_vertical_right"] = 0.5 * sh_v - 1000.0
+                    targets["lower_arm_right_rotation"] = 7400.0
+                    targets["elbow_right"] = 3700.0
+                if parts in ("all", "fingers"):
+                    targets["thumb_right_opposition"] = -3.0 * (
+                        a_thumb * 5000.0 - 9000.0
+                    )
+                    targets["index_right_stretch"] = -(a_idx * 5000.0 - 6000.0)
+                    targets["middle_right_stretch"] = -(a_mid * 5000.0 - 9000.0)
+                    targets["ring_right_stretch"] = -(a_rng * 5000.0 - 9000.0)
+                    targets["pinky_right_stretch"] = -(a_ltl * 5000.0 - 9000.0)
+            else:
+                if parts in ("all", "arms"):
+                    sh_h = wx * 13.0 - 4000.0
+                    sh_v = wy * 13.0 - 4000.0
+                    targets["upper_arm_left_rotation"] = 0.5 * sh_h
+                    targets["shoulder_vertical_left"] = -0.5 * sh_v - 1000.0
+                    targets["elbow_left"] = 2500.0
+                    targets["lower_arm_left_rotation"] = 9000.0
+                if parts in ("all", "fingers"):
+                    targets["thumb_left_opposition"] = -3.0 * (
+                        a_thumb * 5000.0 - 9000.0
+                    )
+                    targets["index_left_stretch"] = -(a_idx * 5000.0 - 9000.0)
+                    targets["middle_left_stretch"] = -(a_mid * 5000.0 - 9000.0)
+                    targets["ring_left_stretch"] = -(a_rng * 5000.0 - 6000.0)
+                    targets["pinky_left_stretch"] = -(a_ltl * 5000.0 - 6000.0)
+
+    clamped = {name: _clamp_joint(name, val) for name, val in targets.items()}
+    deadband = 150.0
+    names = []
+    cdegs = []
+    for name, cdeg in clamped.items():
+        last = _imitate_hands_state["last_cdeg"].get(name)
+        if last is None or abs(cdeg - last) >= deadband:
+            names.append(name)
+            cdegs.append(cdeg)
+            _imitate_hands_state["last_cdeg"][name] = cdeg
+
+    if not names:
+        return
+
+    request = ApplyJointTrajectory.Request()
+    jt = JointTrajectory()
+    jt.joint_names = names
+    point = JointTrajectoryPoint()
+    point.positions = [cdeg * math.pi / 18000.0 for cdeg in cdegs]
+    jt.points = [point]
+    request.joint_trajectory = jt
+    _imitate_hands_state["future"] = apply_joint_trajectory_client.call_async(request)
+`;
+
 // set-solid-state-relay
 
 export const SET_SOLID_STATE_RELAY_FUNCTION = (

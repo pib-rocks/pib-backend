@@ -222,6 +222,32 @@ describe("model blocks", () => {
         expect(FakeWebSocket.instances.length).toBe(2);
     });
 
+    it("defines imitate_hands with SIDE and PARTS dropdowns", () => {
+        const workspace = new Blockly.Workspace();
+        const block = workspace.newBlock("imitate_hands");
+        expect(block.getField("SIDE")).toEqual(jasmine.any(Blockly.FieldDropdown));
+        expect(block.getField("PARTS")).toEqual(jasmine.any(Blockly.FieldDropdown));
+        expect(
+            (block.getField("SIDE") as Blockly.FieldDropdown).getOptions(false),
+        ).toEqual([
+            ["both", "both"],
+            ["left", "left"],
+            ["right", "right"],
+        ]);
+        expect(
+            (block.getField("PARTS") as Blockly.FieldDropdown).getOptions(false),
+        ).toEqual([
+            ["arms and fingers", "all"],
+            ["fingers only", "fingers"],
+            ["arms only", "arms"],
+        ]);
+        block.setFieldValue("right", "SIDE");
+        block.setFieldValue("arms", "PARTS");
+        expect(block.getFieldValue("SIDE")).toBe("right");
+        expect(block.getFieldValue("PARTS")).toBe("arms");
+        workspace.dispose();
+    });
+
     it("closes sockets on malformed responses, errors, and timeout", () => {
         refreshModelOptions();
         const malformed = FakeWebSocket.instances[0];
