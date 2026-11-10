@@ -823,12 +823,38 @@ class TestHandPipelineInput(unittest.TestCase):
         with patch.object(CameraNode, "__init__", lambda self: None):
             node = CameraNode()
         mock_dai.Pipeline.return_value = MagicMock()
+        mock_dai.node.VideoEncoder = None
 
         node._build_pipeline(include_stereo=False)
 
         node.isp_out.createOutputQueue.assert_called_once_with(
             maxSize=COLOR_OUTPUT_QUEUE_DEPTH, blocking=False
         )
+
+    @patch("ros_packages.camera.oak_d_lite.stereo.dai")
+    def test_mjpeg_pipeline_omits_unused_isp_queue_and_shares_colour_branch(
+        self, mock_dai
+    ):
+        with patch.object(CameraNode, "__init__", lambda self: None):
+            node = CameraNode()
+        mock_dai.Pipeline.return_value = MagicMock()
+
+        node._build_pipeline(include_stereo=False)
+
+        self.assertIsNone(node.isp_out)
+        self.assertIsNone(node.isp_queue)
+        cam_rgb = node.camRgb
+        self.assertIsNotNone(cam_rgb)
+        assert cam_rgb is not None
+        cam_rgb.requestIspOutput.assert_not_called()  # type: ignore[attr-defined]
+        branch1 = node._request_camera_branch(
+            (COLOUR_BRANCH_WIDTH, COLOUR_BRANCH_HEIGHT)
+        )
+        branch2 = node._request_camera_branch(
+            (COLOUR_BRANCH_WIDTH, COLOUR_BRANCH_HEIGHT)
+        )
+        self.assertIs(branch1, branch2)
+        cam_rgb.requestOutput.assert_called_once()  # type: ignore[attr-defined]
 
     @patch("ros_packages.camera.oak_d_lite.stereo.dai")
     def test_rejected_camera_tap_fails_the_build(self, mock_dai):

@@ -451,7 +451,10 @@ class MotorControl(Node):
 
         try:
             jt = joint_trajectory_radians_to_centidegrees(raw, name_to_motors)
-            self._emit_trajectory_start(point_count, trace_started)
+            targets = list(as_motor_positions(jt))
+            use_stream_priority = len(targets) > 1 and not is_software_trajectory(jt)
+            if not use_stream_priority:
+                self._emit_trajectory_start(point_count, trace_started)
             if is_software_trajectory(jt):
                 if self.trajectory_executor.is_running():
                     self._stop_running_software_trajectory()
@@ -476,15 +479,14 @@ class MotorControl(Node):
                 self._stop_running_software_trajectory()
 
             apply_outcomes: list[MotorOutcome] = []
-            targets = list(as_motor_positions(jt))
-            use_stream_priority = len(targets) > 1
             for motor_name, position in targets:
                 motor_ok = True
                 detail = ""
                 for motor in name_to_motors[motor_name]:
-                    self.get_logger().info(
-                        f"setting position of {motor.name} to {position}"
-                    )
+                    if not use_stream_priority:
+                        self.get_logger().info(
+                            f"setting position of {motor.name} to {position}"
+                        )
                     if use_stream_priority:
                         try:
                             successful = motor.set_position(
@@ -494,14 +496,16 @@ class MotorControl(Node):
                             successful = motor.set_position(position)
                     else:
                         successful = motor.set_position(position)
-                    self.get_logger().info(
-                        f"setting position {'succeeded' if successful else 'failed'}."
-                    )
+                    if not use_stream_priority:
+                        self.get_logger().info(
+                            f"setting position {'succeeded' if successful else 'failed'}."
+                        )
                     motor_ok &= successful
                     if successful:
-                        self.joint_trajectory_publisher.publish(
-                            as_joint_trajectory(motor.name, position)
-                        )
+                        if not use_stream_priority:
+                            self.joint_trajectory_publisher.publish(
+                                as_joint_trajectory(motor.name, position)
+                            )
                     else:
                         detail = f"failed to write position for motor '{motor.name}'"
                 if motor_ok:
