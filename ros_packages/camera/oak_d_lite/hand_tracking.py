@@ -638,6 +638,12 @@ while True:
     last_hand = len(detected_hands) - 1
     for i, hand in enumerate(detected_hands):
         sqn_rr_size, rotation, sqn_rr_center_x, sqn_rr_center_y, palm_score = hand
+        sqn_rr_size = max(0.05, min(1.0, sqn_rr_size))
+        sqn_rr_center_x = max(0.0, min(1.0, sqn_rr_center_x))
+        sqn_rr_center_y = max(0.0, min(1.0, sqn_rr_center_y))
+        hand[0] = sqn_rr_size
+        hand[2] = sqn_rr_center_x
+        hand[3] = sqn_rr_center_y
         target_cx = sqn_rr_center_x * frame_size - pad_w
         target_cy = sqn_rr_center_y * frame_size - pad_h
         icx = img_w * 0.5

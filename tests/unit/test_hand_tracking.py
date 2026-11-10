@@ -673,6 +673,9 @@ def test_fast_script_preserves_single_hand_roi_and_averages_handedness():
     assert "cfg_pre_pd.setBackgroundColor(0, 0, 0)" in script
     assert "cfg.addCropRotatedRect(rr, False)" in script
     assert "addCropRotatedRect(rr, True)" not in script
+    assert "sqn_rr_size = max(0.05, min(1.0, sqn_rr_size))" in script
+    assert "sqn_rr_center_x = max(0.0, min(1.0, sqn_rr_center_x))" in script
+    assert "sqn_rr_center_y = max(0.0, min(1.0, sqn_rr_center_y))" in script
 
 
 def test_map_fast_hand_maps_through_branch_field_window():

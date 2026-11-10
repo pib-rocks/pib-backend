@@ -89,10 +89,9 @@ class PipelineBuildersMixin:
             )
         else:
             self.camRgb.build(stereo.dai.CameraBoardSocket.CAM_A)
-        self.isp_out = self.camRgb.requestIspOutput()
-        self.isp_queue = self.isp_out.createOutputQueue(
-            maxSize=stereo.COLOR_OUTPUT_QUEUE_DEPTH, blocking=False
-        )
+        self.isp_out = None
+        self.isp_queue = None
+        self._camera_branches = {}
         self._build_mjpeg_encoder_branch()
         self.depth_queue = None
         self.imu_queue = None
@@ -206,7 +205,7 @@ class PipelineBuildersMixin:
         video_encoder_type = getattr(stereo.dai.node, "VideoEncoder", None)
         manip_type = getattr(stereo.dai.node, "ImageManip", None)
         if video_encoder_type is None or manip_type is None:
-            self.queue = self.isp_queue
+            self.queue = self._ensure_isp_queue()
             return
 
         try:
@@ -249,7 +248,18 @@ class PipelineBuildersMixin:
         except Exception:
             self.video_manip = None
             self.video_encoder = None
-            self.queue = self.isp_queue
+            self.queue = self._ensure_isp_queue()
+
+    def _ensure_isp_queue(self):
+        """Allocate the fallback ISP queue only when VideoEncoder is unavailable."""
+        cam_rgb = getattr(self, "camRgb", None)
+        if getattr(self, "isp_out", None) is None and cam_rgb is not None:
+            self.isp_out = cam_rgb.requestIspOutput()
+        if getattr(self, "isp_queue", None) is None and self.isp_out is not None:
+            self.isp_queue = self.isp_out.createOutputQueue(
+                maxSize=stereo.COLOR_OUTPUT_QUEUE_DEPTH, blocking=False
+            )
+        return self.isp_queue
 
     def _published_frame_size(self):
         """Width and height of the frame the UI displays."""
@@ -321,6 +331,10 @@ class PipelineBuildersMixin:
         self._require_published_aspect(width, height)
         if frame_type is None:
             frame_type = stereo.dai.ImgFrame.Type.BGR888p
+        branches = getattr(self, "_camera_branches", None)
+        cache_key = (width, height, frame_type)
+        if isinstance(branches, dict) and cache_key in branches:
+            return branches[cache_key]
         request = {"type": frame_type}
         if fps is not None:
             request["fps"] = fps
@@ -329,6 +343,8 @@ class PipelineBuildersMixin:
             raise RuntimeError(
                 f"Camera cannot provide a {width}x{height} {frame_type} branch output"
             )
+        if isinstance(branches, dict):
+            branches[cache_key] = output
         return output
 
     def _stretch_to_network_input(self, source, width, height, frame_type):
@@ -1102,6 +1118,8 @@ class PipelineBuildersMixin:
             self.pipeline = None
             self.camRgb = None
             self.isp_out = None
+            self.isp_queue = None
+            self._camera_branches = {}
             self.video_manip = None
             self.video_encoder = None
             self.queue = None

@@ -616,8 +616,12 @@ def test_multi_joint_single_point_trajectory_uses_stream_priority() -> None:
     run_trajectory(["elbow_left", "elbow_right"], [100, 200])
     assert elbow_left.bus_priorities == [BusPriority.STREAM]
     assert elbow_right.bus_priorities == [BusPriority.STREAM]
+    node.joint_trajectory_publisher.publish.assert_not_called()
+    node.get_logger.return_value.info.assert_not_called()
 
     elbow_left.bus_priorities.clear()
     elbow_right.bus_priorities.clear()
     run_trajectory(["elbow_left"], [300])
     assert elbow_left.bus_priorities == [None]
+    node.joint_trajectory_publisher.publish.assert_called_once()
+    assert node.get_logger.return_value.info.call_count == 3
