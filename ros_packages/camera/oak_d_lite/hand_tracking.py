@@ -102,6 +102,38 @@ LANDMARK_NORMALIZED_PEAK = 1.5
 MANIP_CROP_INSET_PIXELS = 0.5
 
 
+def prerotated_pixel_crop_rect(
+    target_cx: float,
+    target_cy: float,
+    width_px: float,
+    height_px: float,
+    rotation_rad: float,
+    source_width: int,
+    source_height: int,
+) -> Tuple[float, float, float, float, float]:
+    """Return a pixel RotatedRect center pre-compensated for ImageManip rotation.
+
+    DepthAI rotates the source around the image centre by ``+angle`` before
+    extracting the rectangle at ``center``. Pre-rotate ``(target_cx, target_cy)``
+    by ``-rotation_rad`` so the crop lands on the intended pixels.
+    """
+    icx = float(source_width) * 0.5
+    icy = float(source_height) * 0.5
+    dx = float(target_cx) - icx
+    dy = float(target_cy) - icy
+    cos_r = math.cos(rotation_rad)
+    sin_r = math.sin(rotation_rad)
+    center_x = icx + dx * cos_r + dy * sin_r
+    center_y = icy - dx * sin_r + dy * cos_r
+    return (
+        center_x,
+        center_y,
+        float(width_px),
+        float(height_px),
+        math.degrees(rotation_rad),
+    )
+
+
 @dataclass(frozen=True)
 class ManipCrop:
     """Normalized full-source crop plus its network target size."""
@@ -537,6 +569,22 @@ def tensor_values(nn_data, name):
 
 cfg_pre_pd = ImageManipConfig()
 cfg_pre_pd.setOutputSize(palm_input, palm_input, ImageManipConfig.ResizeMode.LETTERBOX)
+cfg_pre_pd.setBackgroundColor(0, 0, 0)
+
+class HandednessAverage:
+    def __init__(self):
+        self._total_handedness = 0.0
+        self._nb = 0
+    def update(self, new_handedness):
+        self._total_handedness += new_handedness
+        self._nb += 1
+        return self._total_handedness / self._nb
+    def reset(self):
+        self._total_handedness = 0.0
+        self._nb = 0
+
+handedness_avg = [HandednessAverage(), HandednessAverage()]
+nb_hands_in_previous_frame = 0
 
 id_index_mcp = 5
 id_middle_mcp = 9
@@ -568,8 +616,12 @@ while True:
             send_hands([], [], [], [], [], [], [], [], [])
             send_new_frame_to_branch = 1
             single_hand_count = 0
+            nb_hands_in_previous_frame = 0
             continue
-        detected_hands = hands
+        if not (nb_hands_in_previous_frame == 1 and len(hands) <= 1):
+            detected_hands = hands
+        elif len(hands) == 1 and len(detected_hands) == 1:
+            detected_hands[0][4] = hands[0][4]
 
     hand_landmarks = dict([
         ("lm_score", []),
@@ -586,14 +638,22 @@ while True:
     last_hand = len(detected_hands) - 1
     for i, hand in enumerate(detected_hands):
         sqn_rr_size, rotation, sqn_rr_center_x, sqn_rr_center_y, palm_score = hand
+        target_cx = sqn_rr_center_x * frame_size - pad_w
+        target_cy = sqn_rr_center_y * frame_size - pad_h
+        icx = img_w * 0.5
+        icy = img_h * 0.5
+        dx = target_cx - icx
+        dy = target_cy - icy
+        cos_r = cos(rotation)
+        sin_r = sin(rotation)
         rr = RotatedRect()
-        rr.center.x = sqn_rr_center_x
-        rr.center.y = (sqn_rr_center_y * frame_size - pad_h) / img_h
-        rr.size.width = sqn_rr_size
-        rr.size.height = sqn_rr_size * frame_size / img_h
+        rr.center.x = icx + dx * cos_r + dy * sin_r
+        rr.center.y = icy - dx * sin_r + dy * cos_r
+        rr.size.width = sqn_rr_size * frame_size
+        rr.size.height = sqn_rr_size * frame_size
         rr.angle = degrees(rotation)
         cfg = ImageManipConfig()
-        cfg.addCropRotatedRect(rr, True)
+        cfg.addCropRotatedRect(rr, False)
         cfg.setOutputSize(lm_input_size, lm_input_size, ImageManipConfig.ResizeMode.STRETCH)
         reuse_prev_image = True if len(detected_hands) > 1 and i == last_hand else False
         cfg.setReusePreviousImage(reuse_prev_image)
@@ -683,6 +743,13 @@ while True:
             detected_hands.pop(pop_i)
 
     nb_hands = len(detected_hands)
+    if send_new_frame_to_branch == 1 or nb_hands_in_previous_frame != nb_hands:
+        for i in range(2):
+            handedness_avg[i].reset()
+    for i in range(nb_hands):
+        hand_landmarks["handedness"][i] = handedness_avg[i].update(
+            hand_landmarks["handedness"][i]
+        )
     if nb_hands == 2 and (hand_landmarks["handedness"][0] - 0.5) * (hand_landmarks["handedness"][1] - 0.5) > 0:
         for key in hand_landmarks:
             hand_landmarks[key].pop(1)
@@ -703,6 +770,8 @@ while True:
         single_hand_count = 0
     else:
         send_new_frame_to_branch = 2
+
+    nb_hands_in_previous_frame = nb_hands
 """
 
 
@@ -973,14 +1042,29 @@ def _published_from_square(
     source_height: int,
     frame_width: int,
     frame_height: int,
+    field: Tuple[float, float, float, float] = None,
 ) -> Tuple[float, float]:
     side, pad_w, pad_h = letterbox_square(source_width, source_height)
     del side
     image_x = min(float(source_width), max(0.0, x - pad_w))
     image_y = min(float(source_height), max(0.0, y - pad_h))
+    if field is None:
+        origin_x, size_x, origin_y, size_y = (
+            0.0,
+            float(frame_width),
+            0.0,
+            float(frame_height),
+        )
+    else:
+        origin_x, size_x, origin_y, size_y = (
+            float(field[0]),
+            float(field[1]),
+            float(field[2]),
+            float(field[3]),
+        )
     return (
-        image_x * float(frame_width) / float(source_width),
-        image_y * float(frame_height) / float(source_height),
+        origin_x + image_x * size_x / float(source_width),
+        origin_y + image_y * size_y / float(source_height),
     )
 
 
@@ -1002,6 +1086,7 @@ def map_fast_hand(
     frame_height: int,
     source_width: int,
     source_height: int,
+    field: Tuple[float, float, float, float] = None,
 ) -> FastDetection:
     """Map one device result onto the published frame.
 
@@ -1048,7 +1133,13 @@ def map_fast_hand(
         raise ValueError("fast hand result must contain 21 landmarks")
     points = [
         _published_from_square(
-            x, y, source_width, source_height, frame_width, frame_height
+            x,
+            y,
+            source_width,
+            source_height,
+            frame_width,
+            frame_height,
+            field=field,
         )
         for x, y in square_points
     ]

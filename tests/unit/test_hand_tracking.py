@@ -4,6 +4,7 @@ import ast
 import math
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -28,6 +29,7 @@ from ros_packages.camera.oak_d_lite.hand_tracking import (
     map_fast_hand,
     map_landmarks_to_frame,
     parse_fast_script_result,
+    prerotated_pixel_crop_rect,
     relative_landmark_z,
     validate_fast_branch_size,
 )
@@ -556,3 +558,146 @@ def test_fast_script_sends_the_square_landmarks():
     script = build_fast_tracker_script(256, 144)
     assert '"sqn_lms"' in script
     assert 'hand_landmarks["sqn_lms"].append(sqn_lms)' in script
+
+
+def _rotate_about(icx, icy, px, py, rotation_rad):
+    dx = px - icx
+    dy = py - icy
+    cos_r = math.cos(rotation_rad)
+    sin_r = math.sin(rotation_rad)
+    return icx + dx * cos_r - dy * sin_r, icy + dx * sin_r + dy * cos_r
+
+
+def test_prerotated_pixel_crop_rect_matches_depthai_imagemanip_and_rr2img():
+    source_width, source_height = 1152, 648
+    side, pad_w, pad_h = letterbox_square(source_width, source_height)
+    sqn_rr_center_x, sqn_rr_center_y, sqn_rr_size = 0.4, 0.55, 0.25
+    target_cx = sqn_rr_center_x * side - pad_w
+    target_cy = sqn_rr_center_y * side - pad_h
+    icx = source_width * 0.5
+    icy = source_height * 0.5
+    expected_x = sqn_rr_center_x * source_width
+    expected_y = sqn_rr_center_y * source_width - pad_h
+
+    for angle_deg in (0.0, 30.0, 45.0, -60.0, 90.0):
+        rotation = math.radians(angle_deg)
+        crop_w = sqn_rr_size * side
+        cx, cy, w, h, rr_angle = prerotated_pixel_crop_rect(
+            target_cx,
+            target_cy,
+            crop_w,
+            crop_w,
+            rotation,
+            source_width,
+            source_height,
+        )
+        assert w == pytest.approx(crop_w)
+        assert h == pytest.approx(crop_w)
+        assert rr_angle == pytest.approx(angle_deg)
+        landed_x, landed_y = _rotate_about(icx, icy, cx, cy, rotation)
+        assert landed_x == pytest.approx(expected_x, abs=1e-6)
+        assert landed_y == pytest.approx(expected_y, abs=1e-6)
+
+    dai = pytest.importorskip("depthai")
+    frame = np.zeros((source_height, source_width, 3), dtype=np.uint8)
+    img = dai.ImgFrame()
+    img.setData(frame.tobytes())
+    img.setType(dai.ImgFrame.Type.BGR888p)
+    img.setWidth(source_width)
+    img.setHeight(source_height)
+
+    lm_input = 224
+    pipeline = dai.Pipeline(createImplicitDevice=False)
+    manip = pipeline.create(dai.node.ImageManip)
+    manip.setRunOnHost(True)
+    image_queue = manip.inputImage.createInputQueue(maxSize=2, blocking=False)
+    config_queue = manip.inputConfig.createInputQueue(maxSize=2, blocking=False)
+    output_queue = manip.out.createOutputQueue(maxSize=2, blocking=False)
+    try:
+        pipeline.start()
+        for angle_deg in (45.0, -60.0):
+            rotation = math.radians(angle_deg)
+            crop_w = sqn_rr_size * side
+            cx, cy, w, h, rr_angle = prerotated_pixel_crop_rect(
+                target_cx,
+                target_cy,
+                crop_w,
+                crop_w,
+                rotation,
+                source_width,
+                source_height,
+            )
+            rr = dai.RotatedRect()
+            rr.center = dai.Point2f(cx, cy)
+            rr.size = dai.Size2f(w, h)
+            rr.angle = rr_angle
+            cfg = dai.ImageManipConfig()
+            cfg.addCropRotatedRect(rr, False)
+            cfg.setOutputSize(
+                lm_input, lm_input, dai.ImageManipConfig.ResizeMode.STRETCH
+            )
+            config_queue.send(cfg)
+            image_queue.send(img)
+            out = None
+            for _ in range(100):
+                out = output_queue.tryGet()
+                if out is not None:
+                    break
+                time.sleep(0.02)
+            assert out is not None
+            inv = out.getTransformation().invTransformPoint
+            center = inv(dai.Point2f(0.5 * lm_input, 0.5 * lm_input))
+            assert center.x == pytest.approx(expected_x, abs=0.1)
+            assert center.y == pytest.approx(expected_y, abs=0.1)
+            cos_r = math.cos(rotation)
+            sin_r = math.sin(rotation)
+            for rrn_x, rrn_y in ((0.25, 0.75), (0.8, 0.2)):
+                mapped = inv(dai.Point2f(rrn_x * lm_input, rrn_y * lm_input))
+                sqn_x = sqn_rr_center_x + sqn_rr_size * (
+                    (rrn_x - 0.5) * cos_r + (0.5 - rrn_y) * sin_r
+                )
+                sqn_y = sqn_rr_center_y + sqn_rr_size * (
+                    (rrn_y - 0.5) * cos_r + (rrn_x - 0.5) * sin_r
+                )
+                assert mapped.x == pytest.approx(sqn_x * side - pad_w, abs=0.1)
+                assert mapped.y == pytest.approx(sqn_y * side - pad_h, abs=0.1)
+    finally:
+        manip.stopPipeline()
+        del output_queue, config_queue, image_queue, manip, pipeline
+
+
+def test_fast_script_preserves_single_hand_roi_and_averages_handedness():
+    script = build_fast_tracker_script(1152, 648)
+    assert "HandednessAverage" in script
+    assert "nb_hands_in_previous_frame" in script
+    assert "cfg_pre_pd.setBackgroundColor(0, 0, 0)" in script
+    assert "cfg.addCropRotatedRect(rr, False)" in script
+    assert "addCropRotatedRect(rr, True)" not in script
+
+
+def test_map_fast_hand_maps_through_branch_field_window():
+    import marshal
+
+    hand = parse_fast_script_result(marshal.dumps(_fast_payload()))[0]
+    _, _, pad_h = letterbox_square(1152, 648)
+    side = max(1152, 648)
+    sqn_y = 0.5 * side
+    image_y = min(648.0, max(0.0, sqn_y - pad_h))
+
+    mapped_default = map_fast_hand(hand, 1280, 720, 1152, 648)
+    assert mapped_default.keypoint_y[0] == pytest.approx(
+        image_y * 720.0 / 648.0, rel=1e-4
+    )
+    assert 0.0 <= mapped_default.keypoint_y[0] <= 720.0
+
+    mapped_field = map_fast_hand(
+        hand,
+        1280,
+        720,
+        1152,
+        648,
+        field=(0.0, 1280.0, 36.0, 648.0),
+    )
+    expected_y = 36.0 + image_y * 648.0 / 648.0
+    assert mapped_field.keypoint_y[0] == pytest.approx(expected_y, rel=1e-4)
+    assert 36.0 <= mapped_field.keypoint_y[0] <= 684.0
