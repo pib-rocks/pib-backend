@@ -1,6 +1,6 @@
 import {Block} from "blockly/core/block";
 import {Order, pythonGenerator} from "blockly/python";
-import {start_model, stop_model} from "./model-generators";
+import {imitate_hands, start_model, stop_model} from "./model-generators";
 import {STOP_ALL_MODELS_VALUE} from "../program-blocks/model-blocks";
 
 type MockGenerator = typeof pythonGenerator & {
@@ -10,6 +10,7 @@ type MockGenerator = typeof pythonGenerator & {
 function createGenerator(values: Record<string, string> = {}): MockGenerator {
     const generator = Object.create(pythonGenerator) as MockGenerator;
     generator.definitions_ = {};
+    generator.quote_ = (value: string) => `'${value}'`;
     generator.provideFunction_ = (name: string, code: string | string[]) => {
         const declaration = Array.isArray(code) ? code.join("\n") : code;
         generator.definitions_[`function_${name}`] = declaration.replace(
@@ -92,5 +93,27 @@ describe("model generators", () => {
         expect(declarations).toContain("def stop_all_models_with_sdk() -> None:");
         expect(declarations).toContain("models.stop_all_models()");
         expect(declarations).not.toContain("models.stop_model(");
+    });
+
+    it("generates imitate_hands with side and parts", () => {
+        const generator = createGenerator();
+
+        expect(
+            imitate_hands(
+                blockWithFields({SIDE: "left", PARTS: "fingers"}),
+                generator,
+            ),
+        ).toBe("imitate_hands('left', 'fingers')\n");
+
+        const declarations = definitions(generator);
+        expect(declarations).toContain("import math");
+        expect(declarations).toContain("from datatypes.srv import ApplyJointTrajectory");
+        expect(declarations).toContain(
+            "from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint",
+        );
+        expect(declarations).toContain("/detections/hand_tracking_fast");
+        expect(declarations).toContain("def imitate_hands(side: str = \"both\", parts: str = \"all\") -> None:");
+        expect(declarations).toContain("_imitate_hands_state");
+        expect(declarations).toContain("cdeg * math.pi / 18000.0");
     });
 });

@@ -205,6 +205,36 @@ const detectionBlocks = Blockly.common.createBlockDefinitionsFromJsonArray([
             "Returns the latest head pose detections as a list. Each face is [label, score, x_min, y_min, x_max, y_max, yaw_deg, pitch_deg, roll_deg] (indices 0 through 8).",
         helpUrl: "",
     },
+    {
+        type: "imitate_hands",
+        message0: "imitate hands %1 parts %2",
+        args0: [
+            {
+                type: "field_dropdown",
+                name: "SIDE",
+                options: [
+                    ["both", "both"],
+                    ["left", "left"],
+                    ["right", "right"],
+                ],
+            },
+            {
+                type: "field_dropdown",
+                name: "PARTS",
+                options: [
+                    ["arms and fingers", "all"],
+                    ["fingers only", "fingers"],
+                    ["arms only", "arms"],
+                ],
+            },
+        ],
+        previousStatement: null,
+        nextStatement: null,
+        colour: 200,
+        tooltip:
+            "Mirrors detected hand and finger movements from hand_tracking_fast onto the robot's arms and fingers in real time.",
+        helpUrl: "",
+    },
 ]);
 
 export const modelBlocks = {
