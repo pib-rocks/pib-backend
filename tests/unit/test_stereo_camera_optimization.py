@@ -862,12 +862,32 @@ class TestHandPipelineInput(unittest.TestCase):
 
         self.assertIs(result, config)
         rotated, normalized = config.addCropRotatedRect.call_args.args
-        self.assertTrue(normalized)
-        self.assertEqual(rotated.center.x, 0.5)
-        self.assertEqual(rotated.center.y, 0.4)
-        self.assertEqual(rotated.size.width, 0.25)
-        self.assertEqual(rotated.size.height, 0.5)
+        self.assertFalse(normalized)
         self.assertAlmostEqual(rotated.angle, 45.0)
+        self.assertGreater(rotated.size.width, 0.0)
+        self.assertGreater(rotated.size.height, 0.0)
+        rotation = palm.rotation
+        icx, icy = 320.0, 240.0
+        cos_r = np.cos(rotation)
+        sin_r = np.sin(rotation)
+        true_cx = (
+            icx + (rotated.center.x - icx) * cos_r - (rotated.center.y - icy) * sin_r
+        )
+        true_cy = (
+            icy + (rotated.center.x - icx) * sin_r + (rotated.center.y - icy) * cos_r
+        )
+        self.assertAlmostEqual(true_cx, 320.0, places=4)
+        self.assertAlmostEqual(true_cy, 192.0, places=4)
+        half_w = rotated.size.width / 2.0
+        half_h = rotated.size.height / 2.0
+        for x_offset in (-half_w, half_w):
+            for y_offset in (-half_h, half_h):
+                corner_x = true_cx + x_offset * cos_r - y_offset * sin_r
+                corner_y = true_cy + x_offset * sin_r + y_offset * cos_r
+                self.assertGreater(corner_x, 0.0)
+                self.assertLess(corner_x, 640.0)
+                self.assertGreater(corner_y, 0.0)
+                self.assertLess(corner_y, 480.0)
         config.setOutputSize.assert_called_once_with(224, 224)
         config.setFrameType.assert_called_once_with(mock_dai.ImgFrame.Type.BGR888p)
         config.setWarpBorderReplicatePixels.assert_called_once_with()
@@ -904,17 +924,27 @@ class TestHandPipelineInput(unittest.TestCase):
 
         node._landmark_crop_config(palm, 640, 480)
 
-        rotated = (
-            mock_dai.ImageManipConfig.return_value.addCropRotatedRect.call_args.args[0]
+        rotated, normalized = (
+            mock_dai.ImageManipConfig.return_value.addCropRotatedRect.call_args.args
         )
+        self.assertFalse(normalized)
         self.assertGreater(rotated.size.width, 0.0)
         self.assertGreater(rotated.size.height, 0.0)
-        center_x = rotated.center.x * 640
-        center_y = rotated.center.y * 480
-        half_width = rotated.size.width * 640 / 2.0
-        half_height = rotated.size.height * 480 / 2.0
+        icx, icy = 320.0, 240.0
         cos_rotation = np.cos(palm.rotation)
         sin_rotation = np.sin(palm.rotation)
+        center_x = (
+            icx
+            + (rotated.center.x - icx) * cos_rotation
+            - (rotated.center.y - icy) * sin_rotation
+        )
+        center_y = (
+            icy
+            + (rotated.center.x - icx) * sin_rotation
+            + (rotated.center.y - icy) * cos_rotation
+        )
+        half_width = rotated.size.width / 2.0
+        half_height = rotated.size.height / 2.0
         for x_offset in (-half_width, half_width):
             for y_offset in (-half_height, half_height):
                 corner_x = center_x + x_offset * cos_rotation - y_offset * sin_rotation
@@ -940,18 +970,18 @@ class TestHandPipelineInput(unittest.TestCase):
 
         node._landmark_crop_config(None, 640, 480)
 
-        rotated = (
-            mock_dai.ImageManipConfig.return_value.addCropRotatedRect.call_args.args[0]
+        rotated, normalized = (
+            mock_dai.ImageManipConfig.return_value.addCropRotatedRect.call_args.args
         )
-        # An exactly full-frame rect sits on the boundary the device validates.
-        self.assertLess(rotated.size.width, 1.0)
-        self.assertLess(rotated.size.height, 1.0)
-        half_width = rotated.size.width * 640 / 2.0
-        half_height = rotated.size.height * 480 / 2.0
-        self.assertGreater(rotated.center.x * 640 - half_width, 0.0)
-        self.assertLess(rotated.center.x * 640 + half_width, 640.0)
-        self.assertGreater(rotated.center.y * 480 - half_height, 0.0)
-        self.assertLess(rotated.center.y * 480 + half_height, 480.0)
+        self.assertFalse(normalized)
+        self.assertLess(rotated.size.width, 640.0)
+        self.assertLess(rotated.size.height, 480.0)
+        half_width = rotated.size.width / 2.0
+        half_height = rotated.size.height / 2.0
+        self.assertGreater(rotated.center.x - half_width, 0.0)
+        self.assertLess(rotated.center.x + half_width, 640.0)
+        self.assertGreater(rotated.center.y - half_height, 0.0)
+        self.assertLess(rotated.center.y + half_height, 480.0)
 
     @patch("ros_packages.camera.oak_d_lite.stereo.dai")
     def test_branch_size_change_is_adopted_for_later_crops(self, mock_dai):
@@ -1259,22 +1289,23 @@ class TestHandStageCounters(unittest.TestCase):
         node.hand_landmark_config_queue.send.assert_called_once_with(
             mock_dai.ImageManipConfig.return_value
         )
-        rotated = (
-            mock_dai.ImageManipConfig.return_value.addCropRotatedRect.call_args.args[0]
+        rotated, normalized = (
+            mock_dai.ImageManipConfig.return_value.addCropRotatedRect.call_args.args
         )
+        self.assertFalse(normalized)
         self.assertEqual(
-            (rotated.center.x, rotated.center.y, rotated.angle), (0.5, 0.5, 0.0)
+            (rotated.center.x, rotated.center.y, rotated.angle), (128.0, 128.0, 0.0)
         )
         # The sentinel covers the complete bounded camera branch, with each edge
         # inset by half a source pixel for ImageManip's crop validation.
-        crop_width = rotated.size.width * 256
-        crop_height = rotated.size.height * 256
+        crop_width = rotated.size.width
+        crop_height = rotated.size.height
         self.assertAlmostEqual(crop_width, 255.0)
         self.assertAlmostEqual(crop_height, 255.0)
-        self.assertAlmostEqual(rotated.center.x * 256 - crop_width / 2.0, 0.5)
-        self.assertAlmostEqual(rotated.center.x * 256 + crop_width / 2.0, 255.5)
-        self.assertAlmostEqual(rotated.center.y * 256 - crop_height / 2.0, 0.5)
-        self.assertAlmostEqual(rotated.center.y * 256 + crop_height / 2.0, 255.5)
+        self.assertAlmostEqual(rotated.center.x - crop_width / 2.0, 0.5)
+        self.assertAlmostEqual(rotated.center.x + crop_width / 2.0, 255.5)
+        self.assertAlmostEqual(rotated.center.y - crop_height / 2.0, 0.5)
+        self.assertAlmostEqual(rotated.center.y + crop_height / 2.0, 255.5)
         mock_dai.ImageManipConfig.return_value.setOutputSize.assert_called_once_with(
             224, 224
         )

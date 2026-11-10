@@ -36,6 +36,7 @@ from pib_motors.perf_trace import (
     log_perf_trace,
 )
 from pib_motors.bus_writer import (
+    BusPriority,
     all_bus_writers,
     format_bus_writer_summary,
     shutdown_all_bus_writers,
@@ -475,14 +476,24 @@ class MotorControl(Node):
                 self._stop_running_software_trajectory()
 
             apply_outcomes: list[MotorOutcome] = []
-            for motor_name, position in as_motor_positions(jt):
+            targets = list(as_motor_positions(jt))
+            use_stream_priority = len(targets) > 1
+            for motor_name, position in targets:
                 motor_ok = True
                 detail = ""
                 for motor in name_to_motors[motor_name]:
                     self.get_logger().info(
                         f"setting position of {motor.name} to {position}"
                     )
-                    successful = motor.set_position(position)
+                    if use_stream_priority:
+                        try:
+                            successful = motor.set_position(
+                                position, bus_priority=BusPriority.STREAM
+                            )
+                        except TypeError:
+                            successful = motor.set_position(position)
+                    else:
+                        successful = motor.set_position(position)
                     self.get_logger().info(
                         f"setting position {'succeeded' if successful else 'failed'}."
                     )

@@ -1,6 +1,6 @@
 import {Block} from "blockly/core/block";
 import {Order, pythonGenerator} from "blockly/python";
-import {CONFIGURE_LOGGING, IMPORT_DETECTION_ARRAY, IMPORT_LOGGING, IMPORT_OS, IMPORT_PIB_SDK_MODELS, IMPORT_RCLPY, IMPORT_SYS, IMPORT_TIME, INIT_ROS, addDefinitions} from "./util/definitions";
+import {CONFIGURE_LOGGING, IMPORT_APPLY_JOINT_TRAJECTORY, IMPORT_DETECTION_ARRAY, IMPORT_JOINT_TRAJECTORY_MESSAGES, IMPORT_LOGGING, IMPORT_MATH, IMPORT_OS, IMPORT_PIB_SDK_MODELS, IMPORT_RCLPY, IMPORT_SYS, IMPORT_TIME, INIT_APPLY_JOINT_TRASJECTORY_CLIENT, INIT_ROS, addDefinitions} from "./util/definitions";
 import {STOP_ALL_MODELS_VALUE} from "../program-blocks/model-blocks";
 import {
     GET_FACE_DETECTIONS_FUNCTION,
@@ -8,6 +8,7 @@ import {
     GET_QR_DETECTIONS_FUNCTION,
     GET_EMOTION_DETECTIONS_FUNCTION,
     GET_HEAD_POSE_DETECTIONS_FUNCTION,
+    IMITATE_HANDS_FUNCTION,
     START_MODEL_FUNCTION,
     STOP_ALL_MODELS_FUNCTION,
     STOP_MODEL_FUNCTION,
@@ -106,4 +107,27 @@ export const get_head_pose_detections = latestDetectionsReporter(
     "get_head_pose_detections",
     GET_HEAD_POSE_DETECTIONS_FUNCTION,
 );
+
+export function imitate_hands(block: Block, generator: typeof pythonGenerator) {
+    const side = String(block.getFieldValue("SIDE") || "both");
+    const parts = String(block.getFieldValue("PARTS") || "all");
+    addDefinitions(generator, {
+        IMPORT_RCLPY,
+        IMPORT_TIME,
+        IMPORT_MATH,
+        IMPORT_LOGGING,
+        IMPORT_SYS,
+        IMPORT_DETECTION_ARRAY,
+        IMPORT_APPLY_JOINT_TRAJECTORY,
+        IMPORT_JOINT_TRAJECTORY_MESSAGES,
+        CONFIGURE_LOGGING,
+        INIT_ROS,
+        INIT_APPLY_JOINT_TRASJECTORY_CLIENT,
+    });
+    const fn = generator.provideFunction_(
+        "imitate_hands",
+        IMITATE_HANDS_FUNCTION(generator),
+    );
+    return `${fn}(${generator.quote_(side)}, ${generator.quote_(parts)})\n`;
+}
 

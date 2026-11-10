@@ -22,6 +22,7 @@ from .hand_tracking import (
     map_fast_hand,
     map_landmarks_to_frame,
     parse_fast_script_result,
+    prerotated_pixel_crop_rect,
     relative_landmark_z,
     PalmRegion,
 )
@@ -728,24 +729,27 @@ class HandTrackingMixin:
         )
         crop_width *= scale
         crop_height *= scale
-        roi_x = center_x / source_width
-        roi_y = center_y / source_height
-        roi_width = crop_width / source_width
-        roi_height = crop_height / source_height
 
+        rcx, rcy, rw, rh, angle_deg = prerotated_pixel_crop_rect(
+            center_x,
+            center_y,
+            crop_width,
+            crop_height,
+            rotation,
+            source_width,
+            source_height,
+        )
         rotated = stereo.dai.RotatedRect()
-        rotated.center.x = roi_x
-        rotated.center.y = roi_y
-        rotated.size.width = roi_width
-        rotated.size.height = roi_height
-        rotated.angle = stereo.math.degrees(rotation)
+        rotated.center.x = rcx
+        rotated.center.y = rcy
+        rotated.size.width = rw
+        rotated.size.height = rh
+        rotated.angle = angle_deg
 
         config = stereo.dai.ImageManipConfig()
         config.setOutputSize(crop.output_width, crop.output_height)
         config.setFrameType(stereo.dai.ImgFrame.Type.BGR888p)
-        # roi_for_frame converts decoder coordinates to normalized coordinates
-        # of the hand tap as the branch actually delivers it.
-        config.addCropRotatedRect(rotated, True)
+        config.addCropRotatedRect(rotated, False)
         # Palm ROIs routinely cross an image edge. Explicit warp border handling
         # keeps those valid instead of making ImageManip skip the frame.
         border_replicate = getattr(config, "setWarpBorderReplicatePixels", None)
@@ -957,6 +961,7 @@ class HandTrackingMixin:
             return
         frame_width, frame_height = self._active_frame_dimensions()
         source_width, source_height = getattr(self, "hand_fast_source_size", (0, 0))
+        field = getattr(self, "_colour_branch_field", None)
         if source_width <= 0 or source_height <= 0:
             return
         packet = getattr(self, "_pending_hand_fast_packet", None)
@@ -975,6 +980,7 @@ class HandTrackingMixin:
                             frame_height,
                             source_width,
                             source_height,
+                            field=field,
                         )
                     )
                     for hand in parse_fast_script_result(packet)

@@ -571,3 +571,53 @@ def test_partial_write_failure_reports_per_motor_results() -> None:
     assert result.successful is False
     assert len(result.results) == 1
     assert result.results[0].error_code == "write_failed"
+
+
+class StreamPrioritySpyMotor(FakeMotor):
+    def __init__(self, name: str) -> None:
+        super().__init__(name)
+        self.bus_priorities: list[object | None] = []
+
+    def set_position(self, position: int, **kwargs: object) -> bool:
+        self.bus_priorities.append(kwargs.get("bus_priority"))
+        return super().set_position(position)
+
+
+def test_multi_joint_single_point_trajectory_uses_stream_priority() -> None:
+    from pib_motors.bus_writer import BusPriority
+
+    elbow_left = StreamPrioritySpyMotor("elbow_left")
+    elbow_right = StreamPrioritySpyMotor("elbow_right")
+    lookup = {
+        "elbow_left": [elbow_left],
+        "elbow_right": [elbow_right],
+    }
+    module, _, _ = _load_motor_control_multi(lookup, [elbow_left, elbow_right])
+
+    node = module.MotorControl.__new__(module.MotorControl)
+    node.get_logger = MagicMock(return_value=MagicMock())
+    node.joint_trajectory_publisher = MagicMock()
+    node.trajectory_executor = module.TrajectoryExecutor(None, lookup)
+
+    def run_trajectory(joint_names: list[str], centidegs: list[int]) -> None:
+        jt = FakeJointTrajectory()
+        jt.joint_names = joint_names
+        point = FakeJointTrajectoryPoint()
+        for centideg in centidegs:
+            point.positions.append(module.centideg_to_rad(centideg))
+        jt.points.append(point)
+        request = MagicMock()
+        request.joint_trajectory = jt
+        response = MagicMock()
+        response.successful = True
+        response.results = []
+        module.MotorControl.apply_joint_trajectory(node, request, response)
+
+    run_trajectory(["elbow_left", "elbow_right"], [100, 200])
+    assert elbow_left.bus_priorities == [BusPriority.STREAM]
+    assert elbow_right.bus_priorities == [BusPriority.STREAM]
+
+    elbow_left.bus_priorities.clear()
+    elbow_right.bus_priorities.clear()
+    run_trajectory(["elbow_left"], [300])
+    assert elbow_left.bus_priorities == [None]
