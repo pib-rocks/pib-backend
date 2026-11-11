@@ -287,7 +287,13 @@ function release_tag_at() {
 function start_container() {
     print INFO "Starting container"
     echo "TRYB_URL_PREFIX=https://platform.tryb.ai" > "$BACKEND_DIR"/password.env
-    local backend_version="" frontend_version=""
+    local backend_version="" frontend_version="" backend_tag="develop" frontend_tag="develop"
+    local use_registry=1
+    case "${PIB_USE_REGISTRY_IMAGES:-1}" in
+        0 | false | FALSE | no | NO | off | OFF)
+            use_registry=0
+            ;;
+    esac
     local -a backend_env=(
       "PIB_HARDWARE_VARIANT=$PIB_HARDWARE_VARIANT"
       "PIB_SMART_CHATS=${PIB_SMART_CHATS:-1}"
@@ -296,11 +302,23 @@ function start_container() {
     if backend_version="$(release_tag_at "$BACKEND_DIR")"; then
         print INFO "pib-backend APP_VERSION=${backend_version}"
         backend_env+=("APP_VERSION=$backend_version")
+        backend_tag="$backend_version"
     fi
+    if [ -n "${PIB_IMAGE_TAG:-}" ]; then
+        backend_tag="$PIB_IMAGE_TAG"
+    fi
+    backend_env+=("PIB_IMAGE_TAG=$backend_tag")
+
     if frontend_version="$(release_tag_at "$FRONTEND_DIR")"; then
         print INFO "cerebra APP_VERSION=${frontend_version}"
         frontend_env+=("APP_VERSION=$frontend_version")
+        frontend_tag="$frontend_version"
     fi
+    if [ -n "${PIB_IMAGE_TAG:-}" ]; then
+        frontend_tag="$PIB_IMAGE_TAG"
+    fi
+    frontend_env+=("PIB_IMAGE_TAG=$frontend_tag")
+
     local profile
     local -a compose_profiles=()
     while IFS= read -r profile; do
@@ -308,14 +326,45 @@ function start_container() {
         compose_profiles+=(--profile "$profile")
     done < <(backend_compose_profiles)
 
-    run_logged_compose "pib-backend image build" \
-      sudo "${backend_env[@]}" \
-      docker compose -f "$BACKEND_DIR/docker-compose.yaml" "${compose_profiles[@]}" up -d --build \
-      || return 1
+    local backend_started=0
+    if [ "$use_registry" -eq 1 ]; then
+        if run_logged_compose "pib-backend image pull" \
+            sudo "${backend_env[@]}" \
+            docker compose -f "$BACKEND_DIR/docker-compose.yaml" "${compose_profiles[@]}" pull \
+            && run_logged_compose "pib-backend container start (registry)" \
+            sudo "${backend_env[@]}" \
+            docker compose -f "$BACKEND_DIR/docker-compose.yaml" "${compose_profiles[@]}" up -d --no-build; then
+            backend_started=1
+        else
+            print WARN "pib-backend registry pull/start failed; falling back to local source build"
+        fi
+    fi
+    if [ "$backend_started" -eq 0 ]; then
+        run_logged_compose "pib-backend image build" \
+          sudo "${backend_env[@]}" \
+          docker compose -f "$BACKEND_DIR/docker-compose.yaml" "${compose_profiles[@]}" up -d --build \
+          || return 1
+    fi
     print SUCCESS "Started pib-backend container"
-    run_logged_compose "cerebra container start" \
-      sudo "${frontend_env[@]}" \
-      docker compose -f "$FRONTEND_DIR/docker-compose.yaml" up -d --build || return 1
+
+    local frontend_started=0
+    if [ "$use_registry" -eq 1 ]; then
+        if run_logged_compose "cerebra image pull" \
+            sudo "${frontend_env[@]}" \
+            docker compose -f "$FRONTEND_DIR/docker-compose.yaml" pull \
+            && run_logged_compose "cerebra container start (registry)" \
+            sudo "${frontend_env[@]}" \
+            docker compose -f "$FRONTEND_DIR/docker-compose.yaml" up -d --no-build; then
+            frontend_started=1
+        else
+            print WARN "cerebra registry pull/start failed; falling back to local source build"
+        fi
+    fi
+    if [ "$frontend_started" -eq 0 ]; then
+        run_logged_compose "cerebra container start" \
+          sudo "${frontend_env[@]}" \
+          docker compose -f "$FRONTEND_DIR/docker-compose.yaml" up -d --build || return 1
+    fi
     print SUCCESS "Started cerebra container"
 }
 
