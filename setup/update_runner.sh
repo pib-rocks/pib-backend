@@ -1341,6 +1341,8 @@ log "Services running before the update: pib-backend=[$(printf '%s' "$BACKEND_SE
 validate_repository "pib-backend" "$BACKEND_DIR"
 validate_repository "cerebra" "$CEREBRA_DIR"
 check_watchdog_conflict
+reclaim_docker_disk_before_build
+check_disk_budget
 BACKEND_BEFORE="$(git -C "$BACKEND_DIR" rev-parse HEAD)"
 CEREBRA_BEFORE="$(git -C "$CEREBRA_DIR" rev-parse HEAD)"
 if PREVIOUS_APP_VERSION="$(resolve_app_version "$BACKEND_DIR")"; then

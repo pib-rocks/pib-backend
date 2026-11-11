@@ -358,6 +358,33 @@ def test_readiness_requires_attested_units_and_does_not_treat_marker_as_liveness
     assert any(item["status"] == "declared" for item in ready["checks"])
 
 
+def test_readiness_and_enqueue_reject_insufficient_disk_space(tmp_path, monkeypatch):
+    directory = tmp_path / "update"
+    directory.mkdir()
+    _marker(directory, units=list(update_service.HOST_UPDATE_UNITS))
+    # Require 100 TiB so any test host fails the disk check
+    monkeypatch.setenv("PIB_UPDATE_REQUIRED_FREE_KIB", str(100 * 1024 * 1024 * 1024))
+
+    readiness = update_service.evaluate_readiness(directory)
+    assert readiness["ready"] is False
+    disk_checks = [item for item in readiness["checks"] if item["name"] == "disk_space"]
+    assert len(disk_checks) == 1
+    assert disk_checks[0]["status"] == "failed"
+    assert "Insufficient free disk space" in disk_checks[0]["detail"]
+
+    request = update_service.build_request(
+        channel="release",
+        force=False,
+        confirmation="UPDATE",
+        actor="127.0.0.1",
+    )
+    with pytest.raises(
+        update_service.UpdateValidationError, match="Insufficient free disk space"
+    ):
+        update_service.enqueue_update(request, directory)
+    assert not (directory / "request.json").exists()
+
+
 def test_rolling_back_is_reported_as_running() -> None:
     """The rollback rebuild lasts tens of minutes; a terminal class would lie."""
     from service.update_service import classify_state
