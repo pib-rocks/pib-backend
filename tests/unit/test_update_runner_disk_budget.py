@@ -453,3 +453,48 @@ def test_runner_defines_cerebra_registry_stack_helpers() -> None:
         "\nrollback_once()", 1
     )[0]
     assert r"^ghcr\.io/pib-rocks/(pib-backend-|cerebra:)" in prune
+
+
+def test_rollback_prefers_cached_images_with_no_build_and_writes_granular_progress(
+    tmp_path: Path,
+) -> None:
+    result, _update_dir, docker_log, log = _run(
+        tmp_path,
+        free_kib="4194304",
+        required_free_kib="1048576",
+        channel="release",
+        release="v0.7.4",
+        tag_head="v0.7.3",
+        tag_head_after="v0.7.4",
+        pib_sdk_installed="0.7.3",
+    )
+
+    assert result.returncode != 0, log
+    assert "fetching: Fetching pib-backend target (v0.7.4)" in log
+    assert "fetching: Fetching cerebra target (v0.7.4)" in log
+    assert (
+        "building: Updating and recreating pib-backend containers (APP_VERSION=v0.7.4)"
+        in log
+    )
+    assert (
+        "building: Updating and recreating cerebra container (APP_VERSION=v0.7.4)"
+        in log
+    )
+    assert (
+        "Rollback: recreating backend containers from cached images for PIB_IMAGE_TAG=v0.7.3"
+        in log
+    )
+    assert (
+        "Rollback: recreating cerebra container from cached image for PIB_IMAGE_TAG=v0.7.3"
+        in log
+    )
+    assert (
+        "APP_VERSION=v0.7.3 image inspect ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.3"
+        in docker_log
+    )
+    assert (
+        "APP_VERSION=v0.7.3 image inspect ghcr.io/pib-rocks/cerebra:v0.7.3"
+        in docker_log
+    )
+    assert "APP_VERSION=v0.7.3 compose -f " in docker_log
+    assert " up -d --no-build --force-recreate" in docker_log
