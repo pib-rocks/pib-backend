@@ -369,3 +369,104 @@ def test_the_locale_is_the_first_step_and_the_script_runs_under_c_utf8_until_the
     assert first_step < main.index("check_distribution")
     fallback = main.index("export LANG=C.UTF-8 LC_ALL=C.UTF-8")
     assert main.index('exec > >(tee -a "$LOG_FILE")') < fallback < first_step
+
+
+def _init_git_remote(path: Path, tags: tuple[str, ...]) -> None:
+    path.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=path, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"], cwd=path, check=True
+    )
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=path, check=True)
+    blockly = (
+        path
+        / "pib_blockly/pib_blockly_server/src/pib-blockly/program-blocks"
+        / "custom-blocks.ts"
+    )
+    blockly.parent.mkdir(parents=True)
+    blockly.write_text("// vendored\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=path, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=path, check=True)
+    for tag in tags:
+        subprocess.run(["git", "tag", tag], cwd=path, check=True)
+    subprocess.run(["git", "checkout", "-q", "-b", "develop"], cwd=path, check=True)
+    subprocess.run(["git", "checkout", "-q", "main"], cwd=path, check=True)
+
+
+def test_clone_repositories_resolves_latest_paired_release_tag_in_normal_mode(
+    tmp_path: Path,
+):
+    backend_remote = tmp_path / "remotes" / "pib-backend"
+    frontend_remote = tmp_path / "remotes" / "cerebra"
+    _init_git_remote(backend_remote, ("v0.7.9", "v0.7.12", "v0.7.13", "v0.7.14"))
+    _init_git_remote(frontend_remote, ("v0.7.9", "v0.7.12", "v0.7.13"))
+
+    app_dir = tmp_path / "app"
+    script = (
+        PRELUDE
+        + _extract(SETUP_PIB, "resolve_latest_paired_release_tag")
+        + _extract(SETUP_PIB, "remote_ref_exists")
+        + _extract(SETUP_PIB, "clone_repositories")
+        + """
+BRANCH_BACKEND="main"
+BRANCH_FRONTEND="main"
+EXPLICIT_BRANCH_BACKEND=false
+EXPLICIT_BRANCH_FRONTEND=false
+clone_repositories
+echo "rc=$? backend=$BRANCH_BACKEND frontend=$BRANCH_FRONTEND"
+"""
+    )
+    result = _bash(
+        script,
+        {
+            "FRONTEND": str(frontend_remote),
+            "BACKEND": str(backend_remote),
+            "APP_DIR": str(app_dir),
+            "BACKEND_DIR": str(app_dir / "pib-backend"),
+            "FRONTEND_DIR": str(app_dir / "cerebra"),
+        },
+    )
+    assert "rc=0 backend=v0.7.13 frontend=v0.7.13" in result.stdout, (
+        result.stdout + result.stderr
+    )
+    assert (
+        "Resolved latest paired release tag 'v0.7.13' for pib-backend and cerebra"
+        in result.stdout
+    )
+
+
+def test_clone_repositories_respects_explicit_branch_override(tmp_path: Path):
+    backend_remote = tmp_path / "remotes" / "pib-backend"
+    frontend_remote = tmp_path / "remotes" / "cerebra"
+    _init_git_remote(backend_remote, ("v0.7.13",))
+    _init_git_remote(frontend_remote, ("v0.7.13",))
+
+    app_dir = tmp_path / "app"
+    script = (
+        PRELUDE
+        + _extract(SETUP_PIB, "resolve_latest_paired_release_tag")
+        + _extract(SETUP_PIB, "remote_ref_exists")
+        + _extract(SETUP_PIB, "clone_repositories")
+        + """
+BRANCH_BACKEND="develop"
+BRANCH_FRONTEND="develop"
+EXPLICIT_BRANCH_BACKEND=true
+EXPLICIT_BRANCH_FRONTEND=true
+clone_repositories
+echo "rc=$? backend=$BRANCH_BACKEND frontend=$BRANCH_FRONTEND"
+"""
+    )
+    result = _bash(
+        script,
+        {
+            "FRONTEND": str(frontend_remote),
+            "BACKEND": str(backend_remote),
+            "APP_DIR": str(app_dir),
+            "BACKEND_DIR": str(app_dir / "pib-backend"),
+            "FRONTEND_DIR": str(app_dir / "cerebra"),
+        },
+    )
+    assert "rc=0 backend=develop frontend=develop" in result.stdout, (
+        result.stdout + result.stderr
+    )
+    assert "Resolved latest paired release tag" not in result.stdout

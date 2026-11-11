@@ -523,6 +523,25 @@ function install_locale() {
   export LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
 }
 
+# Resolve the highest semantic release tag (vX.Y.Z) shared by both FRONTEND and BACKEND.
+function resolve_latest_paired_release_tag() {
+  local frontend_tags backend_tags shared_tag
+  frontend_tags="$(git ls-remote --tags --refs "$FRONTEND" 2>/dev/null | awk -F'refs/tags/' 'NF == 2 {print $2}' | grep -E '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' | sort -u || true)"
+  backend_tags="$(git ls-remote --tags --refs "$BACKEND" 2>/dev/null | awk -F'refs/tags/' 'NF == 2 {print $2}' | grep -E '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' | sort -u || true)"
+  if [ -z "$frontend_tags" ] || [ -z "$backend_tags" ]; then
+    return 1
+  fi
+  shared_tag="$(comm -12 <(printf '%s\n' "$frontend_tags") <(printf '%s\n' "$backend_tags") | sort -V | tail -n 1)"
+  [ -n "$shared_tag" ] || return 1
+  printf '%s\n' "$shared_tag"
+}
+
+function remote_ref_exists() {
+  local remote="$1"
+  local ref="$2"
+  git ls-remote --exit-code --heads --tags "$remote" "$ref" >/dev/null 2>&1
+}
+
 # function to clone pib repositories to APP_DIR (~/app) directory
 function clone_repositories() {
   # Validate branches
@@ -531,11 +550,23 @@ function clone_repositories() {
     exit 1
   fi
 
-  if ! git ls-remote --exit-code --heads "$FRONTEND" "$BRANCH_FRONTEND" >/dev/null 2>&1; then
+  if [ "${EXPLICIT_BRANCH_BACKEND:-false}" != true ] && [ "${EXPLICIT_BRANCH_FRONTEND:-false}" != true ] \
+     && [ "$BRANCH_BACKEND" = "main" ] && [ "$BRANCH_FRONTEND" = "main" ]; then
+    local paired_tag=""
+    if paired_tag="$(resolve_latest_paired_release_tag)"; then
+      BRANCH_BACKEND="$paired_tag"
+      BRANCH_FRONTEND="$paired_tag"
+      print INFO "Resolved latest paired release tag '${paired_tag}' for pib-backend and cerebra"
+    else
+      print WARN "Could not resolve a shared release tag; falling back to branch '${BRANCH_BACKEND}'"
+    fi
+  fi
+
+  if ! remote_ref_exists "$FRONTEND" "$BRANCH_FRONTEND"; then
     print ERROR "Branch '${BRANCH_FRONTEND}' for Cerebra not found"
     exit 1
   fi
-  if ! git ls-remote --exit-code --heads "$BACKEND" "$BRANCH_BACKEND" >/dev/null 2>&1; then
+  if ! remote_ref_exists "$BACKEND" "$BRANCH_BACKEND"; then
     print ERROR "Branch '${BRANCH_BACKEND}' for pib-backend not found"
     exit 1
   fi
@@ -1899,6 +1930,8 @@ show_help()
 # asset when the cache does not match, and the whisper weights only when they are missing)
 BRANCH_BACKEND="main"
 BRANCH_FRONTEND="main"
+EXPLICIT_BRANCH_BACKEND=false
+EXPLICIT_BRANCH_FRONTEND=false
 INSTALL_METHOD="docker"
 MODELS_ONLY=false
 VERIFY_MODELS_ONLY=false
@@ -1909,9 +1942,11 @@ while [ $# -gt 0 ]; do
   case "$1" in
     -f=* | --frontend-branch=*)
       BRANCH_FRONTEND="${1#*=}"
+      EXPLICIT_BRANCH_FRONTEND=true
       ;;
     -b=* | --backend-branch=*)
       BRANCH_BACKEND="${1#*=}"
+      EXPLICIT_BRANCH_BACKEND=true
       ;;
     -l | --legacy)
       INSTALL_METHOD="legacy"
