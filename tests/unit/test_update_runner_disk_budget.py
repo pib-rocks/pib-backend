@@ -488,7 +488,13 @@ def test_rollback_prefers_cached_images_with_no_build_and_writes_granular_progre
         "Rollback: recreating cerebra container from cached image for PIB_IMAGE_TAG=v0.7.3"
         in log
     )
-    assert "APP_VERSION=v0.7.3 image inspect ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.3" in docker_log
-    assert "APP_VERSION=v0.7.3 image inspect ghcr.io/pib-rocks/cerebra:v0.7.3" in docker_log
+    assert (
+        "APP_VERSION=v0.7.3 image inspect ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.3"
+        in docker_log
+    )
+    assert (
+        "APP_VERSION=v0.7.3 image inspect ghcr.io/pib-rocks/cerebra:v0.7.3"
+        in docker_log
+    )
     assert "APP_VERSION=v0.7.3 compose -f " in docker_log
     assert " up -d --no-build --force-recreate" in docker_log
