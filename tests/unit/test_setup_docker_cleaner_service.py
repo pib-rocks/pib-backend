@@ -184,9 +184,56 @@ def test_start_container_forwards_release_tag_to_backend_and_frontend_compose(tm
     subprocess.run(["bash", "-c", HARNESS], env=env, check=True, capture_output=True)
     raw_calls = sudo_raw.read_text(encoding="utf-8").splitlines()
     compose_calls = [c for c in raw_calls if "docker compose" in c]
+    assert len(compose_calls) == 4, compose_calls
+    assert all("APP_VERSION=v0.7.0" in c for c in compose_calls)
+    assert all("PIB_IMAGE_TAG=v0.7.0" in c for c in compose_calls)
+    assert compose_calls[0].endswith(" pull")
+    assert compose_calls[1].endswith(" up -d --no-build")
+    assert compose_calls[2].endswith(" pull")
+    assert compose_calls[3].endswith(" up -d --no-build")
+
+
+def test_start_container_falls_back_to_build_when_registry_disabled(tmp_path):
+    backend_dir = _make_backend_dir(tmp_path)
+    frontend_dir = tmp_path / "cerebra"
+    frontend_dir.mkdir()
+    for repo in (backend_dir, frontend_dir):
+        subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.com"], cwd=repo, check=True
+        )
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
+        (repo / "README.md").write_text("hi\n", encoding="utf-8")
+        subprocess.run(["git", "add", "README.md"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=repo, check=True)
+        subprocess.run(["git", "tag", "v0.7.0"], cwd=repo, check=True)
+
+    sudo_raw = tmp_path / "sudo_raw.log"
+    sudo_raw.touch()
+    stub_bin = _make_stub_bin(tmp_path)
+    (stub_bin / "sudo").write_text(
+        '#!/bin/bash\nprintf "%s\\n" "$*" >> "$SUDO_RAW_LOG"\nexit 0\n',
+        encoding="utf-8",
+    )
+    env = dict(os.environ)
+    env.update(
+        PATH=f"{stub_bin}{os.pathsep}{env['PATH']}",
+        STUB_LOG=str(tmp_path / "sudo.log"),
+        SUDO_RAW_LOG=str(sudo_raw),
+        BACKEND_DIR=str(backend_dir),
+        FRONTEND_DIR=str(frontend_dir),
+        PIB_HARDWARE_VARIANT="pib5edu",
+        PIB_USE_REGISTRY_IMAGES="0",
+        DOCKER_INSTALL=str(DOCKER_INSTALL),
+        PIB_DOCKER_BUILD_LOG=str(tmp_path / "docker-build.log"),
+    )
+    subprocess.run(["bash", "-c", HARNESS], env=env, check=True, capture_output=True)
+    raw_calls = sudo_raw.read_text(encoding="utf-8").splitlines()
+    compose_calls = [c for c in raw_calls if "docker compose" in c]
     assert len(compose_calls) == 2, compose_calls
     assert "APP_VERSION=v0.7.0" in compose_calls[0]
     assert "APP_VERSION=v0.7.0" in compose_calls[1]
+    assert "--build" in compose_calls[0]
     assert "--build" in compose_calls[1]
 
 

@@ -325,6 +325,58 @@ def _check_result(
     return item
 
 
+DEFAULT_REQUIRED_FREE_KIB = 16_777_216
+
+
+def compute_required_free_kib(marker: Mapping[str, Any] | None = None) -> int:
+    """Return required free disk space in KiB (default 16 GiB = 16777216 KiB)."""
+    raw = os.environ.get("PIB_UPDATE_REQUIRED_FREE_KIB")
+    if raw is not None:
+        try:
+            val = int(raw.strip())
+            if val >= 0:
+                return val
+        except ValueError:
+            pass
+    if isinstance(marker, Mapping):
+        marker_val = marker.get("requiredFreeKiB")
+        if isinstance(marker_val, int) and marker_val >= 0:
+            return marker_val
+    return DEFAULT_REQUIRED_FREE_KIB
+
+
+def _evaluate_disk_space(
+    directory: Path, marker: Mapping[str, Any] | None = None
+) -> dict[str, str]:
+    required_kib = compute_required_free_kib(marker)
+    required_mib = (required_kib + 1023) // 1024
+    try:
+        stat = os.statvfs(directory)
+        available_kib = (stat.f_bavail * stat.f_frsize) // 1024
+    except OSError as error:
+        return _check_result(
+            "disk_space",
+            "failed",
+            f"Could not inspect free disk space at {directory}: {error}",
+            "Ensure the update directory filesystem is accessible.",
+        )
+    available_mib = (available_kib + 1023) // 1024
+    if available_kib < required_kib:
+        return _check_result(
+            "disk_space",
+            "failed",
+            f"Insufficient free disk space for this update: required {required_mib} MiB "
+            f"({required_kib} KiB), available {available_mib} MiB ({available_kib} KiB).",
+            "Free space (e.g. docker builder prune -af; docker image prune -f) or "
+            "override with PIB_UPDATE_REQUIRED_FREE_KIB, then retry.",
+        )
+    return _check_result(
+        "disk_space",
+        "ok",
+        f"Free disk space: {available_mib} MiB available (required: {required_mib} MiB).",
+    )
+
+
 def evaluate_readiness(directory: Path | None = None) -> dict[str, Any]:
     """Report installer prerequisites. ``service.json`` alone is not liveness.
 
@@ -461,6 +513,7 @@ def evaluate_readiness(directory: Path | None = None) -> dict[str, Any]:
                 "Re-run setup/installation_scripts/docker_install.sh to install pib-update-check.path.",
             )
         )
+    checks.append(_evaluate_disk_space(directory, marker))
     ready = all(item["status"] in {"ok", "attested", "declared"} for item in checks)
     return {"ready": ready, "checks": checks, "serviceMarkerIsNotLiveness": True}
 
@@ -643,6 +696,16 @@ def enqueue_update(
         raise UpdateNotInstalledError(status["error"], state=status["state"])
     if is_active(status, status.get("requestPending", False)):
         raise UpdateConflictError(status)
+    readiness = status.get("readiness") or {}
+    failed_checks = [
+        item for item in readiness.get("checks", []) if item.get("status") == "failed"
+    ]
+    if failed_checks:
+        reasons = " ".join(
+            " ".join(filter(None, [item.get("detail"), item.get("repair")]))
+            for item in failed_checks
+        )
+        raise UpdateValidationError(reasons or "Update prerequisites are not met.")
     if status.get("classification") == "stale":
         atomic_write_json(
             directory / INTERRUPTED_JOB_NAME,

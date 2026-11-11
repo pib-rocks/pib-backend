@@ -817,6 +817,52 @@ build_backend_stack() {
         up -d --build --force-recreate || return 1
 }
 
+# Tries ghcr.io cerebra image (compose pull) before the local build path.
+# Returns 0 when pull + recreate succeeded; 1 to fall back to compose build.
+recreate_cerebra_from_registry() {
+    local enabled pull_log pull_status compose
+    enabled="$(python3 "$BACKEND_IMAGES_HELPER" registry-enabled 2>/dev/null || printf false)"
+    if [ "$enabled" != "true" ]; then
+        log "$(python3 "$BACKEND_IMAGES_HELPER" log-summary build cerebra)"
+        return 1
+    fi
+    export PIB_IMAGE_TAG
+    PIB_IMAGE_TAG="$(python3 "$BACKEND_IMAGES_HELPER" resolve-tag "${APP_VERSION:-}")"
+    if [ -n "${APP_VERSION:-}" ]; then
+        export APP_VERSION
+    fi
+    log "Attempting registry pull for cerebra service (PIB_IMAGE_TAG=${PIB_IMAGE_TAG} APP_VERSION=${APP_VERSION:-unset})"
+    compose=(docker compose -f "$CEREBRA_DIR/docker-compose.yaml")
+    pull_log="$(mktemp "$UPDATE_DIR/cerebra-pull.XXXXXX")"
+    if "${compose[@]}" pull >"$pull_log" 2>&1; then
+        cat "$pull_log"
+        rm -f "$pull_log"
+        if "${compose[@]}" up -d --no-build --force-recreate; then
+            log "$(python3 "$BACKEND_IMAGES_HELPER" log-summary pull cerebra)"
+            return 0
+        fi
+        log "WARNING: registry images pulled but cerebra recreate with --no-build failed"
+    else
+        pull_status=$?
+        log "WARNING: cerebra registry pull failed (exit ${pull_status}): $(tr '\n' ' ' <"$pull_log" | sed 's/  */ /g')"
+        cat "$pull_log"
+    fi
+    rm -f "$pull_log"
+    log "$(python3 "$BACKEND_IMAGES_HELPER" log-summary build_after_pull_failed cerebra)"
+    return 1
+}
+
+build_cerebra_stack() {
+    local skip_registry="${1:-}"
+    if [ -z "$skip_registry" ]; then
+        if recreate_cerebra_from_registry; then
+            return 0
+        fi
+    fi
+    docker compose -f "$CEREBRA_DIR/docker-compose.yaml" \
+        up -d --build --force-recreate || return 1
+}
+
 fetch_repository() {
     local directory="$1"
     local branch="$2"
@@ -1252,7 +1298,7 @@ prune_obsolete_release_images() {
     while IFS= read -r ref; do
         [ -n "$ref" ] || continue
         tag="${ref##*:}"
-        if [ "$tag" = "$current_tag" ]; then
+        if [ "$tag" = "$current_tag" ] || [ "$tag" = "latest" ]; then
             continue
         fi
         if [ -n "$previous_tag" ] && [ "$tag" = "$previous_tag" ]; then
@@ -1261,7 +1307,7 @@ prune_obsolete_release_images() {
         if docker image rm -f "$ref" >/dev/null 2>&1; then
             removed=$((removed + 1))
         fi
-    done < <(docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | grep -E '^ghcr\.io/pib-rocks/pib-backend-' || true)
+    done < <(docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | grep -E '^ghcr\.io/pib-rocks/(pib-backend-|cerebra:)' || true)
     docker image prune -f >/dev/null 2>&1 || true
     free_after="$(read_free_kib)"
     reclaimed_kib=$((free_after - free_before))
@@ -1295,8 +1341,7 @@ rollback_once() {
         unset PIB_SDK_VERSION
     fi
     build_backend_stack rollback
-    docker compose -f "$CEREBRA_DIR/docker-compose.yaml" \
-        up -d --build --force-recreate
+    build_cerebra_stack rollback
     BACKEND_TARGET="$BACKEND_BEFORE"
     CEREBRA_TARGET="$CEREBRA_BEFORE"
     if wait_for_flask && verify_migration && verify_pib_sdk && verify_result; then
@@ -1341,6 +1386,8 @@ log "Services running before the update: pib-backend=[$(printf '%s' "$BACKEND_SE
 validate_repository "pib-backend" "$BACKEND_DIR"
 validate_repository "cerebra" "$CEREBRA_DIR"
 check_watchdog_conflict
+reclaim_docker_disk_before_build
+check_disk_budget
 BACKEND_BEFORE="$(git -C "$BACKEND_DIR" rev-parse HEAD)"
 CEREBRA_BEFORE="$(git -C "$CEREBRA_DIR" rev-parse HEAD)"
 if PREVIOUS_APP_VERSION="$(resolve_app_version "$BACKEND_DIR")"; then
@@ -1400,8 +1447,7 @@ write_status "building" "Building and recreating backend and cerebra containers 
 ensure_ollama_for_update || fail "ollama listen drop-in could not be applied"
 assert_checkouts_match_targets
 build_backend_stack || fail "Backend container build failed"
-docker compose -f "$CEREBRA_DIR/docker-compose.yaml" \
-    up -d --build --force-recreate || fail "Cerebra container build failed"
+build_cerebra_stack || fail "Cerebra container build failed"
 
 check_cancel
 write_status "restarting" "Waiting for the recreated flask-app"
