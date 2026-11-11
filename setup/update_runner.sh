@@ -801,6 +801,15 @@ build_backend_stack() {
             return 0
         fi
         refresh_backend_base_images || return 1
+    elif [ -n "${APP_VERSION:-}" ]; then
+        export PIB_IMAGE_TAG="$APP_VERSION"
+        export APP_VERSION
+        if docker image inspect "ghcr.io/pib-rocks/pib-backend-flask-app:${PIB_IMAGE_TAG}" >/dev/null 2>&1; then
+            log "Rollback: recreating backend containers from cached images for PIB_IMAGE_TAG=${PIB_IMAGE_TAG}"
+            if docker compose -f "$BACKEND_DIR/docker-compose.yaml" --profile all up -d --no-build --force-recreate; then
+                return 0
+            fi
+        fi
     fi
     if [ -n "${APP_VERSION:-}" ]; then
         export APP_VERSION
@@ -857,6 +866,15 @@ build_cerebra_stack() {
     if [ -z "$skip_registry" ]; then
         if recreate_cerebra_from_registry; then
             return 0
+        fi
+    elif [ -n "${APP_VERSION:-}" ]; then
+        export PIB_IMAGE_TAG="$APP_VERSION"
+        export APP_VERSION
+        if docker image inspect "ghcr.io/pib-rocks/cerebra:${PIB_IMAGE_TAG}" >/dev/null 2>&1; then
+            log "Rollback: recreating cerebra container from cached image for PIB_IMAGE_TAG=${PIB_IMAGE_TAG}"
+            if docker compose -f "$CEREBRA_DIR/docker-compose.yaml" up -d --no-build --force-recreate; then
+                return 0
+            fi
         fi
     fi
     docker compose -f "$CEREBRA_DIR/docker-compose.yaml" \
@@ -1407,13 +1425,17 @@ fi
 if [ -n "${BACKEND_PIN:-}" ] || [ -n "${CEREBRA_PIN:-}" ]; then
     [ -n "${BACKEND_PIN:-}" ] && [ -n "${CEREBRA_PIN:-}" ] || fail "Pinned update is missing one repository target"
     log "Installing recorded targets pib-backend=${BACKEND_PIN} cerebra=${CEREBRA_PIN} release=${RELEASE_TAG:-develop-pin}"
+    write_status "fetching" "Fetching pib-backend target (${RELEASE_TAG:-${BACKEND_PIN:0:8}})"
     checkout_recorded_target "$BACKEND_DIR" "$BRANCH" "$BACKEND_PIN" || fail "Failed to check out recorded pib-backend target ${BACKEND_PIN}"
+    write_status "fetching" "Fetching cerebra target (${RELEASE_TAG:-${CEREBRA_PIN:0:8}})"
     checkout_recorded_target "$CEREBRA_DIR" "$BRANCH" "$CEREBRA_PIN" || fail "Failed to check out recorded cerebra target ${CEREBRA_PIN}"
     BACKEND_TARGET="$BACKEND_PIN"
     CEREBRA_TARGET="$CEREBRA_PIN"
 else
     log "Channel-only request: checking out the moving ${BRANCH} branch. This is the legacy request shape and is not a pinned release."
+    write_status "fetching" "Fetching pib-backend (${BRANCH})"
     fetch_repository "$BACKEND_DIR" "$BRANCH" || fail "Failed to fetch pib-backend"
+    write_status "fetching" "Fetching cerebra (${BRANCH})"
     fetch_repository "$CEREBRA_DIR" "$BRANCH" || fail "Failed to fetch cerebra"
     BACKEND_TARGET="$(git -C "$BACKEND_DIR" rev-parse HEAD)"
     CEREBRA_TARGET="$(git -C "$CEREBRA_DIR" rev-parse HEAD)"
@@ -1446,7 +1468,9 @@ write_status "building" "Building and recreating backend and cerebra containers 
 # probe. A missing ollama unit returns success.
 ensure_ollama_for_update || fail "ollama listen drop-in could not be applied"
 assert_checkouts_match_targets
+write_status "building" "Updating and recreating pib-backend containers (APP_VERSION=${APP_VERSION})"
 build_backend_stack || fail "Backend container build failed"
+write_status "building" "Updating and recreating cerebra container (APP_VERSION=${APP_VERSION})"
 build_cerebra_stack || fail "Cerebra container build failed"
 
 check_cancel
