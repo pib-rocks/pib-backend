@@ -373,7 +373,10 @@ def _default_transport(url: str) -> tuple[int, object]:
         "Accept": "application/vnd.github+json",
         "User-Agent": "pib-update-release-check",
     }
-    token = os.environ.get("GH_TOKEN", "").strip()
+    token = (
+        os.environ.get("GH_TOKEN", "").strip()
+        or os.environ.get("GITHUB_TOKEN", "").strip()
+    )
     if token:
         headers["Authorization"] = f"Bearer {token}"
     request = urllib.request.Request(url, headers=headers)
@@ -406,6 +409,52 @@ def _local_repo_dir(repo: str) -> str | None:
     if directory and os.path.isdir(directory):
         return directory
     return None
+
+
+def _list_local_tag_releases(repo: str) -> list[object] | None:
+    """Synthesize release documents from fetched local git tags when GitHub API rate-limits."""
+    repo_dir = _local_repo_dir(repo)
+    if repo_dir is None:
+        return None
+    try:
+        completed = subprocess.run(
+            [
+                "git",
+                "-C",
+                repo_dir,
+                "for-each-ref",
+                "--format=%(refname:short)\t%(creatordate:iso-strict)\t%(contents:subject)",
+                "refs/tags",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if completed.returncode != 0:
+        return None
+    synthesized: list[object] = []
+    for raw_line in completed.stdout.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        parts = line.split("\t", 2)
+        tag = parts[0].strip()
+        if version_tuple(tag) is None:
+            continue
+        published_at = parts[1].strip() if len(parts) > 1 and parts[1].strip() else None
+        subject = parts[2].strip() if len(parts) > 2 else ""
+        synthesized.append(
+            {
+                "tag_name": tag,
+                "draft": False,
+                "prerelease": False,
+                "body": subject,
+                "published_at": published_at,
+            }
+        )
+    return synthesized if synthesized else None
 
 
 def _resolve_local_tag_commit(repo: str, tag: str) -> str | None:
@@ -446,6 +495,10 @@ def list_releases(repo: str, transport: Transport) -> list[object]:
             f"{API}/repos/{repo}/releases?per_page=100&page={page}"
         )
         if status != 200 or not isinstance(payload, list):
+            if status in (403, 429) and not collected:
+                local_releases = _list_local_tag_releases(repo)
+                if local_releases is not None:
+                    return local_releases
             raise OSError(f"{repo} release list returned HTTP {status}")
         collected.extend(payload)
         if len(payload) < 100:
