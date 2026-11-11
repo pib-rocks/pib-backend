@@ -53,6 +53,7 @@ def workspace_dockerfile(context: str, dockerfile: str) -> str:
 
 
 DEFAULT_IMAGE_PREFIX: Final[str] = "ghcr.io/pib-rocks/pib-backend"
+DEFAULT_CEREBRA_IMAGE: Final[str] = "ghcr.io/pib-rocks/cerebra"
 DEFAULT_IMAGE_TAG: Final[str] = "develop"
 
 LOG_PULL_SUCCESS: Final[str] = (
@@ -63,6 +64,16 @@ LOG_BUILD_NO_REGISTRY: Final[str] = (
 )
 LOG_BUILD_AFTER_PULL_FAILED: Final[str] = (
     "Backend service images: local build (registry pull failed; compose build fallback)"
+)
+
+CEREBRA_LOG_PULL_SUCCESS: Final[str] = (
+    "Cerebra service image: pulled from registry (recreate with --no-build)"
+)
+CEREBRA_LOG_BUILD_NO_REGISTRY: Final[str] = (
+    "Cerebra service image: local build (registry pull disabled)"
+)
+CEREBRA_LOG_BUILD_AFTER_PULL_FAILED: Final[str] = (
+    "Cerebra service image: local build (registry pull failed; compose build fallback)"
 )
 
 
@@ -104,7 +115,13 @@ def deploy_strategy(
     return "build"
 
 
-def log_summary_for_strategy(strategy: str) -> str:
+def log_summary_for_strategy(strategy: str, component: str = "backend") -> str:
+    if component == "cerebra":
+        if strategy == "pull":
+            return CEREBRA_LOG_PULL_SUCCESS
+        if strategy == "build_after_pull_failed":
+            return CEREBRA_LOG_BUILD_AFTER_PULL_FAILED
+        return CEREBRA_LOG_BUILD_NO_REGISTRY
     if strategy == "pull":
         return LOG_PULL_SUCCESS
     if strategy == "build_after_pull_failed":
@@ -119,7 +136,7 @@ def image_reference(service: str, prefix: str, tag: str) -> str:
 def _usage() -> None:
     sys.stderr.write(
         "usage: update_backend_images.py registry-enabled | resolve-tag APP_VERSION\n"
-        "       update_backend_images.py log-summary STRATEGY\n"
+        "       update_backend_images.py log-summary STRATEGY [backend|cerebra]\n"
     )
 
 
@@ -140,7 +157,8 @@ def main(argv: list[str] | None = None) -> int:
         if len(args) < 2:
             _usage()
             return 2
-        print(log_summary_for_strategy(args[1]))
+        component = args[2] if len(args) > 2 else "backend"
+        print(log_summary_for_strategy(args[1], component))
         return 0
     _usage()
     return 2

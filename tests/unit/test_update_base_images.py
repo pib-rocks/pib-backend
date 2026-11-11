@@ -261,10 +261,12 @@ def _profile_build_kinds(profile_build_log: Path) -> list[str]:
 def test_rollback_once_skips_base_image_refresh() -> None:
     text = RUNNER.read_text(encoding="utf-8")
     assert "recreate_backend_from_registry" in text
+    assert "recreate_cerebra_from_registry" in text
     rollback = text.split("rollback_once() {", 1)[1].split(
         "\non_unexpected_error() {", 1
     )[0]
     assert "build_backend_stack rollback" in rollback
+    assert "build_cerebra_stack rollback" in rollback
     assert "refresh_backend_base_images" not in rollback
     refresh = text.split("refresh_backend_base_images() {", 1)[1].split(
         "\n}\n\n# Documented injection", 1
