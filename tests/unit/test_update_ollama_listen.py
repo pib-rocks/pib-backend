@@ -260,7 +260,7 @@ def test_update_runner_applies_the_dropin_before_containers_are_recreated():
     )
     assert main.index("ensure_ollama_for_update") < main.index("build_backend_stack")
     assert main.index("ensure_ollama_for_update") < main.index(
-        'up -d --build --force-recreate || fail "Cerebra container build failed"'
+        'build_cerebra_stack || fail "Cerebra container build failed"'
     )
     assert "ensure_ollama" not in rollback
     verify = text.split("verify_result() {", 1)[1].split("\nwrite_revision() {", 1)[0]

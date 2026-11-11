@@ -68,6 +68,42 @@ def test_log_summary_matches_strategy():
     assert helper.log_summary_for_strategy("build") == helper.LOG_BUILD_NO_REGISTRY
 
 
+def test_log_summary_cerebra_matches_strategy():
+    assert (
+        helper.log_summary_for_strategy("pull", "cerebra")
+        == helper.CEREBRA_LOG_PULL_SUCCESS
+    )
+    assert (
+        helper.log_summary_for_strategy("build_after_pull_failed", "cerebra")
+        == helper.CEREBRA_LOG_BUILD_AFTER_PULL_FAILED
+    )
+    assert (
+        helper.log_summary_for_strategy("build", "cerebra")
+        == helper.CEREBRA_LOG_BUILD_NO_REGISTRY
+    )
+
+
+def test_log_summary_default_component_is_backend():
+    assert helper.log_summary_for_strategy("pull", "backend") == helper.LOG_PULL_SUCCESS
+
+
+def test_default_cerebra_image_constant():
+    assert helper.DEFAULT_CEREBRA_IMAGE == "ghcr.io/pib-rocks/cerebra"
+
+
+def test_cli_log_summary_cerebra_component():
+    import subprocess
+
+    result = subprocess.run(
+        [sys.executable, str(HELPER_PATH), "log-summary", "pull", "cerebra"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0
+    assert result.stdout.strip() == helper.CEREBRA_LOG_PULL_SUCCESS
+
+
 def test_compose_image_names_use_prefix_and_tag():
     text = COMPOSE_PATH.read_text(encoding="utf-8")
     for service in helper.BACKEND_REGISTRY_SERVICES:

@@ -275,6 +275,9 @@ def _run(
                 "ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.2",
                 "ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.3",
                 "ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.4",
+                "ghcr.io/pib-rocks/cerebra:v0.7.2",
+                "ghcr.io/pib-rocks/cerebra:v0.7.3",
+                "ghcr.io/pib-rocks/cerebra:v0.7.4",
             ]
         )
         + "\n",
@@ -428,5 +431,25 @@ def test_post_success_cleanup_keeps_current_and_previous_tags(tmp_path: Path) ->
     assert (
         "image rm -f ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.4" not in docker_log
     )
+    assert "ghcr.io/pib-rocks/cerebra:v0.7.2" in docker_log
+    assert "image rm -f ghcr.io/pib-rocks/cerebra:v0.7.2" in docker_log
+    assert "image rm -f ghcr.io/pib-rocks/cerebra:v0.7.3" not in docker_log
+    assert "image rm -f ghcr.io/pib-rocks/cerebra:v0.7.4" not in docker_log
     status = json.loads((update_dir / "status.json").read_text(encoding="utf-8"))
     assert status["state"] == "done"
+
+
+def test_runner_defines_cerebra_registry_stack_helpers() -> None:
+    text = RUNNER.read_text(encoding="utf-8")
+    assert "recreate_cerebra_from_registry" in text
+    assert "build_cerebra_stack" in text
+    rollback = text.split("rollback_once() {", 1)[1].split(
+        "\non_unexpected_error() {", 1
+    )[0]
+    assert "build_cerebra_stack rollback" in rollback
+    main = text.split('write_status "building"', 1)[1].split("check_cancel", 2)[0]
+    assert "build_cerebra_stack || fail" in main
+    prune = text.split("prune_obsolete_release_images() {", 1)[1].split(
+        "\nrollback_once()", 1
+    )[0]
+    assert r"^ghcr\.io/pib-rocks/(pib-backend-|cerebra:)" in prune
