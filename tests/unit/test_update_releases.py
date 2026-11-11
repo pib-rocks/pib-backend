@@ -365,3 +365,51 @@ def test_changed_commit_map_does_not_rewrite_an_already_paired_document():
     commits[releases.BACKEND_REPO]["v1.2.3"] = SHA_C
     assert paired["releases"][0]["targets"]["pib-backend"]["commit"] == SHA_A
     assert json.dumps(paired)
+
+
+def test_discover_falls_back_to_local_git_tags_on_http_403_rate_limit(
+    tmp_path, monkeypatch
+):
+    env = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": "test",
+        "GIT_AUTHOR_EMAIL": "test@example.com",
+        "GIT_COMMITTER_NAME": "test",
+        "GIT_COMMITTER_EMAIL": "test@example.com",
+    }
+    shas = {}
+    for name in ("backend", "cerebra"):
+        repo = tmp_path / name
+        repo.mkdir()
+        subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "--allow-empty", "-m", f"{name} v0.7.12"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            env=env,
+        )
+        subprocess.run(
+            ["git", "tag", "v0.7.12"], cwd=repo, check=True, capture_output=True
+        )
+        shas[name] = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+    monkeypatch.setenv("PIB_BACKEND_DIR", str(tmp_path / "backend"))
+    monkeypatch.setenv("PIB_CEREBRA_DIR", str(tmp_path / "cerebra"))
+
+    def rate_limited_transport(_url: str):
+        return 403, {"message": "API rate limit exceeded"}
+
+    discovered = releases.discover(rate_limited_transport)
+    assert discovered["error"] is None
+    assert discovered["latestInstallable"] == "v0.7.12"
+    assert discovered["releases"][0]["targets"] == {
+        "pib-backend": {"commit": shas["backend"], "tag": "v0.7.12"},
+        "cerebra": {"commit": shas["cerebra"], "tag": "v0.7.12"},
+    }
