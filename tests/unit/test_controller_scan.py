@@ -198,3 +198,40 @@ def test_motor_names_are_mapped_to_channels() -> None:
     )
     assert assignments[0]["matchCount"] == 1
     assert assignments[0]["expectedCount"] == 2
+
+
+def test_load_startup_configuration_recovers_after_initial_api_failure() -> None:
+    """PR-2198: when Flask is not ready on the first startup attempt, subsequent
+    calls to load_startup_configuration() succeed and return the motor/controller maps.
+    """
+    attempts = [0]
+
+    def flaky_expected():
+        attempts[0] += 1
+        return {} if attempts[0] < 3 else {1: [51, 21]}
+
+    def flaky_names():
+        return {} if attempts[0] < 3 else {"turn_head_motor": 51}
+
+    def flaky_serials():
+        return {} if attempts[0] < 3 else {"serial-a": 1}
+
+    first = controller_scan.load_startup_configuration(
+        expected_fn=flaky_expected,
+        name_to_channel_fn=flaky_names,
+        by_serial_fn=flaky_serials,
+    )
+    second = controller_scan.load_startup_configuration(
+        expected_fn=flaky_expected,
+        name_to_channel_fn=flaky_names,
+        by_serial_fn=flaky_serials,
+    )
+    third = controller_scan.load_startup_configuration(
+        expected_fn=flaky_expected,
+        name_to_channel_fn=flaky_names,
+        by_serial_fn=flaky_serials,
+    )
+
+    assert first == ({}, {}, {})
+    assert second == ({}, {}, {})
+    assert third == ({1: [51, 21]}, {"turn_head_motor": 51}, {"serial-a": 1})
