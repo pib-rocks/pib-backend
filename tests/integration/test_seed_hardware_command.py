@@ -149,9 +149,12 @@ def test_seed_hardware_switches_profile_and_preserves_protected_rows(app):
         assert {item.controller.number for item in ButtonProgram.query.all()} == set(
             profile.rgb_button_controller_ids
         )
-        # no button is pre-bound any more; the Cerebra toggle seed is gone
+        # Button 1 is bound to the default cerebra_fullscreen program
         assert ButtonProgram.query.count() == 3
-        assert {item.program_id for item in ButtonProgram.query.all()} == {None}
+        buttons = ButtonProgram.query.order_by(ButtonProgram.id).all()
+        assert buttons[0].program_id is not None
+        assert buttons[1].program_id is None
+        assert buttons[2].program_id is None
         assert _protected_state() == protected_before
         new_backups = set(_backup_paths(app)) - backups_before
         assert len(new_backups) == 1
