@@ -36,7 +36,7 @@ from .task_archives import labels_for_model
 
 class PipelineBuildersMixin:
     def _read_stereo_mode(self):
-        mode = stereo.os.environ.get("PIB_CAMERA_STEREO", "auto").strip().lower()
+        mode = stereo.os.environ.get("PIB_CAMERA_STEREO", "off").strip().lower()
         if mode not in stereo.STEREO_MODES:
             self.get_logger().warning(
                 f"Invalid PIB_CAMERA_STEREO={mode!r}; using 'off'."

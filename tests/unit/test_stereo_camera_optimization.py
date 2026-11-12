@@ -2050,11 +2050,11 @@ class TestStereoModeDecision(unittest.TestCase):
         node._pending_color_packet = None
         return node
 
-    def test_stereo_mode_defaults_to_auto(self):
+    def test_stereo_mode_defaults_to_off(self):
         node = self._make_node("unused")
 
         with patch.dict(os.environ, {}, clear=True):
-            self.assertEqual(node._read_stereo_mode(), "auto")
+            self.assertEqual(node._read_stereo_mode(), "off")
 
     def test_invalid_stereo_mode_falls_back_to_off(self):
         node = self._make_node("unused")
