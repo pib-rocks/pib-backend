@@ -414,3 +414,57 @@ def test_publish_joint_states_gates_perf_trace_sweep_behind_env(monkeypatch):
     module.MotorControl._publish_joint_states.__get__(node, module.MotorControl)()
     assert len(logged) == 1
     assert "[PERF_TRACE] JOINT_STATE_SWEEP" in logged[0]
+
+
+def test_publish_joint_states_caches_stationary_bricklet_positions_between_reconciles(
+    monkeypatch,
+):
+    """PR-2311: stationary ServoBricklet motors publish at 10 Hz using cached positions and poll hardware at 1 Hz."""
+    from pib_motors import joint_state_sweep
+
+    calls = {"elbow_left": 0}
+
+    def read_pos():
+        calls["elbow_left"] += 1
+        return 1500
+
+    tinkerforge_motors = [
+        SimpleNamespace(
+            name="elbow_left",
+            check_if_motor_is_connected=lambda: True,
+            get_current_position=read_pos,
+            has_reached_position=lambda: True,
+        ),
+    ]
+    module = _load_motor_control_for_batch({}, tinkerforge_motors)
+    empty = joint_state_sweep.JointStateSweepResult({}, 0.0, 0, 0)
+    monkeypatch.setattr(module, "sweep_feetech_joint_positions", lambda _m: empty)
+    monkeypatch.setattr(
+        module,
+        "JointState",
+        lambda: SimpleNamespace(
+            header=FakeHeader(), name=[], position=[], velocity=[], effort=[]
+        ),
+    )
+
+    published = []
+    node = SimpleNamespace(
+        _motor_power_is_off=lambda: False,
+        joint_state_publisher=SimpleNamespace(
+            publish=lambda msg: published.append(msg)
+        ),
+        get_clock=lambda: SimpleNamespace(
+            now=lambda: SimpleNamespace(
+                to_msg=lambda: SimpleNamespace(sec=10, nanosec=20)
+            )
+        ),
+        get_logger=lambda: SimpleNamespace(
+            info=lambda *_a, **_k: None, debug=lambda *_a, **_k: None
+        ),
+    )
+    fn = module.MotorControl._publish_joint_states.__get__(node, module.MotorControl)
+    fn()
+    fn()
+    fn()
+    assert len(published) == 3
+    assert calls["elbow_left"] == 1

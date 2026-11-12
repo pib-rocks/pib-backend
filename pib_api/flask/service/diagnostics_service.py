@@ -200,6 +200,8 @@ def _query_docker_containers() -> List[Dict[str, Any]]:
 
 
 _tf_ipcon = None
+_CONTROLLERS_TELEMETRY_CACHE_TTL_SEC = 1.0
+_CONTROLLERS_TELEMETRY_CACHE: Tuple[float, Any, List[Dict[str, Any]]] = (0.0, None, [])
 
 _SERIAL_PIN_TELEMETRY_TTL_SEC = 30.0
 _serial_pin_telemetry: Dict[Tuple[str, int], Dict[str, float]] = {}
@@ -207,6 +209,8 @@ _serial_pin_telemetry: Dict[Tuple[str, int], Dict[str, float]] = {}
 
 def update_controller_pin_telemetry(entries: List[Dict[str, Any]]) -> int:
     """Store live voltage/current readings from ros-motors (keyed by controller uid + pin)."""
+    global _CONTROLLERS_TELEMETRY_CACHE
+    _CONTROLLERS_TELEMETRY_CACHE = (0.0, None, [])
     now = time.time()
     updated = 0
     for entry in entries:
@@ -306,10 +310,29 @@ def _get_tf_ipcon():
 
 
 def get_controllers_telemetry() -> List[Dict[str, Any]]:
+    global _CONTROLLERS_TELEMETRY_CACHE
     try:
         controllers = controller_service.get_all_controllers()
     except Exception:
         controllers = []
+
+    sig = tuple(
+        (
+            getattr(c, "number", None),
+            getattr(c, "address", None),
+            getattr(c, "kind", None),
+            getattr(c, "device_type", None),
+        )
+        for c in controllers
+    )
+    now = time.monotonic()
+    cached_at, cached_sig, cached_list = _CONTROLLERS_TELEMETRY_CACHE
+    if (
+        cached_list
+        and cached_sig == sig
+        and (now - cached_at) < _CONTROLLERS_TELEMETRY_CACHE_TTL_SEC
+    ):
+        return [dict(item) for item in cached_list]
 
     ipcon = _get_tf_ipcon()
 
@@ -405,6 +428,7 @@ def get_controllers_telemetry() -> List[Dict[str, Any]]:
                 "relay_state": relay_state,
             }
         )
+    _CONTROLLERS_TELEMETRY_CACHE = (now, sig, [dict(item) for item in telemetry])
     return telemetry
 
 
