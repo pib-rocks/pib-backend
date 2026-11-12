@@ -6,7 +6,11 @@ import pytest
 from click.testing import CliRunner
 
 from app.app import db
-from commands import LEGACY_CEREBRA_TOGGLE_PROGRAM_NUMBER, seed_db
+from commands import (
+    CEREBRA_FULLSCREEN_PROGRAM_NUMBER,
+    LEGACY_CEREBRA_TOGGLE_PROGRAM_NUMBER,
+    seed_db,
+)
 from model.button_program_model import ButtonProgram
 from model.controller_model import Controller
 from model.motor_model import Motor
@@ -78,9 +82,15 @@ def test_seed_db_uses_selected_hardware_profile(
         for motor_name, expected_location in relocated_motors.items():
             motor = Motor.query.filter_by(name=motor_name).one()
             assert (motor.controller.number, motor.channel) == expected_location
-        # a fresh seed binds no program to any LED button
+        # a fresh seed binds the cerebra_fullscreen program to the first LED button
         assert ButtonProgram.query.count() == 3
-        assert {item.program_id for item in ButtonProgram.query.all()} == {None}
+        buttons = ButtonProgram.query.order_by(ButtonProgram.id).all()
+        cerebra_prog = Program.query.filter_by(
+            program_number=CEREBRA_FULLSCREEN_PROGRAM_NUMBER
+        ).one()
+        assert buttons[0].program_id == cerebra_prog.id
+        assert buttons[1].program_id is None
+        assert buttons[2].program_id is None
         assert (
             Program.query.filter_by(
                 program_number=LEGACY_CEREBRA_TOGGLE_PROGRAM_NUMBER
@@ -111,7 +121,13 @@ def test_seed_db_unbinds_button_from_legacy_cerebra_toggle_program(app):
         assert result.exit_code == 0, result.output
         assert "already contains data" in result.output
         assert "Unbound 1 button(s)" in result.output
-        assert {item.program_id for item in ButtonProgram.query.all()} == {None}
+        buttons_after = ButtonProgram.query.order_by(ButtonProgram.id).all()
+        cerebra_prog = Program.query.filter_by(
+            program_number=CEREBRA_FULLSCREEN_PROGRAM_NUMBER
+        ).one()
+        assert buttons_after[0].program_id == cerebra_prog.id
+        assert buttons_after[1].program_id is None
+        assert buttons_after[2].program_id is None
         assert ButtonProgram.query.count() == 3
         # the program row and everything else is left alone
         assert Program.query.count() == programs_before

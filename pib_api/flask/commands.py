@@ -65,12 +65,15 @@ logger = logging.getLogger(__name__)
 # bound to the third LED button. Its only block type no longer exists, so a
 # program built from it can never compile again.
 LEGACY_CEREBRA_TOGGLE_PROGRAM_NUMBER = "c3r3br4-f-u-l-l-s-c-r-e-e-n-001"
+CEREBRA_FULLSCREEN_PROGRAM_NUMBER = "c3r3br4-f-u-l-l-s-c-r-e-e-n-002"
+CEREBRA_FULLSCREEN_PROGRAM_NAME = "cerebra_fullscreen"
 
 
 @app.cli.command("seed_db")
 def seed_db() -> None:
     if not _is_empty_db():
         _unbind_legacy_cerebra_toggle_program()
+        _ensure_cerebra_fullscreen_button_program()
         _reconcile_model_catalogue()
         _backfill_motors_for_motorless_seed()
         print("Seeding database failed - database already contains data.")
@@ -330,6 +333,45 @@ def _unbind_legacy_cerebra_toggle_program() -> None:
         )
 
 
+def _write_seeded_program_python(program_number: str, code_python: str) -> None:
+    code_dir = app.config.get("PYTHON_CODE_DIR")
+    if not code_dir:
+        return
+    try:
+        Path(code_dir).mkdir(parents=True, exist_ok=True)
+        path = Path(code_dir) / f"{program_number}.py"
+        if not path.exists():
+            path.write_text(code_python, encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _ensure_cerebra_fullscreen_button_program() -> None:
+    """Ensure the default cerebra_fullscreen program exists and is bound to Button 1 when unassigned."""
+    program = Program.query.filter_by(
+        program_number=CEREBRA_FULLSCREEN_PROGRAM_NUMBER
+    ).first()
+    created = False
+    if program is None:
+        program = Program(
+            name=CEREBRA_FULLSCREEN_PROGRAM_NAME,
+            code_visual=_get_cerebra_fullscreen_program_visual(),
+            program_number=CEREBRA_FULLSCREEN_PROGRAM_NUMBER,
+        )
+        db.session.add(program)
+        db.session.flush()
+        created = True
+    _write_seeded_program_python(
+        CEREBRA_FULLSCREEN_PROGRAM_NUMBER, _get_cerebra_fullscreen_program_python()
+    )
+    first_button = ButtonProgram.query.order_by(ButtonProgram.id).first()
+    if first_button is not None and first_button.program_id is None and created:
+        first_button.program_id = program.id
+        db.session.commit()
+    elif created:
+        db.session.commit()
+
+
 def _reconcile_model_catalogue() -> None:
     """Make the model rows of an already seeded database match the catalogue.
 
@@ -449,6 +491,10 @@ def _rebuild_button_programs(profile: HardwareProfile) -> None:
     ButtonProgram.query.delete(synchronize_session=False)
     db.session.flush()
 
+    cerebra_prog = Program.query.filter_by(
+        program_number=CEREBRA_FULLSCREEN_PROGRAM_NUMBER
+    ).first()
+    prog_id = cerebra_prog.id if cerebra_prog else None
     controllers = {
         controller.number: controller
         for controller in Controller.query.filter(
@@ -458,7 +504,7 @@ def _rebuild_button_programs(profile: HardwareProfile) -> None:
     first, second, third = profile.rgb_button_controller_ids
     db.session.add_all(
         [
-            ButtonProgram(controller_id=controllers[first].id, program_id=None),
+            ButtonProgram(controller_id=controllers[first].id, program_id=prog_id),
             ButtonProgram(controller_id=controllers[second].id, program_id=None),
             ButtonProgram(controller_id=controllers[third].id, program_id=None),
         ]
@@ -576,10 +622,14 @@ def _create_controller_data(profile: HardwareProfile) -> None:
 
 
 def _create_button_program_data(profile: HardwareProfile) -> None:
+    cerebra_prog = Program.query.filter_by(
+        program_number=CEREBRA_FULLSCREEN_PROGRAM_NUMBER
+    ).first()
+    prog_id = cerebra_prog.id if cerebra_prog else None
     first_controller, second_controller, third_controller = (
         profile.rgb_button_controller_ids
     )
-    button_program1 = ButtonProgram(controller_id=first_controller, program_id=None)
+    button_program1 = ButtonProgram(controller_id=first_controller, program_id=prog_id)
     button_program2 = ButtonProgram(controller_id=second_controller, program_id=None)
     button_program3 = ButtonProgram(controller_id=third_controller, program_id=None)
     db.session.add_all([button_program1, button_program2, button_program3])
@@ -600,8 +650,16 @@ def _create_program_data() -> None:
         code_visual=_get_example_program(),
         program_number="e1d46e2a-935e-4e2b-b2f9-0856af4257c5",
     )
-    db.session.add(program)
+    cerebra_program = Program(
+        name=CEREBRA_FULLSCREEN_PROGRAM_NAME,
+        code_visual=_get_cerebra_fullscreen_program_visual(),
+        program_number=CEREBRA_FULLSCREEN_PROGRAM_NUMBER,
+    )
+    db.session.add_all([program, cerebra_program])
     db.session.flush()
+    _write_seeded_program_python(
+        CEREBRA_FULLSCREEN_PROGRAM_NUMBER, _get_cerebra_fullscreen_program_python()
+    )
 
 
 def _catalogue_models(already: set[str]) -> list[AssistantModel]:
@@ -812,3 +870,119 @@ def _create_default_poses(profile: HardwareProfile) -> None:
 
 def _get_example_program() -> str:
     return """{"blocks":{"languageVersion":0,"blocks":[{"type":"text_print","id":"QWplsQn`*28S!rmDws$4","x":315,"y":279,"inputs":{"TEXT":{"shadow":{"type":"text","id":"`{AWS~jvKQo-ve^M@z-(","fields":{"TEXT":"hello world"}}}}}]}}"""
+
+
+def _get_cerebra_fullscreen_program_visual() -> str:
+    return (
+        '{"blocks":{"languageVersion":0,"blocks":[{"type":"open_cerebra_fullscreen",'
+        '"id":"open_cerebra","x":120,"y":80,"fields":{"URL":"http://localhost"},'
+        '"next":{"block":{"type":"controls_whileUntil","id":"keep_open_loop",'
+        '"fields":{"MODE":"WHILE"},"inputs":{"BOOL":{"block":{"type":"logic_boolean",'
+        '"id":"keep_open_true","fields":{"BOOL":"TRUE"}}},"DO":{"block":'
+        '{"type":"sleep_for_seconds","id":"keep_open_sleep","fields":{"SECONDS":1}}}},'
+        '"next":{"block":{"type":"close_cerebra_fullscreen","id":"close_cerebra"}}}}}]}}'
+    )
+
+
+def _get_cerebra_fullscreen_program_python() -> str:
+    return """import time
+import signal
+import sys
+import rclpy
+from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
+from std_msgs.msg import String
+
+if not rclpy.ok():
+    rclpy.init()
+
+try:
+    _pib_display_node
+except NameError:
+    _pib_display_node = rclpy.create_node("blockly_display_node")
+    _pib_expression_pub = _pib_display_node.create_publisher(String, "/pib/expression", 10)
+    _pib_display_text_pub = _pib_display_node.create_publisher(String, "/pib/display_text", 10)
+    _pib_display_web_pub = _pib_display_node.create_publisher(String, "/pib/display_web", 10)
+    _pib_display_web_hide_pub = _pib_display_node.create_publisher(String, "/pib/display_web_hide", 10)
+    _pib_display_ready = False
+    _pib_display_web_open = False
+
+    def _pib_on_display_ready(msg):
+        global _pib_display_ready
+        if msg.data == "ready":
+            _pib_display_ready = True
+
+    _pib_ready_qos = QoSProfile(
+        reliability=ReliabilityPolicy.RELIABLE,
+        durability=DurabilityPolicy.TRANSIENT_LOCAL,
+        history=HistoryPolicy.KEEP_LAST,
+        depth=1,
+    )
+    _pib_display_node.create_subscription(String, "/pib/display_ready", _pib_on_display_ready, _pib_ready_qos)
+
+    def _pib_on_terminate(_signum, _frame):
+        global _pib_display_web_open
+        if _pib_display_web_open:
+            _pib_display_web_open = False
+            try:
+                _msg = String()
+                _msg.data = "hide"
+                _pib_display_web_hide_pub.publish(_msg)
+                deadline = time.time() + 0.25
+                while time.time() < deadline:
+                    rclpy.spin_once(_pib_display_node, timeout_sec=0.02)
+                    time.sleep(0.01)
+            except Exception:
+                pass
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, _pib_on_terminate)
+    signal.signal(signal.SIGINT, _pib_on_terminate)
+
+try:
+    _pib_display_ready
+except NameError:
+    _pib_display_ready = False
+
+def _pib_wait_for_subscriber(pub, label="display handler", timeout_sec=3.0):
+    print(f"waiting for {label} to become available...")
+    deadline = time.time() + timeout_sec
+    while time.time() < deadline:
+        rclpy.spin_once(_pib_display_node, timeout_sec=0.02)
+        if pub.get_subscription_count() > 0:
+            print(f"{label} available.")
+            return True
+        time.sleep(0.01)
+    print(f"warning: {label} was not detected before timeout, trying anyway.")
+    return False
+
+def _pib_fix_text_encoding(value):
+    try:
+        return value.encode("latin1").decode("utf-8")
+    except Exception:
+        return value
+
+def _pib_publish_string(pub, value, label="display"):
+    global _pib_display_web_open
+    if label == "text":
+        value = _pib_fix_text_encoding(value)
+    if label == "display web page":
+        _pib_display_web_open = True
+    elif label == "display web hide":
+        _pib_display_web_open = False
+
+    _pib_wait_for_subscriber(pub, label)
+    _msg = String()
+    _msg.data = value
+    pub.publish(_msg)
+    print(f"now displaying {label}: {value}")
+
+    deadline = time.time() + 0.25
+    while time.time() < deadline:
+        rclpy.spin_once(_pib_display_node, timeout_sec=0.02)
+        time.sleep(0.01)
+
+_pib_publish_string(_pib_display_web_pub, "http://localhost", "display web page")
+while True:
+    time.sleep(1)
+_pib_publish_string(_pib_display_web_hide_pub, "hide", "display web hide")
+"""
