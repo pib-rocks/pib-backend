@@ -444,3 +444,54 @@ def test_cancelled_turn_memory_keeps_only_the_recent_answers(player):
     assert len(remembered) == mod.CANCELLED_TURN_MEMORY
     assert remembered[-1] == "chat#%d" % (mod.CANCELLED_TURN_MEMORY + 4)
     assert "chat#0" not in remembered
+
+
+def test_playback_items_reuse_cached_pyaudio_stream_for_same_encoding(player):
+    """PR-2312: consecutive clauses with the same AudioEncoding reuse one PyAudio instance and output stream."""
+    node, mod = player
+    mod.PlaybackItem.clear_threshold = 0
+    created_pya = []
+    opened_streams = []
+    written = []
+
+    class FakeStream:
+        def write(self, chunk):
+            written.append(chunk)
+
+        def stop_stream(self):
+            pass
+
+        def close(self):
+            pass
+
+    class FakePyAudio:
+        def __init__(self):
+            created_pya.append(self)
+
+        def get_format_from_width(self, w):
+            return 8
+
+        def get_device_count(self):
+            return 0
+
+        def open(self, **kw):
+            s = FakeStream()
+            opened_streams.append((s, kw))
+            return s
+
+        def terminate(self):
+            pass
+
+    node._enqueue_current.__globals__["pyaudio"] = SimpleNamespace(PyAudio=FakePyAudio)
+    try:
+        mod.reset_output_streams()
+        item1 = mod.PlaybackItem([b"a"], mod.SPEECH_ENCODING, 0.0, 1)
+        item2 = mod.PlaybackItem([b"b"], mod.SPEECH_ENCODING, 0.0, 2)
+        item1.play()
+        item2.play()
+        assert len(created_pya) == 1
+        assert len(opened_streams) == 1
+        assert written == [b"a", b"b"]
+        mod.reset_output_streams()
+    finally:
+        node._enqueue_current.__globals__["pyaudio"] = None
