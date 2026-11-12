@@ -223,6 +223,7 @@ def test_solid_state_relay_live_telemetry_query():
 def test_docker_containers_live_query():
     from service import diagnostics_service
 
+    diagnostics_service._DOCKER_CONTAINERS_CACHE = (0.0, None)
     fake_containers = [
         {
             "Names": ["/pib-backend"],

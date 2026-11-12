@@ -83,7 +83,7 @@ ensure_venv() {
     # An existing directory is not a usable venv: an interrupted `python3 -m venv` leaves
     # one behind without bin/, and sourcing bin/activate then aborts the whole run.
     if [[ ! -x "${VENV_DIR}/bin/python" ]] || ! "${VENV_DIR}/bin/python" -c "" >/dev/null 2>&1; then
-        if [[ -e "${VENV_DIR}" ]]; then
+        if [[ -e "${VENV_DIR}" || -L "${VENV_DIR}" ]]; then
             echo "Rebuilding unusable ${VENV_DIR} ..."
             rm -rf "${VENV_DIR}"
         else
