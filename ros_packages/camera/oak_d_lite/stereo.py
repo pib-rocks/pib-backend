@@ -856,21 +856,19 @@ class CameraNode(
         # Skip expensive Haar cascade when nobody is listening to face_center.
         if self.face_center_publisher_.get_subscription_count() == 0:
             return
-        if frame is None:
-            frame = self._decode_current_frame()
-        if frame is None:
+        if frame is None and not self._should_publish_face_center():
             return
+        prepared = self._prepare_face_center_gray(frame)
+        if prepared is None:
+            return
+        gray, full_w, full_h = prepared
 
         face_msg = Float32MultiArray()
-
         if self.face_cascade.empty():
             face_msg.data = [0.0, 0.0]
             self.face_center_publisher_.publish(face_msg)
             return
 
-        full_h, full_w = frame.shape[:2]
-        small = cv2.resize(frame, (FACE_DETECT_WIDTH, FACE_DETECT_HEIGHT))
-        gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
         faces = self.face_cascade.detectMultiScale(gray, 1.1, 5)
 
         if len(faces) > 0:
