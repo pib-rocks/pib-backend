@@ -6,6 +6,7 @@ after the last voiced frame. The stamp is that decision, not the last voiced
 frame, and it is taken before transcription starts.
 """
 
+from array import array
 import os
 import time
 import wave
@@ -230,7 +231,6 @@ class AudioRecorderNode(Node):
         comes from the message layout when the driver sets it, otherwise from
         PIB_MIC_CHANNELS, so a mono driver keeps behaving exactly as before.
         """
-        samples = np.array(msg.data, dtype=np.int16)
         channels = self._mic_channels
         layout = getattr(msg, "layout", None)
         try:
@@ -239,15 +239,19 @@ class AudioRecorderNode(Node):
             width = 0
         if width and width > 1:
             channels = int(width)
-        if channels > 1:
-            try:
-                samples = extract_channel(samples, channels, PROCESSED_CHANNEL)
-            except ValueError:
-                self.get_logger().warning(
-                    f"audio frame does not fit {channels} channels; dropping it"
-                )
-                return
-        chunk_bytes = samples.astype(np.int16, copy=False).tobytes()
+        if channels <= 1 and isinstance(msg.data, array) and msg.data.typecode == "h":
+            chunk_bytes = msg.data.tobytes()
+        else:
+            samples = np.array(msg.data, dtype=np.int16)
+            if channels > 1:
+                try:
+                    samples = extract_channel(samples, channels, PROCESSED_CHANNEL)
+                except ValueError:
+                    self.get_logger().warning(
+                        f"audio frame does not fit {channels} channels; dropping it"
+                    )
+                    return
+            chunk_bytes = samples.astype(np.int16, copy=False).tobytes()
         with self.audio_chunks_lock:
             if self._recording_active:
                 self.audio_chunks.append(chunk_bytes)

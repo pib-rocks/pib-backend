@@ -264,3 +264,80 @@ def test_extract_packet_jpeg_accepts_numpy_uint8_array_from_depthai_imgframe():
     assert node.current_jpeg_bytes == fake_jpeg
     assert node.mjpeg_buffer.latest_jpeg == fake_jpeg
     packet.getCvFrame.assert_not_called()
+
+
+def test_mjpeg_server_starts_even_when_camera_unavailable_and_reports_diagnostics(
+    tmp_path,
+):
+    node = _bare_node()
+    node.camera_available = False
+    node.mjpeg_buffer.set_diagnostics(
+        state="usb_missing",
+        last_error="No OAK-D Lite USB device detected on the USB bus (03e7:2485).",
+        usb_device_present=False,
+    )
+    with patch.dict(os.environ, {"PIB_CAMERA_STREAM_PORT": "0"}):
+        # Verify direct server start and /status payload when camera is unavailable
+        server = MjpegStreamServer(
+            frame_buffer=node.mjpeg_buffer, host="127.0.0.1", port=0
+        )
+        assert server.start() is True
+        try:
+            with urlopen(
+                f"http://127.0.0.1:{server.server_port}/status", timeout=2.0
+            ) as resp:
+                status = json.loads(resp.read().decode("utf-8"))
+            assert status["available"] is False
+            assert status["state"] == "usb_missing"
+            assert status["usbDevicePresent"] is False
+            assert "03e7:2485" in status["lastError"]
+        finally:
+            server.stop()
+
+
+def test_oak_usb_device_present_reads_sysfs_vendor_id(tmp_path):
+    from ros_packages.camera.oak_d_lite.mjpeg_server import oak_usb_device_present
+
+    sysfs = tmp_path / "usb"
+    (sysfs / "1-1").mkdir(parents=True)
+    (sysfs / "1-1" / "idVendor").write_text("0484\n", encoding="utf-8")
+    assert oak_usb_device_present(sysfs) is False
+
+    (sysfs / "3-1").mkdir(parents=True)
+    (sysfs / "3-1" / "idVendor").write_text("03e7\n", encoding="utf-8")
+    assert oak_usb_device_present(sysfs) is True
+
+
+def test_publish_face_center_throttles_and_uses_reduced_grayscale_jpeg_decode(
+    monkeypatch,
+):
+    """PR-2309: publish_face_center(None) decodes JPEG via IMREAD_REDUCED_GRAYSCALE_4 and throttles to PIB_FACE_CENTER_HZ."""
+    import cv2
+
+    node = _bare_node()
+    node.preview_width = 1280
+    node.preview_height = 720
+    node.face_center_publisher_.get_subscription_count.return_value = 1
+    node.face_cascade = MagicMock()
+    node.face_cascade.empty.return_value = False
+    node.face_cascade.detectMultiScale.return_value = [(80, 45, 40, 40)]
+
+    img = np.zeros((720, 1280, 3), dtype=np.uint8)
+    ok, encoded = cv2.imencode(".jpg", img)
+    assert ok
+    node.current_jpeg_bytes = bytes(encoded)
+    node.current_frame = None
+
+    monkeypatch.setenv("PIB_FACE_CENTER_HZ", "2.0")
+
+    node.publish_face_center(None)
+    assert node.face_cascade.detectMultiScale.call_count == 1
+    # Full BGR current_frame must NOT be populated by face_center
+    assert node.current_frame is None
+    gray_arg = node.face_cascade.detectMultiScale.call_args[0][0]
+    assert gray_arg.shape == (180, 320)
+    assert node.face_center_publisher_.publish.call_count == 1
+
+    # Immediate second call within 0.5s window is throttled
+    node.publish_face_center(None)
+    assert node.face_cascade.detectMultiScale.call_count == 1

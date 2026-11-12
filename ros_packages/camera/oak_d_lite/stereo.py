@@ -38,6 +38,7 @@ from .mjpeg_server import (
     DEFAULT_STREAM_PORT,
     MjpegFrameBuffer,
     MjpegStreamServer,
+    oak_usb_device_present,
 )
 
 from .imu import (
@@ -261,7 +262,6 @@ IMITATION_STAGE_NAMES = (
 
 
 class ErrorPublisher(Node):
-
     def __init__(self):
         super().__init__("error_publisher")
         timer_period = 1  # seconds
@@ -418,19 +418,19 @@ class CameraNode(
         self._init_scene_model()
 
         if self.camera_available:
-            self.get_camera_image_service = self.create_service(
-                GetCameraImage, "get_camera_image", self.get_camera_image_callback
-            )
-            self.get_depth_frame_service = self.create_service(
-                GetDepthFrame, "get_depth_frame", self.get_depth_frame_callback
-            )
-            self.get_distance_at_px_service = self.create_service(
-                GetDistanceAtPx, "get_distance_at_px", self.get_distance_at_px_callback
-            )
             self.get_logger().info("Camera service initialized.")
         else:
             self.get_logger().error("Camera not available.")
 
+        self.get_camera_image_service = self.create_service(
+            GetCameraImage, "get_camera_image", self.get_camera_image_callback
+        )
+        self.get_depth_frame_service = self.create_service(
+            GetDepthFrame, "get_depth_frame", self.get_depth_frame_callback
+        )
+        self.get_distance_at_px_service = self.create_service(
+            GetDistanceAtPx, "get_distance_at_px", self.get_distance_at_px_callback
+        )
         self.list_models_service = self.create_service(
             ListModels, "list_models", self.list_models_callback
         )
@@ -450,6 +450,17 @@ class CameraNode(
         )
         self.imu_timer = self.create_timer(IMU_POLL_PERIOD_SECONDS, self._process_imu)
         self.models_status_timer = self.create_timer(1.0, self.publish_model_statuses)
+        self._hotplug_timer = self.create_timer(5.0, self._check_camera_hotplug)
+
+    def _check_camera_hotplug(self):
+        if getattr(self, "camera_available", False):
+            return
+        if not oak_usb_device_present():
+            return
+        self.get_logger().info(
+            "OAK-D Lite USB device detected after startup failure; attempting hotplug pipeline initialization."
+        )
+        self.camera_available = self.init_pipeline()
 
     def _encode_frame(self, frame):
         """JPEG-encode and base64 a frame; returns None on failure."""
@@ -845,21 +856,19 @@ class CameraNode(
         # Skip expensive Haar cascade when nobody is listening to face_center.
         if self.face_center_publisher_.get_subscription_count() == 0:
             return
-        if frame is None:
-            frame = self._decode_current_frame()
-        if frame is None:
+        if frame is None and not self._should_publish_face_center():
             return
+        prepared = self._prepare_face_center_gray(frame)
+        if prepared is None:
+            return
+        gray, full_w, full_h = prepared
 
         face_msg = Float32MultiArray()
-
         if self.face_cascade.empty():
             face_msg.data = [0.0, 0.0]
             self.face_center_publisher_.publish(face_msg)
             return
 
-        full_h, full_w = frame.shape[:2]
-        small = cv2.resize(frame, (FACE_DETECT_WIDTH, FACE_DETECT_HEIGHT))
-        gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
         faces = self.face_cascade.detectMultiScale(gray, 1.1, 5)
 
         if len(faces) > 0:

@@ -1,5 +1,6 @@
 from typing import Iterable, Mapping, Sequence, Tuple
 import math
+import os
 import time
 from queue import SimpleQueue
 import rclpy
@@ -239,6 +240,9 @@ class MotorControl(Node):
 
         self.startup_pose_executor = StartupPoseExecutor(self, motors=motors)
         self.trajectory_executor = TrajectoryExecutor(self, name_to_motors)
+        self._bricklet_positions_cache: dict[str, int] = {}
+        self._bricklet_last_poll_monotonic: float = 0.0
+        self._bricklet_motion_until_monotonic: float = 0.0
 
         #: Last known motor power state: None until a source told us, then True/False.
         self._relay_on: bool | None = None
@@ -470,6 +474,7 @@ class MotorControl(Node):
                     response.successful = False
                     response.results = motor_outcomes_to_ros(outcomes)
                     return response
+                self._bricklet_motion_until_monotonic = time.monotonic() + 5.0
                 outcomes = [(name, True, "", "") for name in joint_names]
                 response.successful = outcomes_to_success(outcomes)
                 response.results = motor_outcomes_to_ros(outcomes)
@@ -478,6 +483,7 @@ class MotorControl(Node):
             if self.trajectory_executor.is_running():
                 self._stop_running_software_trajectory()
 
+            self._bricklet_motion_until_monotonic = time.monotonic() + 2.5
             apply_outcomes: list[MotorOutcome] = []
             for motor_name, position in targets:
                 motor_ok = True
@@ -540,12 +546,52 @@ class MotorControl(Node):
         sweep = sweep_feetech_joint_positions(motors)
         positions = dict(sweep.positions_centideg)
         if not positions and sweep.ports_attempted == 0 and not sweep.ports_unreachable:
-            for motor in motors:
-                try:
-                    if motor.check_if_motor_is_connected():
-                        positions[motor.name] = int(round(motor.get_current_position()))
-                except Exception:
-                    continue
+            cache = getattr(self, "_bricklet_positions_cache", None)
+            if cache is None:
+                cache = {}
+                self._bricklet_positions_cache = cache
+            last_poll = float(
+                getattr(self, "_bricklet_last_poll_monotonic", 0.0) or 0.0
+            )
+            motion_until = float(
+                getattr(self, "_bricklet_motion_until_monotonic", 0.0) or 0.0
+            )
+            traj_exec = getattr(self, "trajectory_executor", None)
+            traj_running = bool(
+                traj_exec is not None
+                and callable(getattr(traj_exec, "is_running", None))
+                and traj_exec.is_running()
+            )
+            idle_interval = float(
+                os.environ.get("PIB_BRICKLET_IDLE_POLL_SEC", "1.0") or "1.0"
+            )
+            should_poll_hw = (
+                not cache
+                or traj_running
+                or started < motion_until
+                or (started - last_poll) >= idle_interval
+            )
+            if should_poll_hw:
+                fresh: dict[str, int] = {}
+                any_moving = False
+                for motor in motors:
+                    try:
+                        if motor.check_if_motor_is_connected():
+                            pos = int(round(motor.get_current_position()))
+                            fresh[motor.name] = pos
+                            has_reached = getattr(motor, "has_reached_position", None)
+                            if callable(has_reached) and not has_reached():
+                                any_moving = True
+                    except Exception:
+                        continue
+                cache.clear()
+                cache.update(fresh)
+                self._bricklet_last_poll_monotonic = started
+                if any_moving:
+                    self._bricklet_motion_until_monotonic = max(
+                        motion_until, started + 0.5
+                    )
+            positions.update(cache)
         if not positions:
             return
 
@@ -554,15 +600,21 @@ class MotorControl(Node):
         fill_joint_state(msg, positions)
         self.joint_state_publisher.publish(msg)
         elapsed_ms = (time.monotonic() - started) * 1000.0
-        log_perf_trace(
-            self.get_logger(),
-            format_perf_trace_joint_state_sweep(
-                len(positions),
-                elapsed_ms,
-                sweep.ports_succeeded,
-                sweep.ports_attempted,
-            ),
-        )
+        if os.environ.get("PIB_PERF_TRACE_SWEEP", "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        ):
+            log_perf_trace(
+                self.get_logger(),
+                format_perf_trace_joint_state_sweep(
+                    len(positions),
+                    elapsed_ms,
+                    sweep.ports_succeeded,
+                    sweep.ports_attempted,
+                ),
+            )
 
     def _log_bus_writer_stats(self) -> None:
         for writer in all_bus_writers():

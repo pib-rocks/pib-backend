@@ -349,8 +349,12 @@ class BranchCaptureMixin:
             self.timer_period = max(stereo.MIN_TIMER_PERIOD_SECONDS, float(refresh))
 
     def _start_mjpeg_server(self):
-        """Start the embedded HTTP MJPEG server unless disabled (port <= 0)."""
-        if not getattr(self, "camera_available", False):
+        """Start the embedded HTTP MJPEG server unless disabled (port <= 0).
+
+        Always starts even when ``camera_available`` is False so ``/api/camera/status``
+        answers with structured diagnostics instead of Nginx 502 Bad Gateway.
+        """
+        if getattr(self, "mjpeg_server", None) is not None:
             return
         raw_port = stereo.os.environ.get(
             "PIB_CAMERA_STREAM_PORT", str(stereo.DEFAULT_STREAM_PORT)
@@ -403,6 +407,60 @@ class BranchCaptureMixin:
         if decoded is not None:
             self.current_frame = decoded
         return decoded
+
+    def _should_publish_face_center(self) -> bool:
+        """Throttle automatic 10 Hz timer calls to ``PIB_FACE_CENTER_HZ`` (default 2.0 Hz)."""
+        raw = stereo.os.environ.get("PIB_FACE_CENTER_HZ", "2.0").strip()
+        try:
+            hz = float(raw)
+        except ValueError:
+            hz = 2.0
+        if hz <= 0:
+            return False
+        now = stereo.time.monotonic()
+        last = float(getattr(self, "_last_face_center_monotonic", 0.0) or 0.0)
+        if last > 0.0 and (now - last) < (1.0 / hz):
+            return False
+        self._last_face_center_monotonic = now
+        return True
+
+    def _prepare_face_center_gray(self, frame=None):
+        """Return ``(gray_320x180, full_w, full_h)`` without full-frame BGR decode when JPEG is available."""
+        if frame is None:
+            jpeg_bytes = getattr(self, "current_jpeg_bytes", b"")
+            if jpeg_bytes:
+                try:
+                    arr = stereo.np.frombuffer(jpeg_bytes, dtype=stereo.np.uint8)
+                    flag = getattr(
+                        stereo.cv2,
+                        "IMREAD_REDUCED_GRAYSCALE_4",
+                        getattr(stereo.cv2, "IMREAD_GRAYSCALE", 0),
+                    )
+                    gray = stereo.cv2.imdecode(arr, flag)
+                    if gray is not None and hasattr(gray, "shape"):
+                        if gray.ndim == 3:
+                            gray = stereo.cv2.cvtColor(gray, stereo.cv2.COLOR_BGR2GRAY)
+                        if (
+                            gray.shape[1] != stereo.FACE_DETECT_WIDTH
+                            or gray.shape[0] != stereo.FACE_DETECT_HEIGHT
+                        ):
+                            gray = stereo.cv2.resize(
+                                gray,
+                                (stereo.FACE_DETECT_WIDTH, stereo.FACE_DETECT_HEIGHT),
+                            )
+                        full_w, full_h = self._published_frame_size()
+                        return gray, full_w, full_h
+                except Exception:
+                    pass
+            frame = self._decode_current_frame()
+        if frame is None:
+            return None
+        full_h, full_w = frame.shape[:2]
+        small = stereo.cv2.resize(
+            frame, (stereo.FACE_DETECT_WIDTH, stereo.FACE_DETECT_HEIGHT)
+        )
+        gray = stereo.cv2.cvtColor(small, stereo.cv2.COLOR_BGR2GRAY)
+        return gray, full_w, full_h
 
     @staticmethod
     def _extract_packet_jpeg(packet):

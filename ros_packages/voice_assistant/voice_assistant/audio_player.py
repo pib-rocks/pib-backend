@@ -145,6 +145,72 @@ def _cloud_tts_usage_from_response(response: object) -> dict[str, object]:
 _trace_emitter = None
 _playback_queue: Optional[Queue] = None
 _burst_started = False
+_output_stream_lock = Lock()
+_cached_pyaudio_factory = None
+_cached_pya = None
+_cached_streams: dict[tuple[int, int, int], object] = {}
+
+
+def _reset_output_streams_locked() -> None:
+    global _cached_pya, _cached_pyaudio_factory
+    for stream in list(_cached_streams.values()):
+        try:
+            stream.stop_stream()
+        except Exception:
+            pass
+        try:
+            stream.close()
+        except Exception:
+            pass
+    _cached_streams.clear()
+    if _cached_pya is not None:
+        try:
+            _cached_pya.terminate()
+        except Exception:
+            pass
+        _cached_pya = None
+    _cached_pyaudio_factory = None
+
+
+def reset_output_streams() -> None:
+    """Close cached output streams and PyAudio instance."""
+    with _output_stream_lock:
+        _reset_output_streams_locked()
+
+
+def _acquire_output_stream(encoding: "AudioEncoding"):
+    """Return a cached output stream for ``encoding``, opening it on first use."""
+    global _cached_pya, _cached_pyaudio_factory
+    factory = getattr(pyaudio, "PyAudio", None)
+    key = (
+        int(encoding.bytes_per_sample),
+        int(encoding.num_channels),
+        int(encoding.frames_per_second),
+    )
+    with _output_stream_lock:
+        if _cached_pya is None or _cached_pyaudio_factory is not factory:
+            _reset_output_streams_locked()
+            _cached_pya = pyaudio.PyAudio()
+            _cached_pyaudio_factory = factory
+        stream = _cached_streams.get(key)
+        if stream is not None:
+            return stream
+        open_kwargs = dict(
+            format=_cached_pya.get_format_from_width(encoding.bytes_per_sample),
+            channels=encoding.num_channels,
+            rate=encoding.frames_per_second,
+            output=True,
+        )
+        pulse_idx = _pulse_output_device_index(_cached_pya)
+        if pulse_idx is not None:
+            try:
+                stream = _cached_pya.open(output_device_index=pulse_idx, **open_kwargs)
+            except Exception:
+                stream = None
+        if stream is None:
+            stream = _cached_pya.open(**open_kwargs)
+        _cached_streams[key] = stream
+        return stream
 
 
 def set_trace_emitter(fn) -> None:
@@ -243,25 +309,9 @@ class PlaybackItem:
             self.finished_playing.set()
             return
 
-        pya = None
-        stream = None
         try:
             with util.surpress_stderr():
-                pya = pyaudio.PyAudio()
-                open_kwargs = dict(
-                    format=pya.get_format_from_width(self.encoding.bytes_per_sample),
-                    channels=self.encoding.num_channels,
-                    rate=self.encoding.frames_per_second,
-                    output=True,
-                )
-                pulse_idx = _pulse_output_device_index(pya)
-                if pulse_idx is not None:
-                    try:
-                        stream = pya.open(output_device_index=pulse_idx, **open_kwargs)
-                    except Exception:
-                        stream = None
-                if stream is None:
-                    stream = pya.open(**open_kwargs)
+                stream = _acquire_output_stream(self.encoding)
 
                 for chunk in self.data:
                     if self.is_cleared():
@@ -277,20 +327,10 @@ class PlaybackItem:
                     remaining -= step
         except Exception as e:
             print(f"failed to playback audio: {e}", file=sys.stderr)
+            reset_output_streams()
         finally:
             _emit_last_audio_if_drained()
             self.finished_playing.set()
-            if stream is not None:
-                try:
-                    stream.stop_stream()
-                    stream.close()
-                except Exception:
-                    pass
-            if pya is not None:
-                try:
-                    pya.terminate()
-                except Exception:
-                    pass
 
 
 SPEECH_ENCODING = AudioEncoding(2, 1, 44100)

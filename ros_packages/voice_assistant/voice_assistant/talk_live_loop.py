@@ -466,23 +466,14 @@ class TalkLiveLoop:
         self._hw_vad_at = 0.0
         self._hw_speech_at = 0.0
 
+        self._vad_sub = None
+        self._speech_sub = None
+        self._audio_sub = None
         try:
-            from std_msgs.msg import Bool, Int16MultiArray, String
+            from std_msgs.msg import String
 
-            self._vad_sub = node.create_subscription(
-                Bool, "/voice_activity", self._on_voice_activity, 10
-            )
-            self._speech_sub = node.create_subscription(
-                Bool, "/speech_detected", self._on_speech_detected, 10
-            )
-            self._audio_sub = node.create_subscription(
-                Int16MultiArray, ROS_AUDIO_TOPIC, self._on_audio_stream, 10
-            )
             self._trace_pub = node.create_publisher(String, TURN_TRACE_TOPIC, 10)
         except Exception:
-            self._vad_sub = None
-            self._speech_sub = None
-            self._audio_sub = None
             self._trace_pub = None
 
         self._chat_client = node.create_client(
@@ -593,13 +584,46 @@ class TalkLiveLoop:
         )
         self._mute_uplink_until = now + START_EARCON_MUTE_S
         self._note_activity()
+        self._ensure_live_subscriptions()
         self._thread = threading.Thread(
             target=self._thread_main, args=(model,), name="TalkLiveLoop", daemon=True
         )
         self._thread.start()
 
+    def _ensure_live_subscriptions(self) -> None:
+        """Subscribe to high-rate audio/VAD topics only while a live session is active."""
+        try:
+            from std_msgs.msg import Bool, Int16MultiArray
+
+            if self._vad_sub is None:
+                self._vad_sub = self._node.create_subscription(
+                    Bool, "/voice_activity", self._on_voice_activity, 10
+                )
+            if self._speech_sub is None:
+                self._speech_sub = self._node.create_subscription(
+                    Bool, "/speech_detected", self._on_speech_detected, 10
+                )
+            if self._audio_sub is None:
+                self._audio_sub = self._node.create_subscription(
+                    Int16MultiArray, ROS_AUDIO_TOPIC, self._on_audio_stream, 10
+                )
+        except Exception:
+            pass
+
+    def _teardown_live_subscriptions(self) -> None:
+        destroy = getattr(self._node, "destroy_subscription", None)
+        for attr in ("_audio_sub", "_vad_sub", "_speech_sub"):
+            sub = getattr(self, attr, None)
+            setattr(self, attr, None)
+            if sub is not None and callable(destroy):
+                try:
+                    destroy(sub)
+                except Exception:
+                    pass
+
     def stop(self, join_timeout: float = 5.0) -> None:
         self._stop_event.set()
+        self._teardown_live_subscriptions()
         loop = self._loop
         session = self._session
         if loop is not None and session is not None:
@@ -649,7 +673,12 @@ class TalkLiveLoop:
         if loop is None or audio_queue is None:
             return
         try:
-            pcm = np.asarray(message.data, dtype=np.int16).tobytes()
+            if isinstance(message.data, (bytes, bytearray, memoryview)):
+                pcm = bytes(message.data)
+            elif hasattr(message.data, "tobytes"):
+                pcm = message.data.tobytes()
+            else:
+                pcm = np.asarray(message.data, dtype=np.int16).tobytes()
         except Exception:
             return
         if not pcm:
@@ -1096,6 +1125,7 @@ class TalkLiveLoop:
             logger.exception("Talk live loop ended with an error")
         finally:
             self._listening = False
+            self._teardown_live_subscriptions()
             self._set_speaking(False)
             callback = self._on_session_end
             if callback is not None:

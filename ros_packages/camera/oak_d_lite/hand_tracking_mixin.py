@@ -950,6 +950,8 @@ class HandTrackingMixin:
         The chain produces a result per camera frame; polling it from the
         10 Hz stream timer capped it at 10 detections/s.
         """
+        if getattr(self, "hand_fast_queue", None) is None:
+            return
         try:
             self._process_hand_tracking_fast()
         except Exception as exc:  # pragma: no cover - defensive, verified by E2E

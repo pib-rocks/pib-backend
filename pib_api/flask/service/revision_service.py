@@ -8,11 +8,15 @@ import subprocess
 from pathlib import Path
 from typing import Any, Mapping
 
-from service.update_service import update_directory
+from service.update_service import DEFAULT_UPDATE_DIR, update_directory
 from service.version_service import is_release_tag, read_app_version, version_provenance
 
 UNKNOWN = "unknown"
 REPOSITORIES = ("pib-backend", "cerebra")
+PRODUCTION_UPDATE_DIRS = (
+    Path(DEFAULT_UPDATE_DIR),
+    Path("/home/pib/app/.update"),
+)
 
 
 def parse_revision(
@@ -134,9 +138,9 @@ def installed_revisions(
     checkout_dirs: Mapping[str, Path] | None = None,
 ) -> dict[str, Any]:
     resolved_directory = directory or update_directory()
-    use_git_fallback = (
-        checkout_dirs is not None
-        or resolved_directory.resolve() == update_directory().resolve()
+    resolved_path = resolved_directory.resolve()
+    use_git_fallback = checkout_dirs is not None or any(
+        resolved_path == candidate.resolve() for candidate in PRODUCTION_UPDATE_DIRS
     )
     repositories = {}
     for repository in REPOSITORIES:
