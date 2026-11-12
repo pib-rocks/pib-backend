@@ -218,7 +218,8 @@ def test_provision_returns_nonzero_when_asset_cannot_be_fetched(tmp_path):
 
 def test_provision_stays_hermetic_when_home_has_installed_backend_checkout(tmp_path):
     """PR-2261: running setup-pib.sh --models from a fixture checkout must not fall back
-    to $HOME/app/pib-backend for whisper/supertone provisioning when HOME is the robot user's home."""
+    to $HOME/app/pib-backend for whisper/supertone provisioning when HOME is the robot user's home.
+    """
     root, _relative_file = _fixture_repo(tmp_path)
     script = root / "setup" / "setup-pib.sh"
     store = tmp_path / "store"
