@@ -60,9 +60,9 @@ export NEW_LINE="\n"
 # Github repositories
 export FRONTEND="https://github.com/pib-rocks/cerebra.git"
 export BACKEND="https://github.com/pib-rocks/pib-backend.git"
-export APP_DIR="$HOME/app"
-export BACKEND_DIR="$APP_DIR/pib-backend"
-export FRONTEND_DIR="$APP_DIR/cerebra"
+export APP_DIR="${APP_DIR:-$HOME/app}"
+export BACKEND_DIR="${BACKEND_DIR:-$APP_DIR/pib-backend}"
+export FRONTEND_DIR="${FRONTEND_DIR:-$APP_DIR/cerebra}"
 export SETUP_INSTALLATION_DIR="$BACKEND_DIR/setup/installation_scripts"
 
 # Function to support printing consistent log messages
@@ -1532,7 +1532,7 @@ function provision_curated_models() {
 function whisper_repo_root() {
   local script_root
   script_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-  if [ -f "$script_root/voice/whisper-model.yaml" ]; then
+  if [ -f "$script_root/voice/whisper-model.yaml" ] || [ -f "$script_root/models/manifest.yaml" ]; then
     echo "$script_root"
   else
     echo "$BACKEND_DIR"
