@@ -484,6 +484,14 @@ def test_start_async_returns_long_before_the_trajectory_duration_has_elapsed() -
 def test_start_async_returns_before_duration_elapses() -> None:
     motor = FakeMotor("elbow")
     clock = FakeClock()
+    release_gate = threading.Event()
+    original_sleep = clock.sleep
+
+    def gated_sleep(dt: float) -> None:
+        release_gate.wait(timeout=1.0)
+        original_sleep(dt)
+
+    clock.sleep = gated_sleep  # type: ignore[method-assign]
     executor = _executor({"elbow": [motor]}, clock)
     jt = FakeJointTrajectory(
         ["elbow"],
@@ -492,6 +500,7 @@ def test_start_async_returns_before_duration_elapses() -> None:
     started, _ = executor.start_async(jt, SimpleQueue())
     assert started is True
     assert executor.is_running() is True
+    release_gate.set()
     assert executor.join(timeout=1.0) is True
 
 

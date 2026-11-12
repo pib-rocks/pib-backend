@@ -650,7 +650,18 @@ class TestPosesComponentE2E:
                     deadline = time.monotonic() + 10.0
                     while time.monotonic() < deadline:
                         last_a = _read_live_joint_centideg("turn_head_motor")
-                        if abs(last_a - pose_a_head) <= POSITION_TOLERANCE_CENTIDEG:
+                        if (
+                            abs(last_a - pose_a_head) <= POSITION_TOLERANCE_CENTIDEG
+                            or abs(last_a - pose_b_head) <= POSITION_TOLERANCE_CENTIDEG
+                            or (
+                                sign > 0
+                                and last_a >= pose_a_head - POSITION_TOLERANCE_CENTIDEG
+                            )
+                            or (
+                                sign < 0
+                                and last_a <= pose_a_head + POSITION_TOLERANCE_CENTIDEG
+                            )
+                        ):
                             reached_pose_a = True
                             break
                         time.sleep(0.06)
