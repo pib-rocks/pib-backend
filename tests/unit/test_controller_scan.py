@@ -202,7 +202,8 @@ def test_motor_names_are_mapped_to_channels() -> None:
 
 def test_load_startup_configuration_recovers_after_initial_api_failure() -> None:
     """PR-2198: when Flask is not ready on the first startup attempt, subsequent
-    calls to load_startup_configuration() succeed and return the motor/controller maps."""
+    calls to load_startup_configuration() succeed and return the motor/controller maps.
+    """
     attempts = [0]
 
     def flaky_expected():
