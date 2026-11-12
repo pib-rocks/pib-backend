@@ -23,6 +23,7 @@ set -uo pipefail
 
 APP_DIR="${APP_DIR:-$HOME/app}"
 CONTAINER="${PIB_FLASK_CONTAINER:-pib-backend-flask-app-1}"
+CONTAINER_WAIT_SECONDS="${PIB_ROBOT_MODEL_CONTAINER_WAIT:-60}"
 DEST="${PIB_ROBOT_MODEL_DIR:-$APP_DIR/data/robot-model}"
 DEST_IN_CONTAINER="/data/robot-model"
 LOG_PREFIX="${LOG_PREFIX:-robot-model}"
@@ -59,6 +60,21 @@ docker_cmd() {
 
 container_running() {
     docker_cmd ps --format '{{.Names}}' 2>/dev/null | grep -qx "$CONTAINER"
+}
+
+wait_for_container() {
+    local waited=0
+    while ! container_running; do
+        if [ "$waited" -ge "$CONTAINER_WAIT_SECONDS" ]; then
+            return 1
+        fi
+        if [ "$waited" -eq 0 ]; then
+            log "waiting up to ${CONTAINER_WAIT_SECONDS}s for ${CONTAINER} to start"
+        fi
+        sleep 2
+        waited=$((waited + 2))
+    done
+    return 0
 }
 
 version_of() {
@@ -156,7 +172,7 @@ if mkdir -p "$APP_DIR/data" 2>/dev/null && [ -w "$APP_DIR/data" ]; then
         log "unpacking failed - the installed model was left untouched"
         exit 1
     fi
-elif container_running; then
+elif wait_for_container; then
     log "unpacking into ${DEST_IN_CONTAINER} through ${CONTAINER} (host directory is not writable)"
     docker_cmd cp "$archive" "${CONTAINER}:/tmp/robot-model.zip" || { log "cannot copy the archive into ${CONTAINER}"; exit 1; }
     if ! echo "$UNPACK_PY" | docker_cmd exec -i "$CONTAINER" python - /tmp/robot-model.zip "$DEST_IN_CONTAINER"; then
@@ -166,7 +182,11 @@ elif container_running; then
     fi
     docker_cmd exec "$CONTAINER" rm -f /tmp/robot-model.zip 2>/dev/null
 else
-    log "neither ${APP_DIR}/data is writable nor is ${CONTAINER} running - start the stack or run setup as root"
+    if ! docker_cmd info >/dev/null 2>&1; then
+        log "docker is not usable for $(id -un) - is the docker group active for this session?"
+        exit 2
+    fi
+    log "neither ${APP_DIR}/data is writable nor is ${CONTAINER} running after ${CONTAINER_WAIT_SECONDS}s - start the stack or run setup as root"
     exit 1
 fi
 

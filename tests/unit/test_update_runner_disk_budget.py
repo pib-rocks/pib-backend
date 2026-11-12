@@ -453,3 +453,101 @@ def test_runner_defines_cerebra_registry_stack_helpers() -> None:
         "\nrollback_once()", 1
     )[0]
     assert r"^ghcr\.io/pib-rocks/(pib-backend-|cerebra:)" in prune
+
+
+def test_rollback_prefers_cached_images_with_no_build_and_writes_granular_progress(
+    tmp_path: Path,
+) -> None:
+    result, _update_dir, docker_log, log = _run(
+        tmp_path,
+        free_kib="4194304",
+        required_free_kib="1048576",
+        channel="release",
+        release="v0.7.4",
+        tag_head="v0.7.3",
+        tag_head_after="v0.7.4",
+        pib_sdk_installed="0.7.3",
+    )
+
+    assert result.returncode != 0, log
+    assert "fetching: Fetching pib-backend target (v0.7.4)" in log
+    assert "fetching: Fetching cerebra target (v0.7.4)" in log
+    assert (
+        "building: Updating and recreating pib-backend containers (APP_VERSION=v0.7.4)"
+        in log
+    )
+    assert (
+        "building: Updating and recreating cerebra container (APP_VERSION=v0.7.4)"
+        in log
+    )
+    assert (
+        "Rollback: recreating backend containers from cached images for PIB_IMAGE_TAG=v0.7.3"
+        in log
+    )
+    assert (
+        "Rollback: recreating cerebra container from cached image for PIB_IMAGE_TAG=v0.7.3"
+        in log
+    )
+    assert (
+        "APP_VERSION=v0.7.3 image inspect ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.3"
+        in docker_log
+    )
+    assert (
+        "APP_VERSION=v0.7.3 image inspect ghcr.io/pib-rocks/cerebra:v0.7.3"
+        in docker_log
+    )
+    assert "APP_VERSION=v0.7.3 compose -f " in docker_log
+    assert " up -d --no-build --force-recreate" in docker_log
+
+
+def test_runner_rotates_previous_update_log_on_fresh_job(tmp_path: Path) -> None:
+    # Run once to produce a log, then run a second fresh job and verify rotation
+    result1, update_dir, _docker_log1, log1 = _run(
+        tmp_path,
+        free_kib="4194304",
+        required_free_kib="1048576",
+    )
+    assert result1.returncode == 0, log1
+    (update_dir / "update.log").write_text("OLD_MARKER_LINE\n" + log1, encoding="utf-8")
+    (update_dir / "request.json").write_text(
+        json.dumps(_request(channel="develop")), encoding="utf-8"
+    )
+    env = os.environ.copy()
+    env.update(
+        {
+            "PATH": f"{tmp_path / 'bin'}:{env.get('PATH', '')}",
+            "PIB_UPDATE_DIR": str(update_dir),
+            "PIB_BACKEND_DIR": str(tmp_path / "backend"),
+            "PIB_CEREBRA_DIR": str(tmp_path / "cerebra"),
+            "PIB_MODEL_STORE": str(tmp_path / "model-store"),
+            "PIB_MODEL_CACHE": str(tmp_path / "model-cache"),
+            "PIB_UPDATE_REQUIRED_FREE_KIB": "1048576",
+            "PIB_UPDATE_VERIFY_ATTEMPTS": "1",
+            "PIB_UPDATE_VERIFY_INTERVAL_SECONDS": "0",
+            "DOCKER_LOG": str(tmp_path / "docker.log"),
+            "STUB_PROFILE_BUILD_LOG": str(tmp_path / "profile-build.log"),
+            "STUB_DOCKER_IMAGES_LIST": str(tmp_path / "docker-images.txt"),
+            "STUB_FREE_KIB": "4194304",
+            "STUB_BACKEND_BEFORE": BACKEND_SHA,
+            "STUB_CEREBRA_BEFORE": CEREBRA_SHA,
+            "STUB_BACKEND_TARGET": TARGET_BACKEND_SHA,
+            "STUB_CEREBRA_TARGET": TARGET_CEREBRA_SHA,
+            "STUB_PIB_SDK_INSTALLED": "0.7.4",
+        }
+    )
+    subprocess.run(
+        ["bash", str(RUNNER)],
+        capture_output=True,
+        check=False,
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        timeout=120,
+    )
+    assert (update_dir / "update.prev.log").is_file()
+    assert "OLD_MARKER_LINE" in (update_dir / "update.prev.log").read_text(
+        encoding="utf-8"
+    )
+    assert "OLD_MARKER_LINE" not in (update_dir / "update.log").read_text(
+        encoding="utf-8"
+    )

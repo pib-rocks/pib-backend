@@ -214,3 +214,48 @@ def test_provision_returns_nonzero_when_asset_cannot_be_fetched(tmp_path):
     assert "Model provisioning failed" in result.stdout
     assert not (store / "demo" / "demo.blob").exists()
     assert not (store / "manifest.yaml").exists()
+
+
+def test_provision_stays_hermetic_when_home_has_installed_backend_checkout(tmp_path):
+    """PR-2261: running setup-pib.sh --models from a fixture checkout must not fall back
+    to $HOME/app/pib-backend for whisper/supertone provisioning when HOME is the robot user's home.
+    """
+    root, _relative_file = _fixture_repo(tmp_path)
+    script = root / "setup" / "setup-pib.sh"
+    store = tmp_path / "store"
+    cache = tmp_path / "cache"
+    archive, digest = _pack_asset(tmp_path, root)
+
+    fake_home = tmp_path / "robot-home"
+    installed_backend = fake_home / "app" / "pib-backend"
+    (installed_backend / "voice").mkdir(parents=True)
+    (installed_backend / "voice" / "whisper-model.yaml").write_text(
+        "model_size: small\n", encoding="utf-8"
+    )
+    (installed_backend / "setup" / "installation_scripts").mkdir(parents=True)
+    shutil.copy2(
+        REPO_ROOT / "setup" / "installation_scripts" / "provision_whisper_model.py",
+        installed_backend
+        / "setup"
+        / "installation_scripts"
+        / "provision_whisper_model.py",
+    )
+
+    env = os.environ.copy()
+    env["PIB_MODEL_STORE"] = str(store)
+    env["PIB_MODEL_CACHE"] = str(cache)
+    env["PIB_MODEL_ASSET_URL"] = archive.as_uri()
+    env["PIB_MODEL_ASSET_SHA256"] = digest
+    env["PIB_WHISPER_DOWNLOAD"] = "0"
+    env["HOME"] = str(fake_home)
+    env["WHISPER_MODEL_PATH"] = str(tmp_path / "empty-whisper-store")
+
+    res = subprocess.run(
+        ["bash", str(script), "--models"],
+        text=True,
+        capture_output=True,
+        env=env,
+        check=False,
+    )
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert "whisper-model.yaml not found; nothing to place" in res.stdout

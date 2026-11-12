@@ -26,6 +26,8 @@ _STATUS_EVALUATION_INTERVAL_SEC = 5.0
 _REPORT_REFRESH_SEC = 60.0
 SERVO_MATCH_MIN = 1
 _STARTUP_SCAN_DELAY_SEC = 1.0
+_STARTUP_RETRY_DELAY_SEC = 2.0
+_STARTUP_MAX_ATTEMPTS = 30
 
 _LOG = logging.getLogger(__name__)
 
@@ -244,6 +246,24 @@ except ImportError:  # pragma: no cover - unit tests without ROS
     Node = object  # type: ignore[misc, assignment]
 
 
+def load_startup_configuration(
+    *,
+    expected_fn=_expected_servo_ids,
+    name_to_channel_fn=_servo_channel_by_motor_name,
+    by_serial_fn=_controller_number_by_serial,
+) -> tuple[dict[int, list[int]], dict[str, int], dict[str, int]]:
+    """Load motor/controller configuration from the Flask API.
+
+    Returns ``(expected, name_to_channel, by_serial)``. Empty ``expected`` or
+    ``name_to_channel`` means the API was not reachable yet (cold start) and the
+    caller should retry rather than treating the empty mapping as final.
+    """
+    expected = expected_fn()
+    name_to_channel = name_to_channel_fn()
+    by_serial = by_serial_fn()
+    return expected, name_to_channel, by_serial
+
+
 if rclpy is not None:
 
     class ControllerScan(Node):
@@ -261,6 +281,8 @@ if rclpy is not None:
 
         def __init__(self) -> None:
             super().__init__("controller_scan")
+            self._startup_attempts = 0
+            self._startup_completed = False
             self._startup_timer = self.create_timer(
                 _STARTUP_SCAN_DELAY_SEC, self._startup_scan
             )
@@ -282,11 +304,25 @@ if rclpy is not None:
             )
 
         def _startup_scan(self) -> None:
-            self.destroy_timer(self._startup_timer)
-            self._expected = _expected_servo_ids()
-            self._name_to_channel = _servo_channel_by_motor_name()
-            self._by_serial = _controller_number_by_serial()
+            self._startup_attempts += 1
+            self._expected, self._name_to_channel, self._by_serial = (
+                load_startup_configuration()
+            )
             self._serials = _detected_serials()
+            if (
+                not self._expected or not self._name_to_channel
+            ) and self._startup_attempts < _STARTUP_MAX_ATTEMPTS:
+                self.get_logger().warning(
+                    f"controller_scan: API not ready yet (attempt {self._startup_attempts}/{_STARTUP_MAX_ATTEMPTS}); retrying in {_STARTUP_RETRY_DELAY_SEC}s"
+                )
+                self.destroy_timer(self._startup_timer)
+                self._startup_timer = self.create_timer(
+                    _STARTUP_RETRY_DELAY_SEC, self._startup_scan
+                )
+                return
+
+            self.destroy_timer(self._startup_timer)
+            self._startup_completed = bool(self._expected and self._name_to_channel)
             assignments = build_detected_assignments(self._serials, self._expected)
             self._report(assignments)
             self.get_logger().info(
@@ -301,10 +337,22 @@ if rclpy is not None:
             Throttled: /joint_states arrives about ten times per second, and the answer can
             only change when hardware does.
             """
-            if not self._expected or not self._name_to_channel or not self._by_serial:
-                # An incomplete mapping would report every adapter as unassigned; better to
-                # wait for the next message than to publish a wrong picture.
+            if not self._expected or not self._name_to_channel:
+                if self._startup_completed:
+                    self._expected, self._name_to_channel, self._by_serial = (
+                        load_startup_configuration()
+                    )
+                    self._serials = _detected_serials()
+                    if self._expected and self._name_to_channel:
+                        assignments = build_detected_assignments(
+                            self._serials, self._expected
+                        )
+                        self._report(assignments)
                 return
+            if not self._by_serial:
+                self._by_serial = _controller_number_by_serial()
+                if not self._by_serial:
+                    return
             now = self.get_clock().now().nanoseconds / 1e9
             if now - self._last_evaluation < _STATUS_EVALUATION_INTERVAL_SEC:
                 return

@@ -117,6 +117,15 @@ check_flask() {
     section "Flask preflight"
     if curl -sf --max-time 5 "http://localhost:5000/motor" >/dev/null; then
         echo -e "${GREEN}OK:${NC} Flask responding on :5000"
+        # A run on the robot itself needs no address: the live pytest E2E suite
+        # reads PIB_ROBOT_URL and deliberately refuses to guess localhost, so a
+        # workstation run stops instead of testing the wrong machine. The
+        # preflight above can only pass where the stack answers locally, which
+        # is exactly the robot case - derive the address from it and say so.
+        if [[ -z "${PIB_ROBOT_URL:-}" ]]; then
+            export PIB_ROBOT_URL="http://localhost"
+            echo -e "${GREEN}OK:${NC} PIB_ROBOT_URL derived from the local stack: ${PIB_ROBOT_URL}"
+        fi
         return 0
     fi
     echo -e "${YELLOW}WARN:${NC} Flask not reachable on http://localhost:5000 — Robot E2E may fail"
