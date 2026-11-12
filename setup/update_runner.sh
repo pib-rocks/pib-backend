@@ -717,8 +717,20 @@ ensure_ollama_for_update() {
 # services when registry pulls did not supply the stack. Service image names
 # point at ghcr.io; `docker compose pull` is tried first in build_backend_stack.
 # Offline: a failed pull build retries without --pull.
+backend_extra_profile_flags() {
+    local smart="${PIB_SMART_CHATS:-}"
+    if [ -z "$smart" ] && [ -f /etc/pib_smart_chats ]; then
+        smart="$(tr -d '[:space:]' </etc/pib_smart_chats 2>/dev/null || true)"
+    fi
+    if [ "${smart:-1}" != "0" ]; then
+        printf '%s\n' "--profile" "hermes"
+    fi
+}
+
 refresh_backend_base_images() {
-    local compose=(docker compose -f "$BACKEND_DIR/docker-compose.yaml" --profile all)
+    local -a extra_profiles=()
+    readarray -t extra_profiles < <(backend_extra_profile_flags)
+    local compose=(docker compose -f "$BACKEND_DIR/docker-compose.yaml" --profile all "${extra_profiles[@]}")
     local pull_log pull_status plain_log plain_status
     pull_log="$(mktemp "$UPDATE_DIR/base-build-pull.XXXXXX")"
     plain_log="$(mktemp "$UPDATE_DIR/base-build-plain.XXXXXX")"
@@ -765,7 +777,9 @@ recreate_backend_from_registry() {
         export APP_VERSION
     fi
     log "Attempting registry pull for backend services (PIB_IMAGE_TAG=${PIB_IMAGE_TAG} APP_VERSION=${APP_VERSION:-unset})"
-    compose=(docker compose -f "$BACKEND_DIR/docker-compose.yaml" --profile all)
+    local -a extra_profiles=()
+    readarray -t extra_profiles < <(backend_extra_profile_flags)
+    compose=(docker compose -f "$BACKEND_DIR/docker-compose.yaml" --profile all "${extra_profiles[@]}")
     pull_log="$(mktemp "$UPDATE_DIR/service-pull.XXXXXX")"
     if "${compose[@]}" pull >"$pull_log" 2>&1; then
         cat "$pull_log"
@@ -806,7 +820,9 @@ build_backend_stack() {
         export APP_VERSION
         if docker image inspect "ghcr.io/pib-rocks/pib-backend-flask-app:${PIB_IMAGE_TAG}" >/dev/null 2>&1; then
             log "Rollback: recreating backend containers from cached images for PIB_IMAGE_TAG=${PIB_IMAGE_TAG}"
-            if docker compose -f "$BACKEND_DIR/docker-compose.yaml" --profile all up -d --no-build --force-recreate; then
+            local -a rollback_extra_profiles=()
+            readarray -t rollback_extra_profiles < <(backend_extra_profile_flags)
+            if docker compose -f "$BACKEND_DIR/docker-compose.yaml" --profile all "${rollback_extra_profiles[@]}" up -d --no-build --force-recreate; then
                 return 0
             fi
         fi
@@ -822,7 +838,9 @@ build_backend_stack() {
     else
         log "WARNING: APP_VERSION is unset; backend rebuild will use the compose-file fallback"
     fi
-    docker compose -f "$BACKEND_DIR/docker-compose.yaml" --profile all \
+    local -a build_extra_profiles=()
+    readarray -t build_extra_profiles < <(backend_extra_profile_flags)
+    docker compose -f "$BACKEND_DIR/docker-compose.yaml" --profile all "${build_extra_profiles[@]}" \
         up -d --build --force-recreate || return 1
 }
 
@@ -1019,10 +1037,12 @@ wait_for_api() {
 # Waits (bounded) until no service that ran before the update is missing any more.
 wait_for_stacks() {
     local attempt
+    local -a health_extra_profiles=()
+    readarray -t health_extra_profiles < <(backend_extra_profile_flags)
     for attempt in $(seq 1 "$VERIFY_ATTEMPTS"); do
         REGRESSIONS=""
         UNHEALTHY_SERVICES=""
-        if evaluate_stack_health "$BACKEND_DIR/docker-compose.yaml" "$BACKEND_SERVICES_BEFORE" --profile all \
+        if evaluate_stack_health "$BACKEND_DIR/docker-compose.yaml" "$BACKEND_SERVICES_BEFORE" --profile all "${health_extra_profiles[@]}" \
             && evaluate_stack_health "$CEREBRA_DIR/docker-compose.yaml" "$CEREBRA_SERVICES_BEFORE"; then
             return 0
         fi
@@ -1406,7 +1426,8 @@ fi
 write_status "preflight" "Validating repositories, disk, watchdog ownership, and database backup (attempt ${ATTEMPT} of ${MAX_ATTEMPTS})"
 check_cancel
 check_update_dir
-BACKEND_SERVICES_BEFORE="$(snapshot_running_services "$BACKEND_DIR/docker-compose.yaml" --profile all)"
+readarray -t INITIAL_EXTRA_PROFILES < <(backend_extra_profile_flags)
+BACKEND_SERVICES_BEFORE="$(snapshot_running_services "$BACKEND_DIR/docker-compose.yaml" --profile all "${INITIAL_EXTRA_PROFILES[@]}")"
 CEREBRA_SERVICES_BEFORE="$(snapshot_running_services "$CEREBRA_DIR/docker-compose.yaml")"
 VOICE_HEALTH_BEFORE="$(docker inspect "$VOICE_CONTAINER" --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' 2>/dev/null || true)"
 log "Services running before the update: pib-backend=[$(printf '%s' "$BACKEND_SERVICES_BEFORE" | tr '\n' ' ')] cerebra=[$(printf '%s' "$CEREBRA_SERVICES_BEFORE" | tr '\n' ' ')]"

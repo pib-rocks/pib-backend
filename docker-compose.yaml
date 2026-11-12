@@ -13,6 +13,11 @@ services:
         # dependency set.
         hermes: /home/pib/.hermes/hermes-agent
     restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     environment:
       HERMES_HOME: /home/pib/.hermes
       PIB_HERMES_PROFILES_DIR: /home/pib/.hermes/profiles
@@ -61,6 +66,11 @@ services:
     ports:
       - "2442:2442"
     restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   flask-app:
     image: ${PIB_IMAGE_PREFIX:-ghcr.io/pib-rocks/pib-backend}-flask-app:${PIB_IMAGE_TAG:-develop}
@@ -130,6 +140,11 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - /dev/serial/by-id:/dev/serial/by-id:ro
     restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     depends_on:
       - pib-blockly-server
 
@@ -144,6 +159,11 @@ services:
     networks:
       - pib-network
     restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     ports:
       - "9090:9090"
 
@@ -169,6 +189,11 @@ services:
       - DEPTHAI_CRASHDUMP=0
       - FLASK_API_BASE_URL=http://flask-app:5000
     restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     depends_on:
       - rosbridge-ws
       - flask-app
@@ -197,6 +222,11 @@ services:
       - TINKERFORGE_HOST=host.docker.internal
       - TINKERFORGE_PORT=4223
     restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     depends_on:
       - rosbridge-ws
       - flask-app
@@ -320,6 +350,11 @@ services:
       - /dev/snd:/dev/snd
       - /dev/bus/usb:/dev/bus/usb1
     restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     depends_on:
       - rosbridge-ws
       - flask-app
@@ -361,6 +396,11 @@ services:
     device_cgroup_rules:
       - 'c 189:* rmw'
     restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     networks:
       - pib-network
     extra_hosts:
@@ -408,6 +448,11 @@ services:
     user: "1000:1000"
     command: ros2 launch display launch.py
     restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     networks:
       - pib-network
 
@@ -440,6 +485,11 @@ services:
       - /home/pib/.config/pulse/cookie:/root/.config/pulse/cookie
       - /home/pib/wav-files:/home/pib/wav-files:ro
     restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     depends_on:
       - rosbridge-ws
 
@@ -456,6 +506,11 @@ services:
       - /home/pib/app/matter-server:/data
       - /run/dbus:/run/dbus:ro
     restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   homeassistant:
     image: ghcr.io/home-assistant/home-assistant:stable
@@ -476,6 +531,11 @@ services:
     depends_on:
       - matter-server
     restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   programs:
