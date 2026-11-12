@@ -372,3 +372,45 @@ def test_publish_joint_states_falls_back_to_connected_tinkerforge_motors(monkeyp
     assert list(msg.name) == ["elbow_left", "index_left_stretch"]
     assert math.isclose(msg.position[0], math.radians(30.0), rel_tol=1e-6)
     assert math.isclose(msg.position[1], math.radians(-90.0), rel_tol=1e-6)
+
+
+def test_publish_joint_states_gates_perf_trace_sweep_behind_env(monkeypatch):
+    """PR-2307: 10 Hz JOINT_STATE_SWEEP log is off by default and enabled via PIB_PERF_TRACE_SWEEP=1."""
+    from pib_motors import joint_state_sweep
+
+    module = _load_motor_control_for_batch({}, [])
+    sweep_res = joint_state_sweep.JointStateSweepResult(
+        {"turn_head_motor": 1200}, 5.0, 1, 1
+    )
+    monkeypatch.setattr(module, "sweep_feetech_joint_positions", lambda _m: sweep_res)
+    monkeypatch.setattr(
+        module,
+        "JointState",
+        lambda: SimpleNamespace(
+            header=FakeHeader(), name=[], position=[], velocity=[], effort=[]
+        ),
+    )
+
+    logged = []
+    node = SimpleNamespace(
+        _motor_power_is_off=lambda: False,
+        joint_state_publisher=SimpleNamespace(publish=lambda _msg: None),
+        get_clock=lambda: SimpleNamespace(
+            now=lambda: SimpleNamespace(
+                to_msg=lambda: SimpleNamespace(sec=1, nanosec=0)
+            )
+        ),
+        get_logger=lambda: SimpleNamespace(
+            info=lambda msg, *_a, **_k: logged.append(msg),
+            debug=lambda *_a, **_k: None,
+        ),
+    )
+
+    monkeypatch.delenv("PIB_PERF_TRACE_SWEEP", raising=False)
+    module.MotorControl._publish_joint_states.__get__(node, module.MotorControl)()
+    assert logged == []
+
+    monkeypatch.setenv("PIB_PERF_TRACE_SWEEP", "1")
+    module.MotorControl._publish_joint_states.__get__(node, module.MotorControl)()
+    assert len(logged) == 1
+    assert "[PERF_TRACE] JOINT_STATE_SWEEP" in logged[0]

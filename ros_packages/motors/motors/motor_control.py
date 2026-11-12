@@ -1,5 +1,6 @@
 from typing import Iterable, Mapping, Sequence, Tuple
 import math
+import os
 import time
 from queue import SimpleQueue
 import rclpy
@@ -554,15 +555,21 @@ class MotorControl(Node):
         fill_joint_state(msg, positions)
         self.joint_state_publisher.publish(msg)
         elapsed_ms = (time.monotonic() - started) * 1000.0
-        log_perf_trace(
-            self.get_logger(),
-            format_perf_trace_joint_state_sweep(
-                len(positions),
-                elapsed_ms,
-                sweep.ports_succeeded,
-                sweep.ports_attempted,
-            ),
-        )
+        if os.environ.get("PIB_PERF_TRACE_SWEEP", "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        ):
+            log_perf_trace(
+                self.get_logger(),
+                format_perf_trace_joint_state_sweep(
+                    len(positions),
+                    elapsed_ms,
+                    sweep.ports_succeeded,
+                    sweep.ports_attempted,
+                ),
+            )
 
     def _log_bus_writer_stats(self) -> None:
         for writer in all_bus_writers():
