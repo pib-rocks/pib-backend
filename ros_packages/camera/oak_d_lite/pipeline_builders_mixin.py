@@ -74,9 +74,14 @@ class PipelineBuildersMixin:
             )
             return stereo.DEFAULT_HAND_STARTUP_GRACE
 
-    def _build_pipeline(self, include_stereo):
+    def _build_pipeline(self, include_stereo, usb_speed=None):
         """Build one colour pipeline, optionally including the stereo path."""
-        self.pipeline = stereo.dai.Pipeline()
+        if usb_speed is not None:
+            self._dai_device = stereo.dai.Device(usb_speed)
+            self.pipeline = stereo.dai.Pipeline(self._dai_device)
+        else:
+            self._dai_device = None
+            self.pipeline = stereo.dai.Pipeline()
         self.camRgb = self.pipeline.create(stereo.dai.node.Camera)
         imitation_active = any(
             active.model.model_id == "imitation"
@@ -1115,6 +1120,13 @@ class PipelineBuildersMixin:
             if owner_ref is not None and owner_ref() is self:
                 stereo.CameraNode._device_owner = None
             self._clear_scene_model_intrinsics()
+            dai_device = getattr(self, "_dai_device", None)
+            self._dai_device = None
+            if dai_device is not None:
+                try:
+                    dai_device.close()
+                except Exception:
+                    pass
             self.pipeline = None
             self.camRgb = None
             self.isp_out = None
@@ -1182,24 +1194,59 @@ class PipelineBuildersMixin:
                 )
                 return False
             include_imu = True
+            use_usb2_fallback = False
             for attempt in range(stereo.PIPELINE_START_ATTEMPTS):
                 try:
-                    self._build_pipeline(include_stereo)
+                    usb_speed = (
+                        getattr(getattr(stereo.dai, "UsbSpeed", None), "HIGH", None)
+                        if use_usb2_fallback
+                        else None
+                    )
+                    if usb_speed is not None:
+                        self._build_pipeline(include_stereo, usb_speed=usb_speed)
+                    else:
+                        self._build_pipeline(include_stereo)
                     if include_imu:
                         include_imu = self._init_imu()
                         if not include_imu:
                             # Discard a graph in which IMU construction failed
                             # after creating a partial node.
-                            self._build_pipeline(include_stereo)
+                            if usb_speed is not None:
+                                self._build_pipeline(
+                                    include_stereo, usb_speed=usb_speed
+                                )
+                            else:
+                                self._build_pipeline(include_stereo)
                     self.pipeline.start()
                     stereo.CameraNode._device_owner = stereo.weakref.ref(self)
                     self._load_scene_model_intrinsics_once()
+                    buf = getattr(self, "mjpeg_buffer", None)
+                    if buf is not None:
+                        buf.set_diagnostics(
+                            state="running",
+                            last_error="",
+                            usb_device_present=True,
+                        )
                     return True
                 except Exception as exc:
+                    err_text = str(exc)
+                    usb_present = stereo.oak_usb_device_present()
                     self.get_logger().error(
                         "Camera pipeline build/start attempt "
                         f"{attempt + 1}/{stereo.PIPELINE_START_ATTEMPTS} failed: {exc}"
                     )
+                    buf = getattr(self, "mjpeg_buffer", None)
+                    if buf is not None:
+                        buf.set_diagnostics(
+                            state="usb_missing" if not usb_present else "error",
+                            last_error=(
+                                "No OAK-D Lite USB device detected on the USB bus (03e7:2485)."
+                                if not usb_present
+                                and "No available devices" in err_text
+                                else err_text
+                            ),
+                            usb_device_present=usb_present,
+                        )
                     # False means the pipeline did not report stopped. The
                     # holder is already cleared, but the device may still be
                     # in use, so this attempt must not open another one.
@@ -1207,6 +1254,14 @@ class PipelineBuildersMixin:
                     # X_LINK_DEVICE_ALREADY_IN_USE loop.
                     if not self._stop_pipeline():
                         return False
+                    if "No available devices" in err_text and not usb_present:
+                        return False
+                    if (
+                        "X_LINK_ERROR" in err_text
+                        or "Input/output error" in err_text
+                        or "disconnected" in err_text.lower()
+                    ):
+                        use_usb2_fallback = True
                     # Some OAK variants expose no IMU. If a graph containing
                     # stereo.dai.node.IMU is rejected at start, retry the same camera
                     # graph without it instead of taking down camera topics.
@@ -1488,6 +1543,16 @@ class PipelineBuildersMixin:
                 return True
 
         self._stop_pipeline()
+        buf = getattr(self, "mjpeg_buffer", None)
+        if (
+            buf is not None
+            and getattr(buf, "_state", "") == "usb_missing"
+            and not stereo.oak_usb_device_present()
+        ):
+            self.get_logger().error(
+                "Camera not found: OAK-D Lite USB device is not connected."
+            )
+            return False
         if not self._start_pipeline(include_stereo=False):
             self.get_logger().error(
                 "Camera not found: colour pipeline failed to start."
