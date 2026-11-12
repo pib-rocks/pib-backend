@@ -39,6 +39,7 @@ DEFAULT_DESTINATION = Path("/data/voice/models/whisper")
 CONFIG_RELATIVE = Path("voice") / "whisper-model.yaml"
 VENDORED_RELATIVE = Path("voice") / "whisper"
 DOWNLOAD_TIMEOUT_SECONDS = 60
+DOWNLOAD_MAX_ATTEMPTS = 4
 CHUNK_SIZE = 1024 * 1024
 USER_AGENT = "pib-setup-whisper-provision/1.0"
 
@@ -138,32 +139,66 @@ def provision_vendored(vendored: Path, destination: Path) -> Optional[str]:
 
 
 def fetch(url: str, target: Path, expected_sha256: str, expected_size: int) -> None:
-    """Stream ``url`` into ``target`` and verify size and sha256 on the way."""
+    """Stream ``url`` into ``target`` with Range resume and retry, then verify size and sha256."""
     temporary = target.parent / f".{target.name}.tmp"
     target.parent.mkdir(parents=True, exist_ok=True)
-    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    digest = hashlib.sha256()
-    received = 0
-    try:
-        with (
-            urllib.request.urlopen(
+    temporary.unlink(missing_ok=True)
+    expected_total = int(expected_size)
+    last_error: Optional[str] = None
+
+    for attempt in range(1, DOWNLOAD_MAX_ATTEMPTS + 1):
+        existing = temporary.stat().st_size if temporary.is_file() else 0
+        if existing > expected_total:
+            temporary.unlink(missing_ok=True)
+            existing = 0
+        headers = {"User-Agent": USER_AGENT}
+        if existing > 0:
+            headers["Range"] = f"bytes={existing}-"
+        request = urllib.request.Request(url, headers=headers)
+        try:
+            with urllib.request.urlopen(
                 request, timeout=DOWNLOAD_TIMEOUT_SECONDS
-            ) as response,
-            temporary.open("wb") as handle,
-        ):
-            for chunk in iter(lambda: response.read(CHUNK_SIZE), b""):
-                handle.write(chunk)
-                digest.update(chunk)
-                received += len(chunk)
-    except (urllib.error.URLError, OSError) as error:
-        temporary.unlink(missing_ok=True)
-        raise ProvisionError(f"download of {url} failed: {error}") from error
-    if received != int(expected_size):
+            ) as response:
+                status = getattr(response, "status", None) or getattr(
+                    response, "code", 200
+                )
+                if existing > 0 and status == 206:
+                    mode = "ab"
+                    received = existing
+                else:
+                    mode = "wb"
+                    received = 0
+                with temporary.open(mode) as handle:
+                    for chunk in iter(lambda: response.read(CHUNK_SIZE), b""):
+                        handle.write(chunk)
+                        received += len(chunk)
+        except (urllib.error.URLError, OSError) as error:
+            last_error = f"download of {url} failed: {error}"
+            if attempt < DOWNLOAD_MAX_ATTEMPTS:
+                log(
+                    f"{target.name}: attempt {attempt}/{DOWNLOAD_MAX_ATTEMPTS} interrupted ({error}); retrying"
+                )
+                continue
+            temporary.unlink(missing_ok=True)
+            raise ProvisionError(last_error) from error
+
+        if received == expected_total:
+            break
+        last_error = (
+            f"{target.name}: expected {expected_total} bytes, received {received}"
+        )
+        if attempt < DOWNLOAD_MAX_ATTEMPTS:
+            log(
+                f"{target.name}: attempt {attempt}/{DOWNLOAD_MAX_ATTEMPTS} truncated at {received}/{expected_total} bytes; resuming"
+            )
+    else:
         temporary.unlink(missing_ok=True)
         raise ProvisionError(
-            f"{target.name}: expected {expected_size} bytes, received {received}"
+            last_error
+            or f"{target.name}: download incomplete after {DOWNLOAD_MAX_ATTEMPTS} attempts"
         )
-    if digest.hexdigest() != expected_sha256:
+
+    if sha256_of(temporary) != expected_sha256:
         temporary.unlink(missing_ok=True)
         raise ProvisionError(f"{target.name}: sha256 mismatch after download")
     temporary.replace(target)

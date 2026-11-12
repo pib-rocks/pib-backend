@@ -59,6 +59,10 @@ def _write_config(repo_root: Path, files=FILES, repository="https://models.test/
 
 
 class _FakeResponse(io.BytesIO):
+    def __init__(self, initial_bytes: bytes = b"", status: int = 200) -> None:
+        super().__init__(initial_bytes)
+        self.status = status
+
     def __enter__(self):
         return self
 
@@ -361,3 +365,40 @@ def test_models_mode_fails_when_the_whisper_step_fails(tmp_path):
     assert "demo: placed" in result.stdout
     assert "whisper model: provisioning failed" in result.stdout
     assert "downloading is disabled" in result.stderr
+
+
+def test_truncated_download_resumes_with_range_header_and_succeeds(
+    tmp_path, monkeypatch, capsys
+):
+    module = _load_helper()
+    repo = tmp_path / "repo"
+    _write_config(repo)
+    seen_ranges = []
+    model_calls = [0]
+
+    def fake_urlopen(request, timeout):
+        url = request.full_url
+        name = url.rsplit("/", 1)[1]
+        body = FILES[name]
+        if name == "model.bin":
+            model_calls[0] += 1
+            range_hdr = request.headers.get("Range") or request.unredirected_hdrs.get(
+                "Range"
+            )
+            seen_ranges.append(range_hdr)
+            if model_calls[0] == 1:
+                # Truncate after 7 bytes on the first attempt
+                return _FakeResponse(body[:7], status=200)
+            if range_hdr == "bytes=7-":
+                return _FakeResponse(body[7:], status=206)
+        return _FakeResponse(body, status=200)
+
+    monkeypatch.setattr(module.urllib.request, "urlopen", fake_urlopen)
+    store = tmp_path / "store"
+
+    assert module.main(["--repo-root", str(repo), "--destination", str(store)]) == 0
+    captured = capsys.readouterr()
+    assert captured.out.strip().splitlines()[-1] == "result=placed"
+    assert "truncated at 7/20 bytes; resuming" in captured.err
+    assert seen_ranges == [None, "bytes=7-"]
+    assert (store / "small" / "model.bin").read_bytes() == FILES["model.bin"]
