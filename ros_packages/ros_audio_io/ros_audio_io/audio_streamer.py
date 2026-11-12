@@ -1,5 +1,6 @@
 # audio_streamer.py
 
+from array import array
 import json
 import os
 
@@ -394,7 +395,7 @@ class AudioStreamer(Node):
 
             # Publish mono PCM (selected channel only)
             msg = Int16MultiArray()
-            msg.data = buf.tolist()
+            msg.data = array("h", np.ascontiguousarray(buf, dtype=np.int16).tobytes())
             self.pub.publish(msg)
 
             # Float32MultiArray layout: [normalized RMS, normalized peak].

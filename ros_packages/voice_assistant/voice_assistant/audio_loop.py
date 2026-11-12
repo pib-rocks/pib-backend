@@ -72,8 +72,20 @@ logging.basicConfig(
 logger = logging.getLogger("GeminiAudioLoop")
 
 # ——— Model + audio IO constants ———
-pya = pyaudio.PyAudio()
+pya = None
 FORMAT = pyaudio.paInt16
+
+
+def _get_pya():
+    global pya
+    if pya is None:
+        from . import util
+
+        with util.surpress_stderr():
+            pya = pyaudio.PyAudio()
+    return pya
+
+
 CHANNELS = 1  # send mono to Gemini
 SEND_SAMPLE_RATE = 16000  # recorder publishes 16 kHz mono
 RECEIVE_SAMPLE_RATE = 24000  # model replies at 24 kHz
@@ -1144,7 +1156,7 @@ class GeminiAudioLoop:
     async def play_audio(self):
         """PyAudio playback consumer for PCM @24k mono + synchronized Gemini text."""
         self.playback_stream = await asyncio.to_thread(
-            pya.open,
+            _get_pya().open,
             format=FORMAT,
             channels=CHANNELS,
             rate=RECEIVE_SAMPLE_RATE,
