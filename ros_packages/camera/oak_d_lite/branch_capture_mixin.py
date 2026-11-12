@@ -349,8 +349,12 @@ class BranchCaptureMixin:
             self.timer_period = max(stereo.MIN_TIMER_PERIOD_SECONDS, float(refresh))
 
     def _start_mjpeg_server(self):
-        """Start the embedded HTTP MJPEG server unless disabled (port <= 0)."""
-        if not getattr(self, "camera_available", False):
+        """Start the embedded HTTP MJPEG server unless disabled (port <= 0).
+
+        Always starts even when ``camera_available`` is False so ``/api/camera/status``
+        answers with structured diagnostics instead of Nginx 502 Bad Gateway.
+        """
+        if getattr(self, "mjpeg_server", None) is not None:
             return
         raw_port = stereo.os.environ.get(
             "PIB_CAMERA_STREAM_PORT", str(stereo.DEFAULT_STREAM_PORT)

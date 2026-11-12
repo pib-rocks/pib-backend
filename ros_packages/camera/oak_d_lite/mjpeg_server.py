@@ -12,16 +12,43 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import threading
 import time
+from pathlib import Path
 from typing import Optional, Tuple
 from urllib.parse import urlparse
 
 DEFAULT_STREAM_HOST = "0.0.0.0"
 DEFAULT_STREAM_PORT = 8081
 STREAM_BOUNDARY = "frame"
+USB_SYSFS_DEVICES_DIR = Path("/sys/bus/usb/devices")
+OAK_USB_VENDOR_ID = "03e7"
+
+
+def oak_usb_device_present(sysfs_dir: Path = USB_SYSFS_DEVICES_DIR) -> bool:
+    """Return True if an Intel Movidius / Luxonis OAK device (03e7:*) is on the USB bus.
+
+    When ``sysfs_dir`` does not exist (e.g. non-Linux test hosts), returns True so
+    existing mocked pipeline tests continue to run normally.
+    """
+    if not sysfs_dir.is_dir():
+        return True
+    try:
+        for entry in sysfs_dir.iterdir():
+            vendor_file = entry / "idVendor"
+            if vendor_file.is_file():
+                vendor = (
+                    vendor_file.read_text(encoding="utf-8", errors="ignore")
+                    .strip()
+                    .lower()
+                )
+                if vendor == OAK_USB_VENDOR_ID:
+                    return True
+    except OSError:
+        return True
+    return False
 
 
 class MjpegFrameBuffer:
-    """Thread-safe holder for the latest hardware-encoded JPEG frame."""
+    """Thread-safe holder for the latest hardware-encoded JPEG frame and diagnostic status."""
 
     def __init__(self) -> None:
         self._condition = threading.Condition()
@@ -30,6 +57,9 @@ class MjpegFrameBuffer:
         self._timestamp: float = 0.0
         self._available: bool = True
         self._closed: bool = False
+        self._state: str = "starting"
+        self._last_error: str = ""
+        self._usb_device_present: bool = True
 
     @property
     def sequence(self) -> int:
@@ -49,7 +79,36 @@ class MjpegFrameBuffer:
             self._sequence += 1
             self._timestamp = time.monotonic()
             self._available = True
+            self._state = "streaming"
+            self._last_error = ""
+            self._usb_device_present = True
             self._condition.notify_all()
+
+    def set_diagnostics(
+        self,
+        *,
+        state: str,
+        last_error: str = "",
+        usb_device_present: Optional[bool] = None,
+    ) -> None:
+        with self._condition:
+            self._state = str(state)
+            self._last_error = str(last_error)
+            if usb_device_present is not None:
+                self._usb_device_present = bool(usb_device_present)
+            self._condition.notify_all()
+
+    def status_snapshot(self) -> dict:
+        with self._condition:
+            jpeg = self._jpeg_bytes
+            return {
+                "available": bool(jpeg),
+                "sequence": self._sequence,
+                "frameBytes": len(jpeg),
+                "state": self._state,
+                "usbDevicePresent": self._usb_device_present,
+                "lastError": self._last_error,
+            }
 
     def set_available(self, available: bool) -> None:
         with self._condition:
@@ -109,15 +168,9 @@ class _MjpegRequestHandler(BaseHTTPRequestHandler):
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
 
     def _handle_status(self) -> None:
-        buf = self.frame_buffer
-        jpeg = buf.latest_jpeg
         self._send_json(
             HTTPStatus.OK,
-            {
-                "available": bool(jpeg),
-                "sequence": buf.sequence,
-                "frameBytes": len(jpeg),
-            },
+            self.frame_buffer.status_snapshot(),
         )
 
     def _handle_snapshot(self) -> None:
