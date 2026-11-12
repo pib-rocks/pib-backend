@@ -439,3 +439,41 @@ def test_ensure_respeaker_profile_3_switches_card_when_surround_51_missing(monke
         cmd == ["pactl", "set-card-profile", RESPEAKER_CARD_NAME, RESPEAKER_PROFILE_3]
         for cmd, _ in calls
     )
+
+
+def test_talk_live_loop_subscribes_high_rate_topics_only_while_active(monkeypatch):
+    """PR-2310: TalkLiveLoop does not subscribe to /audio_stream, /voice_activity, or /speech_detected until start()."""
+    from ros_stubs import install_ros_stubs
+
+    install_ros_stubs()
+    _pyaudio = types.ModuleType("pyaudio")
+    _pyaudio.PyAudio = MagicMock()
+    _pyaudio.paInt16 = 8
+    monkeypatch.setitem(sys.modules, "pyaudio", _pyaudio)
+    _google = types.ModuleType("google")
+    _genai = types.ModuleType("google.genai")
+    _genai.Client = MagicMock()
+    _google.genai = _genai
+    monkeypatch.setitem(sys.modules, "google", _google)
+    monkeypatch.setitem(sys.modules, "google.genai", _genai)
+
+    from voice_assistant.talk_live_loop import TalkLiveLoop
+
+    node = MagicMock()
+    loop = TalkLiveLoop(node)
+    assert loop._audio_sub is None
+    assert loop._vad_sub is None
+    assert loop._speech_sub is None
+    node.create_subscription.assert_not_called()
+
+    loop._ensure_live_subscriptions()
+    assert loop._audio_sub is not None
+    assert loop._vad_sub is not None
+    assert loop._speech_sub is not None
+    assert node.create_subscription.call_count == 3
+
+    loop._teardown_live_subscriptions()
+    assert loop._audio_sub is None
+    assert loop._vad_sub is None
+    assert loop._speech_sub is None
+    assert node.destroy_subscription.call_count == 3
