@@ -75,7 +75,12 @@ def _get_cpu_usage_percent(sample_interval: float = 0.1) -> float:
         return 0.0
 
 
+_DOCKER_CONTAINERS_CACHE_TTL_SEC = 1.5
+_DOCKER_CONTAINERS_CACHE: Tuple[float, List[Dict[str, Any]]] = (0.0, [])
+
+
 def _query_docker_containers() -> List[Dict[str, Any]]:
+    global _DOCKER_CONTAINERS_CACHE
     docker_sock = "/var/run/docker.sock"
     if not os.path.exists(docker_sock):
         return [
@@ -86,6 +91,11 @@ def _query_docker_containers() -> List[Dict[str, Any]]:
             {"name": "pib-display", "status": "running", "health": "healthy"},
             {"name": "pib-motors", "status": "running", "health": "healthy"},
         ]
+
+    now = time.monotonic()
+    cached_at, cached_items = _DOCKER_CONTAINERS_CACHE
+    if cached_items and (now - cached_at) < _DOCKER_CONTAINERS_CACHE_TTL_SEC:
+        return [dict(item) for item in cached_items]
 
     try:
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -164,7 +174,7 @@ def _query_docker_containers() -> List[Dict[str, Any]]:
                     "health": health,
                 }
             )
-        return (
+        resolved = (
             result
             if result
             else [
@@ -176,6 +186,8 @@ def _query_docker_containers() -> List[Dict[str, Any]]:
                 {"name": "pib-motors", "status": "running", "health": "healthy"},
             ]
         )
+        _DOCKER_CONTAINERS_CACHE = (now, [dict(item) for item in resolved])
+        return resolved
     except Exception:
         return [
             {"name": "pib-backend", "status": "running", "health": "healthy"},

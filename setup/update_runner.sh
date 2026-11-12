@@ -1262,7 +1262,7 @@ kib_to_mib() {
 
 compute_required_free_kib() {
     local override="${PIB_UPDATE_REQUIRED_FREE_KIB:-}"
-    local base image_floor
+    local base enabled
     case "$override" in
         '' | *[!0-9]*)
             ;;
@@ -1271,6 +1271,11 @@ compute_required_free_kib() {
             return 0
             ;;
     esac
+    enabled="$(python3 "$BACKEND_IMAGES_HELPER" registry-enabled 2>/dev/null || printf false)"
+    if [ "$enabled" = "true" ]; then
+        echo "$MIN_FREE_KIB"
+        return 0
+    fi
     base="$MIN_FREE_KIB"
     if [ "$IMAGE_SET_KIB" -gt "$base" ]; then
         base="$IMAGE_SET_KIB"
@@ -1394,6 +1399,10 @@ trap on_runner_exit EXIT
 load_predecessor_status
 enforce_retry_policy
 acquire_runner_lock
+if [ "$PREDECESSOR_INTERRUPTED" != "true" ] && [ -s "$LOG_FILE" ]; then
+    cp -f "$LOG_FILE" "$UPDATE_DIR/update.prev.log" 2>/dev/null || true
+    : > "$LOG_FILE"
+fi
 write_status "preflight" "Validating repositories, disk, watchdog ownership, and database backup (attempt ${ATTEMPT} of ${MAX_ATTEMPTS})"
 check_cancel
 check_update_dir

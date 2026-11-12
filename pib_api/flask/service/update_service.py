@@ -326,10 +326,12 @@ def _check_result(
 
 
 DEFAULT_REQUIRED_FREE_KIB = 16_777_216
+DEFAULT_REGISTRY_REQUIRED_FREE_KIB = 8_388_608
+MAX_LOG_READ_BYTES = 256 * 1024
 
 
 def compute_required_free_kib(marker: Mapping[str, Any] | None = None) -> int:
-    """Return required free disk space in KiB (default 16 GiB = 16777216 KiB)."""
+    """Return required free disk space in KiB (default 8 GiB when registry pulls are enabled, 16 GiB for local builds)."""
     raw = os.environ.get("PIB_UPDATE_REQUIRED_FREE_KIB")
     if raw is not None:
         try:
@@ -342,7 +344,10 @@ def compute_required_free_kib(marker: Mapping[str, Any] | None = None) -> int:
         marker_val = marker.get("requiredFreeKiB")
         if isinstance(marker_val, int) and marker_val >= 0:
             return marker_val
-    return DEFAULT_REQUIRED_FREE_KIB
+    registry_raw = os.environ.get("PIB_USE_REGISTRY_IMAGES", "1").strip().lower()
+    if registry_raw in {"0", "false", "no", "off"}:
+        return DEFAULT_REQUIRED_FREE_KIB
+    return DEFAULT_REGISTRY_REQUIRED_FREE_KIB
 
 
 def _evaluate_disk_space(
@@ -830,7 +835,12 @@ def request_cancel(directory: Path | None = None) -> dict[str, Any]:
     return status
 
 
-def read_log(offset: int, directory: Path | None = None) -> dict[str, Any]:
+def read_log(
+    offset: int,
+    directory: Path | None = None,
+    *,
+    max_bytes: int = MAX_LOG_READ_BYTES,
+) -> dict[str, Any]:
     if type(offset) is not int or offset < 0:
         raise UpdateValidationError("offset must be a non-negative integer")
     directory = directory or update_directory()
@@ -841,10 +851,13 @@ def read_log(offset: int, directory: Path | None = None) -> dict[str, Any]:
     log_path = directory / "update.log"
     try:
         size = log_path.stat().st_size
-        actual_offset = min(offset, size)
+        if offset == 0 and size > max_bytes > 0:
+            actual_offset = size - max_bytes
+        else:
+            actual_offset = min(offset, size)
         with log_path.open("rb") as log_file:
             log_file.seek(actual_offset)
-            content = log_file.read()
+            content = log_file.read(max_bytes) if max_bytes > 0 else log_file.read()
     except FileNotFoundError:
         size = 0
         actual_offset = 0
