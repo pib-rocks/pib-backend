@@ -306,3 +306,38 @@ def test_oak_usb_device_present_reads_sysfs_vendor_id(tmp_path):
     (sysfs / "3-1").mkdir(parents=True)
     (sysfs / "3-1" / "idVendor").write_text("03e7\n", encoding="utf-8")
     assert oak_usb_device_present(sysfs) is True
+
+
+def test_publish_face_center_throttles_and_uses_reduced_grayscale_jpeg_decode(
+    monkeypatch,
+):
+    """PR-2309: publish_face_center(None) decodes JPEG via IMREAD_REDUCED_GRAYSCALE_4 and throttles to PIB_FACE_CENTER_HZ."""
+    import cv2
+
+    node = _bare_node()
+    node.preview_width = 1280
+    node.preview_height = 720
+    node.face_center_publisher_.get_subscription_count.return_value = 1
+    node.face_cascade = MagicMock()
+    node.face_cascade.empty.return_value = False
+    node.face_cascade.detectMultiScale.return_value = [(80, 45, 40, 40)]
+
+    img = np.zeros((720, 1280, 3), dtype=np.uint8)
+    ok, encoded = cv2.imencode(".jpg", img)
+    assert ok
+    node.current_jpeg_bytes = bytes(encoded)
+    node.current_frame = None
+
+    monkeypatch.setenv("PIB_FACE_CENTER_HZ", "2.0")
+
+    node.publish_face_center(None)
+    assert node.face_cascade.detectMultiScale.call_count == 1
+    # Full BGR current_frame must NOT be populated by face_center
+    assert node.current_frame is None
+    gray_arg = node.face_cascade.detectMultiScale.call_args[0][0]
+    assert gray_arg.shape == (180, 320)
+    assert node.face_center_publisher_.publish.call_count == 1
+
+    # Immediate second call within 0.5s window is throttled
+    node.publish_face_center(None)
+    assert node.face_cascade.detectMultiScale.call_count == 1
