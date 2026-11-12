@@ -392,3 +392,26 @@ def test_rolling_back_is_reported_as_running() -> None:
     assert classify_state({"state": "rolling_back"}) == "running"
     assert classify_state({"state": "rolled_back"}) == "rolled_back"
     assert classify_state({"state": "done"}) == "succeeded"
+
+
+def test_read_log_caps_large_file_to_tail_on_initial_offset(tmp_path) -> None:
+    log_path = tmp_path / "update.log"
+    payload = b"A" * 100 + b"B" * 64
+    log_path.write_bytes(payload)
+
+    chunk = update_service.read_log(0, tmp_path, max_bytes=64)
+    assert chunk["offset"] == 100
+    assert chunk["nextOffset"] == 164
+    assert chunk["content"] == "B" * 64
+    assert chunk["eof"] is True
+
+
+def test_compute_required_free_kib_uses_8gib_for_registry_and_16gib_for_local_build(
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("PIB_UPDATE_REQUIRED_FREE_KIB", raising=False)
+    monkeypatch.setenv("PIB_USE_REGISTRY_IMAGES", "1")
+    assert update_service.compute_required_free_kib() == 8_388_608
+
+    monkeypatch.setenv("PIB_USE_REGISTRY_IMAGES", "0")
+    assert update_service.compute_required_free_kib() == 16_777_216
