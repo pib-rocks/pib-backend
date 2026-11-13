@@ -358,6 +358,21 @@ def _audio_message(pcm_16k: bytes) -> dict[str, Any]:
     }
 
 
+def _image_message(image_bytes: bytes, mime_type: str = "image/jpeg") -> dict[str, Any]:
+    """One ``realtimeInput.mediaChunks`` image frame for Gemini Live vision."""
+
+    return {
+        "realtimeInput": {
+            "mediaChunks": [
+                {
+                    "mimeType": mime_type or "image/jpeg",
+                    "data": base64.b64encode(image_bytes).decode("ascii"),
+                }
+            ]
+        }
+    }
+
+
 def _mapping(value: Any) -> dict:
     return value if isinstance(value, dict) else {}
 
@@ -897,6 +912,9 @@ class GeminiRealtimeSession:
                 )
                 if pcm:  # a sub-trio remainder yields no frame yet
                     messages.append(_audio_message(pcm))
+            elif isinstance(command, rt.AppendInputImage):
+                if command.data:
+                    messages.append(_image_message(command.data, command.mime_type))
             elif isinstance(command, rt.AddInputText):
                 messages.append(
                     {
