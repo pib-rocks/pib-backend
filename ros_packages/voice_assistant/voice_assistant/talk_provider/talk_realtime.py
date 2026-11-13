@@ -382,6 +382,12 @@ class AppendInputAudio(RealtimeCommand):
 
 
 @dataclass(frozen=True, slots=True)
+class AppendInputImage(RealtimeCommand):
+    data: bytes
+    mime_type: str = "image/jpeg"
+
+
+@dataclass(frozen=True, slots=True)
 class AddInputText(RealtimeCommand):
     item_id: str
     text: str
@@ -544,6 +550,7 @@ __all__ = [
     "AddContext",
     "AddInputText",
     "AppendInputAudio",
+    "AppendInputImage",
     "AppendLiveContext",
     "CancelResponse",
     "ContextRole",
