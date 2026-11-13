@@ -1,4 +1,14 @@
+# Apply one motor-settings document.
+#
+# `apply_fields` names the fields the caller wants to change; every other field keeps
+# the value the motor has right now. An empty list keeps the historical behaviour: the
+# document is applied as-is, which is what a caller sending a complete document expects.
+#
+# This exists because MotorSettings cannot express "not provided": an omitted numeric
+# field arrives as 0 and an omitted boolean as false, so a partial document used to zero
+# the pulse widths and rotation ranges and disable the motor (PR-2319).
 MotorSettings motor_settings
+string[] apply_fields
 ---
 bool settings_applied
 bool settings_persisted
