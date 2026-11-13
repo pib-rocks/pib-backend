@@ -43,6 +43,11 @@ from pib_motors.bus_writer import (
     shutdown_all_bus_writers,
 )
 from pib_motors.units import centideg_to_rad, rad_to_centideg
+from motors.motor_settings_merge import (
+    copy_dto_into_motor_settings,
+    merge_partial_settings,
+    unknown_apply_fields,
+)
 from pib_motors.joint_state_sweep import (
     fill_joint_state,
     sweep_feetech_joint_positions,
@@ -310,6 +315,17 @@ class MotorControl(Node):
 
         try:
             motors = name_to_motors[request.motor_settings.motor_name]
+            apply_fields = [field for field in request.apply_fields if field]
+            unknown = unknown_apply_fields(apply_fields)
+            if unknown:
+                self.get_logger().error(
+                    "apply_motor_settings: unknown field(s) "
+                    f"{unknown} for motor '{request.motor_settings.motor_name}' - "
+                    "refusing the request instead of applying nothing silently."
+                )
+                response.settings_applied = False
+                response.settings_persisted = False
+                return response
             if (
                 motor_settings_ros.pulse_width_min == -1
                 and motor_settings_ros.pulse_width_max == -1
@@ -340,17 +356,29 @@ class MotorControl(Node):
                 return response
 
             for motor in motors:
-                motor_settings_dto["name"] = motor.name
+                if apply_fields:
+                    motor_settings_dto_for_motor = merge_partial_settings(
+                        motor.get_settings(), motor_settings_dto, apply_fields
+                    )
+                else:
+                    motor_settings_dto_for_motor = dict(motor_settings_dto)
+                motor_settings_dto_for_motor["name"] = motor.name
                 motor_settings_ros.motor_name = motor.name
-                applied = motor.apply_settings(motor_settings_dto)
+                applied = motor.apply_settings(motor_settings_dto_for_motor)
                 response.settings_applied &= applied
                 if applied or self.dev:
                     persisted, _ = motor_client.update_motor_settings(
-                        motor.name, motor_settings_dto
+                        motor.name, motor_settings_dto_for_motor
                     )
                     response.settings_persisted &= persisted
+                    copy_dto_into_motor_settings(
+                        motor_settings_dto_for_motor, motor_settings_ros
+                    )
                     self.motor_settings_publisher.publish(motor_settings_ros)
-                self.get_logger().info(f"updated motor: {str(motor)}")
+                self.get_logger().info(
+                    f"updated motor: {str(motor)}"
+                    + (f" (apply_fields={apply_fields})" if apply_fields else "")
+                )
 
         except Exception as e:
             response.settings_applied = False
