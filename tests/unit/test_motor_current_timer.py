@@ -452,3 +452,70 @@ def test_diagnostics_batch_runs_on_the_slow_tick_only():
     # One read for the row extras and one for the diagnostics batch, both only on the
     # slow tick - the same two reads per second the 1 Hz build made.
     assert voltage_reads == 2
+
+
+def test_bus_timeout_of_one_motor_does_not_stop_the_tick():
+    """A Tinkerforge TIMEOUT used to escape the timer callback and kill the node."""
+
+    class BusTimeout(Exception):
+        pass
+
+    failing = types.SimpleNamespace(
+        name="elbow_left",
+        actuators=[],
+        get_current=MagicMock(side_effect=BusTimeout("Did not receive response")),
+    )
+    healthy = types.SimpleNamespace(
+        name="tilt_forward_motor",
+        actuators=[],
+        get_current=MagicMock(return_value=42),
+    )
+    module = _load_motor_current([failing, healthy])
+    node = module.MotorCurrent()
+
+    node.publish_motor_current()  # must not raise
+
+    node.motor_current_publisher.publish.assert_called_once()
+    message = node.motor_current_publisher.publish.call_args.args[0]
+    assert message.name == "tilt_forward_motor"
+    assert node._read_failures == 1
+    assert node._read_failure_counts == {"elbow_left": 1}
+    node.get_logger().warn.assert_called_once()
+
+
+def test_bus_timeout_of_a_serial_actuator_skips_only_that_actuator():
+    class BusTimeout(Exception):
+        pass
+
+    failing_actuator = types.SimpleNamespace(
+        is_connected=lambda: True,
+        bricklet=None,
+        pin=1,
+        uid="AAA",
+        get_current=MagicMock(side_effect=BusTimeout("no answer")),
+        get_voltage=MagicMock(side_effect=BusTimeout("no answer")),
+    )
+    healthy_actuator = types.SimpleNamespace(
+        is_connected=lambda: True,
+        bricklet=None,
+        pin=2,
+        uid="BBB",
+        get_current=MagicMock(return_value=120),
+        get_voltage=MagicMock(return_value=11.9),
+    )
+    motor = types.SimpleNamespace(
+        name="shoulder_vertical_left",
+        actuators=[failing_actuator, healthy_actuator],
+        get_current=MagicMock(return_value=90),
+    )
+    module = _load_motor_current([motor])
+    node = module.MotorCurrent()
+
+    node.publish_motor_current()
+    node.publish_motor_current()  # the slow tick carries the diagnostics batch
+
+    node.motor_current_publisher.publish.assert_called()
+    assert node._read_failure_counts.get("shoulder_vertical_left", 0) >= 1
+    # the healthy actuator was still read on the slow tick
+    assert healthy_actuator.get_current.call_count >= 1
+    assert healthy_actuator.get_voltage.call_count >= 1
