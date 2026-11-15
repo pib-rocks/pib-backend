@@ -150,14 +150,14 @@ def _load_motor_current(motors, relay_state=None, probe=None):
     return module
 
 
-def test_motor_current_creates_one_second_publish_timer():
+def test_motor_current_creates_half_second_publish_timer():
     module = _load_motor_current([])
 
     node = module.MotorCurrent()
 
     assert len(node.created_timers) == 1
     assert node.timer is node.created_timers[0]
-    assert node.timer.period == 1.0
+    assert node.timer.period == 0.5
     assert node.timer.callback == node.publish_motor_current
 
 
@@ -206,9 +206,11 @@ def test_publish_motor_current_publishes_diagnostic_status():
 
 
 def test_publish_motor_current_includes_actual_position_and_temperature_for_serial_actuator():
+    voltage = MagicMock(return_value=11.8)
     serial_actuator = types.SimpleNamespace(
         is_connected=lambda: True,
         get_temperature=lambda: 34,
+        get_voltage=voltage,
     )
     motor = types.SimpleNamespace(
         name="turn_head_motor",
@@ -220,14 +222,24 @@ def test_publish_motor_current_includes_actual_position_and_temperature_for_seri
     node = module.MotorCurrent()
 
     node.publish_motor_current()
+    node.publish_motor_current()
 
-    node.motor_current_publisher.publish.assert_called_once()
-    message = node.motor_current_publisher.publish.call_args.args[0]
-    kv = {entry.key: entry.value for entry in message.values}
-    assert kv == {
+    assert motor.get_current_position.call_count == 1
+    assert voltage.call_count == 1
+    assert node.motor_current_publisher.publish.call_count == 2
+    first_message = node.motor_current_publisher.publish.call_args_list[0].args[0]
+    first_kv = {entry.key: entry.value for entry in first_message.values}
+    assert first_kv == {
+        "turn_head_motor": "120",
+        "temperature": "34 °C",
+    }
+    second_message = node.motor_current_publisher.publish.call_args_list[1].args[0]
+    second_kv = {entry.key: entry.value for entry in second_message.values}
+    assert second_kv == {
         "turn_head_motor": "120",
         "actual_position": "-2.1 °",
         "temperature": "34 °C",
+        "voltage": "11.8 V",
     }
 
 
@@ -328,3 +340,72 @@ def test_current_polling_probes_each_port_once():
         0,
     ], f"eine Probe pro Port erwartet, war {[a.connected_calls for a in actuators]}"
     real_probe.forget_dead_ports()
+
+
+def test_fast_tick_reads_current_and_temperature_not_position_or_voltage():
+    temp_reads = 0
+    voltage_reads = 0
+
+    def read_temperature():
+        nonlocal temp_reads
+        temp_reads += 1
+        return 50
+
+    def read_voltage():
+        nonlocal voltage_reads
+        voltage_reads += 1
+        return 12.0
+
+    serial_actuator = types.SimpleNamespace(
+        get_temperature=read_temperature,
+        get_voltage=read_voltage,
+    )
+    motor = types.SimpleNamespace(
+        name="shoulder_vertical_right",
+        actuators=[serial_actuator],
+        get_current=MagicMock(return_value=280),
+        get_current_position=MagicMock(return_value=0),
+    )
+    module = _load_motor_current([motor])
+    node = module.MotorCurrent()
+
+    node.publish_motor_current()
+
+    motor.get_current.assert_called_once()
+    assert temp_reads == 1
+    assert motor.get_current_position.call_count == 0
+    assert voltage_reads == 0
+    message = node.motor_current_publisher.publish.call_args.args[0]
+    keys = {entry.key for entry in message.values}
+    assert keys == {"shoulder_vertical_right", "temperature"}
+
+
+def test_slow_tick_repeats_cached_position_and_voltage_on_following_fast_tick():
+    serial_actuator = types.SimpleNamespace(
+        get_temperature=lambda: 66,
+        get_voltage=MagicMock(return_value=12.1),
+    )
+    position = MagicMock(side_effect=[100, 200])
+    motor = types.SimpleNamespace(
+        name="shoulder_vertical_right",
+        actuators=[serial_actuator],
+        get_current=MagicMock(return_value=300),
+        get_current_position=position,
+    )
+    module = _load_motor_current([motor])
+    node = module.MotorCurrent()
+
+    node.publish_motor_current()
+    node.publish_motor_current()
+    node.publish_motor_current()
+
+    assert position.call_count == 1
+    assert serial_actuator.get_voltage.call_count == 1
+    third_message = node.motor_current_publisher.publish.call_args_list[2].args[0]
+    third_kv = {entry.key: entry.value for entry in third_message.values}
+    assert third_kv == {
+        "shoulder_vertical_right": "300",
+        "temperature": "66 °C",
+        "actual_position": "1.0 °",
+        "voltage": "12.1 V",
+    }
