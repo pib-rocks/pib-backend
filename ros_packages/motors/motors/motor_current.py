@@ -148,7 +148,7 @@ class MotorCurrent(Node):
         for motor in motors:
             try:
                 current = motor.get_current()
-            except Exception as error:  # noqa: BLE001 - one bus timeout, not a dead node
+            except Exception as error:  # noqa: BLE001 - a bus timeout
                 self._note_read_failure(motor.name, error)
                 continue
             if current != Motor.NO_CURRENT:
@@ -175,7 +175,7 @@ class MotorCurrent(Node):
                     continue
                 try:
                     act_current = actuator.get_current()
-                except Exception as error:  # noqa: BLE001 - skip this actuator only
+                except Exception as error:  # noqa: BLE001 - skip actuator
                     self._note_read_failure(motor.name, error)
                     continue
                 no_current = getattr(actuator, "NO_CURRENT", Motor.NO_CURRENT)
@@ -183,7 +183,7 @@ class MotorCurrent(Node):
                     continue
                 try:
                     voltage = get_voltage()
-                except Exception as error:  # noqa: BLE001 - skip this actuator only
+                except Exception as error:  # noqa: BLE001 - skip actuator
                     self._note_read_failure(motor.name, error)
                     continue
                 telemetry_batch.append(
