@@ -332,6 +332,10 @@ def test_current_polling_probes_each_port_once():
     )
     node = module.MotorCurrent()
 
+    # The diagnostics batch runs on the slow tick (every second call), so the probe
+    # happens there - the fast tick must not probe at all.
+    node.publish_motor_current()
+    assert [a.connected_calls for a in actuators] == [0, 0, 0]
     node.publish_motor_current()
 
     assert [a.connected_calls for a in actuators] == [
@@ -409,3 +413,42 @@ def test_slow_tick_repeats_cached_position_and_voltage_on_following_fast_tick():
         "actual_position": "1.0 °",
         "voltage": "12.1 V",
     }
+
+
+def test_diagnostics_batch_runs_on_the_slow_tick_only():
+    """The hardware-page batch reads voltage per actuator, so it keeps its 1 Hz cadence."""
+    voltage_reads = 0
+
+    def read_voltage():
+        nonlocal voltage_reads
+        voltage_reads += 1
+        return 12.2
+
+    serial_actuator = types.SimpleNamespace(
+        uid="5B79018060",
+        pin=3,
+        bricklet=None,
+        get_temperature=lambda: 40,
+        get_voltage=read_voltage,
+        get_current=MagicMock(return_value=120),
+        NO_CURRENT=-1,
+    )
+    motor = types.SimpleNamespace(
+        name="elbow_left",
+        actuators=[serial_actuator],
+        get_current=MagicMock(return_value=120),
+        get_current_position=MagicMock(return_value=0),
+    )
+    module = _load_motor_current([motor])
+    module.motor_client = MagicMock()
+    node = module.MotorCurrent()
+
+    node.publish_motor_current()
+    module.motor_client.report_diagnostics_telemetry.assert_not_called()
+    assert voltage_reads == 0
+
+    node.publish_motor_current()
+    assert module.motor_client.report_diagnostics_telemetry.call_count == 1
+    # One read for the row extras and one for the diagnostics batch, both only on the
+    # slow tick - the same two reads per second the 1 Hz build made.
+    assert voltage_reads == 2

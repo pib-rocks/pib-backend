@@ -131,6 +131,11 @@ class MotorCurrent(Node):
                 extra = self._actuator_feedback(motor, read_slow=read_slow)
                 self.publish_diagnostic_status(motor.name, current, extra)
             for actuator in getattr(motor, "actuators", None) or []:
+                if not read_slow:
+                    # The diagnostics batch reads voltage per actuator, which is a bus
+                    # transaction of its own on the serial buses. It feeds the hardware page
+                    # at its historical 1 Hz, so it runs on the slow tick only.
+                    continue
                 if getattr(actuator, "bricklet", None) is not None:
                     continue
                 # One probe per port per tick: the adapters are the bus, and a
