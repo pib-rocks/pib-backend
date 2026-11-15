@@ -30,6 +30,9 @@ class MotorCurrent(Node):
         #: Motor power state: None until a source told us, then True/False.
         self._relay_on: bool | None = None
         self._skips_since_log = 0
+        #: Read failures per motor; a bus timeout must not end the node.
+        self._read_failures = 0
+        self._read_failure_counts: dict[str, int] = {}
         self.create_subscription(
             SolidStateRelayState,
             "solid_state_relay_state",
@@ -54,6 +57,23 @@ class MotorCurrent(Node):
     def _motor_power_is_off(self) -> bool:
         """True only when the relay definitely reports off (unknown counts as on)."""
         return self._relay_on is False
+
+    def _note_read_failure(self, motor_name: str, error: Exception) -> None:
+        """Skip one motor for this tick instead of letting the node die.
+
+        The serial buses answer asynchronously and occasionally miss the response
+        window; raising out of the timer callback ended the whole node (observed:
+        motor_current died after a single Tinkerforge TIMEOUT and stopped
+        publishing for the rest of the session).
+        """
+        self._read_failures += 1
+        count = self._read_failure_counts.get(motor_name, 0) + 1
+        self._read_failure_counts[motor_name] = count
+        if count == 1 or count % 60 == 0:
+            self.get_logger().warn(
+                f"Could not read motor {motor_name} "
+                f"({count} failures of this motor so far): {error}"
+            )
 
         self.get_logger().info("Now Running MOTOR CURRENT")
 
@@ -126,7 +146,11 @@ class MotorCurrent(Node):
         telemetry_batch: list[dict] = []
         probed_ports: dict[str, bool] = {}
         for motor in motors:
-            current = motor.get_current()
+            try:
+                current = motor.get_current()
+            except Exception as error:  # noqa: BLE001 - one bus timeout, not a dead node
+                self._note_read_failure(motor.name, error)
+                continue
             if current != Motor.NO_CURRENT:
                 extra = self._actuator_feedback(motor, read_slow=read_slow)
                 self.publish_diagnostic_status(motor.name, current, extra)
@@ -149,11 +173,19 @@ class MotorCurrent(Node):
                 get_voltage = getattr(actuator, "get_voltage", None)
                 if not uid or not callable(get_voltage):
                     continue
-                act_current = actuator.get_current()
+                try:
+                    act_current = actuator.get_current()
+                except Exception as error:  # noqa: BLE001 - skip this actuator only
+                    self._note_read_failure(motor.name, error)
+                    continue
                 no_current = getattr(actuator, "NO_CURRENT", Motor.NO_CURRENT)
                 if act_current == no_current:
                     continue
-                voltage = get_voltage()
+                try:
+                    voltage = get_voltage()
+                except Exception as error:  # noqa: BLE001 - skip this actuator only
+                    self._note_read_failure(motor.name, error)
+                    continue
                 telemetry_batch.append(
                     {
                         "uid": str(uid),
