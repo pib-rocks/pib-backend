@@ -23,7 +23,9 @@ class MotorCurrent(Node):
 
         self.pin_to_motors = {}
         self.setup_callbacks()
-        self.timer = self.create_timer(1.0, self.publish_motor_current)
+        self.timer = self.create_timer(0.5, self.publish_motor_current)
+        self._poll_tick = 0
+        self._slow_feedback_cache: dict[str, dict[str, str]] = {}
 
         #: Motor power state: None until a source told us, then True/False.
         self._relay_on: bool | None = None
@@ -119,14 +121,21 @@ class MotorCurrent(Node):
                 )
             return
         self._skips_since_log = 0
+        self._poll_tick += 1
+        read_slow = self._poll_tick % 2 == 0
         telemetry_batch: list[dict] = []
         probed_ports: dict[str, bool] = {}
         for motor in motors:
             current = motor.get_current()
             if current != Motor.NO_CURRENT:
-                extra = self._actuator_feedback(motor)
+                extra = self._actuator_feedback(motor, read_slow=read_slow)
                 self.publish_diagnostic_status(motor.name, current, extra)
             for actuator in getattr(motor, "actuators", None) or []:
+                if not read_slow:
+                    # The diagnostics batch reads voltage per actuator, which is a bus
+                    # transaction of its own on the serial buses. It feeds the hardware page
+                    # at its historical 1 Hz, so it runs on the slow tick only.
+                    continue
                 if getattr(actuator, "bricklet", None) is not None:
                     continue
                 # One probe per port per tick: the adapters are the bus, and a
@@ -159,7 +168,7 @@ class MotorCurrent(Node):
             except Exception:
                 pass
 
-    def _actuator_feedback(self, motor) -> dict[str, str]:
+    def _actuator_feedback(self, motor, *, read_slow: bool) -> dict[str, str]:
         actuators = getattr(motor, "actuators", None) or []
         if not actuators:
             return {}
@@ -169,24 +178,29 @@ class MotorCurrent(Node):
             return {}
         extra: dict[str, str] = {}
         try:
-            pos = motor.get_current_position()
-            extra["actual_position"] = f"{pos / 100.0:.1f} °"
-        except Exception:
-            pass
-        try:
             temp = get_temp()
             if temp is not None:
                 extra["temperature"] = f"{temp} °C"
         except Exception:
             pass
-        get_voltage = getattr(actuator, "get_voltage", None)
-        if callable(get_voltage):
+        if read_slow:
+            slow: dict[str, str] = {}
             try:
-                voltage = get_voltage()
-                if voltage is not None:
-                    extra["voltage"] = f"{voltage:.1f} V"
+                pos = motor.get_current_position()
+                slow["actual_position"] = f"{pos / 100.0:.1f} °"
             except Exception:
                 pass
+            get_voltage = getattr(actuator, "get_voltage", None)
+            if callable(get_voltage):
+                try:
+                    voltage = get_voltage()
+                    if voltage is not None:
+                        slow["voltage"] = f"{voltage:.1f} V"
+                except Exception:
+                    pass
+            if slow:
+                self._slow_feedback_cache[motor.name] = slow
+        extra.update(self._slow_feedback_cache.get(motor.name, {}))
         return extra
 
     def publish_diagnostic_status(
