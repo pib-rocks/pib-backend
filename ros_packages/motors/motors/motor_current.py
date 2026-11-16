@@ -23,11 +23,16 @@ class MotorCurrent(Node):
 
         self.pin_to_motors = {}
         self.setup_callbacks()
-        self.timer = self.create_timer(1.0, self.publish_motor_current)
+        self.timer = self.create_timer(0.5, self.publish_motor_current)
+        self._poll_tick = 0
+        self._slow_feedback_cache: dict[str, dict[str, str]] = {}
 
         #: Motor power state: None until a source told us, then True/False.
         self._relay_on: bool | None = None
         self._skips_since_log = 0
+        #: Read failures per motor; a bus timeout must not end the node.
+        self._read_failures = 0
+        self._read_failure_counts: dict[str, int] = {}
         self.create_subscription(
             SolidStateRelayState,
             "solid_state_relay_state",
@@ -52,6 +57,23 @@ class MotorCurrent(Node):
     def _motor_power_is_off(self) -> bool:
         """True only when the relay definitely reports off (unknown counts as on)."""
         return self._relay_on is False
+
+    def _note_read_failure(self, motor_name: str, error: Exception) -> None:
+        """Skip one motor for this tick instead of letting the node die.
+
+        The serial buses answer asynchronously and occasionally miss the response
+        window; raising out of the timer callback ended the whole node (observed:
+        motor_current died after a single Tinkerforge TIMEOUT and stopped
+        publishing for the rest of the session).
+        """
+        self._read_failures += 1
+        count = self._read_failure_counts.get(motor_name, 0) + 1
+        self._read_failure_counts[motor_name] = count
+        if count == 1 or count % 60 == 0:
+            self.get_logger().warn(
+                f"Could not read motor {motor_name} "
+                f"({count} failures of this motor so far): {error}"
+            )
 
         self.get_logger().info("Now Running MOTOR CURRENT")
 
@@ -119,14 +141,25 @@ class MotorCurrent(Node):
                 )
             return
         self._skips_since_log = 0
+        self._poll_tick += 1
+        read_slow = self._poll_tick % 2 == 0
         telemetry_batch: list[dict] = []
         probed_ports: dict[str, bool] = {}
         for motor in motors:
-            current = motor.get_current()
+            try:
+                current = motor.get_current()
+            except Exception as error:  # noqa: BLE001 - a bus timeout
+                self._note_read_failure(motor.name, error)
+                continue
             if current != Motor.NO_CURRENT:
-                extra = self._actuator_feedback(motor)
+                extra = self._actuator_feedback(motor, read_slow=read_slow)
                 self.publish_diagnostic_status(motor.name, current, extra)
             for actuator in getattr(motor, "actuators", None) or []:
+                if not read_slow:
+                    # The diagnostics batch reads voltage per actuator, which is a bus
+                    # transaction of its own on the serial buses. It feeds the hardware page
+                    # at its historical 1 Hz, so it runs on the slow tick only.
+                    continue
                 if getattr(actuator, "bricklet", None) is not None:
                     continue
                 # One probe per port per tick: the adapters are the bus, and a
@@ -140,11 +173,19 @@ class MotorCurrent(Node):
                 get_voltage = getattr(actuator, "get_voltage", None)
                 if not uid or not callable(get_voltage):
                     continue
-                act_current = actuator.get_current()
+                try:
+                    act_current = actuator.get_current()
+                except Exception as error:  # noqa: BLE001 - skip actuator
+                    self._note_read_failure(motor.name, error)
+                    continue
                 no_current = getattr(actuator, "NO_CURRENT", Motor.NO_CURRENT)
                 if act_current == no_current:
                     continue
-                voltage = get_voltage()
+                try:
+                    voltage = get_voltage()
+                except Exception as error:  # noqa: BLE001 - skip actuator
+                    self._note_read_failure(motor.name, error)
+                    continue
                 telemetry_batch.append(
                     {
                         "uid": str(uid),
@@ -159,7 +200,7 @@ class MotorCurrent(Node):
             except Exception:
                 pass
 
-    def _actuator_feedback(self, motor) -> dict[str, str]:
+    def _actuator_feedback(self, motor, *, read_slow: bool) -> dict[str, str]:
         actuators = getattr(motor, "actuators", None) or []
         if not actuators:
             return {}
@@ -169,24 +210,29 @@ class MotorCurrent(Node):
             return {}
         extra: dict[str, str] = {}
         try:
-            pos = motor.get_current_position()
-            extra["actual_position"] = f"{pos / 100.0:.1f} °"
-        except Exception:
-            pass
-        try:
             temp = get_temp()
             if temp is not None:
                 extra["temperature"] = f"{temp} °C"
         except Exception:
             pass
-        get_voltage = getattr(actuator, "get_voltage", None)
-        if callable(get_voltage):
+        if read_slow:
+            slow: dict[str, str] = {}
             try:
-                voltage = get_voltage()
-                if voltage is not None:
-                    extra["voltage"] = f"{voltage:.1f} V"
+                pos = motor.get_current_position()
+                slow["actual_position"] = f"{pos / 100.0:.1f} °"
             except Exception:
                 pass
+            get_voltage = getattr(actuator, "get_voltage", None)
+            if callable(get_voltage):
+                try:
+                    voltage = get_voltage()
+                    if voltage is not None:
+                        slow["voltage"] = f"{voltage:.1f} V"
+                except Exception:
+                    pass
+            if slow:
+                self._slow_feedback_cache[motor.name] = slow
+        extra.update(self._slow_feedback_cache.get(motor.name, {}))
         return extra
 
     def publish_diagnostic_status(

@@ -406,11 +406,14 @@ def run_direct_turn(
             started = time.monotonic()
             ok_call = True
             error_name = ""
+            run_args = dict(arguments)
+            if name == IMAGE_TOOL:
+                run_args["detail"] = True
             try:
                 if name in ANSWER_GESTURE_TOOLS:
-                    output = issue_answer_gesture(name, arguments, runner)
+                    output = issue_answer_gesture(name, run_args, runner)
                 else:
-                    output = runner(name, arguments)
+                    output = runner(name, run_args)
             except Exception as exc:
                 ok_call = False
                 error_name = type(exc).__name__
@@ -434,14 +437,16 @@ def run_direct_turn(
                 error=error_name,
             )
             _report_tool_image(on_tool_image, name, output)
-            messages.append(
-                {
-                    "role": "tool",
-                    "name": name,
-                    "tool_call_id": call.get("id") or name,
-                    "content": _tool_result_for_model(output),
-                }
-            )
+            tool_msg: dict[str, Any] = {
+                "role": "tool",
+                "name": name,
+                "tool_call_id": call.get("id") or name,
+                "content": _tool_result_for_model(output),
+            }
+            inline_image = _extract_inline_tool_image(output)
+            if inline_image is not None:
+                tool_msg["inline_image"] = inline_image
+            messages.append(tool_msg)
     logger.info("direct tool rounds exhausted, forcing a final answer")
     if complete is not None:
         result = complete(messages, None)
@@ -512,6 +517,38 @@ def _report_tool_call(
         logger.warning("tool call reporter failed name=%s", name, exc_info=True)
 
 
+def _extract_picture_mapping(output: Any) -> Optional[Mapping[str, Any]]:
+    if not isinstance(output, Mapping):
+        return None
+    if isinstance(output.get("imageBase64"), str):
+        return output
+    nested = output.get("result")
+    if isinstance(nested, Mapping) and isinstance(nested.get("imageBase64"), str):
+        return nested
+    return None
+
+
+def _extract_inline_tool_image(output: Any) -> Optional[dict[str, str]]:
+    """Extract and downscale a captured picture for multimodal model input."""
+    mapping = _extract_picture_mapping(output)
+    if mapping is None:
+        return None
+    raw_b64 = str(mapping.get("imageBase64") or "").strip()
+    if not raw_b64:
+        return None
+    mime_type = str(mapping.get("mimeType") or "image/jpeg")
+    try:
+        from voice_assistant.chat import prepare_tool_image
+
+        prepared = prepare_tool_image(raw_b64, mime_type, max_edge=768, quality=78)
+        if isinstance(prepared, dict) and prepared.get("imageBase64"):
+            raw_b64 = str(prepared["imageBase64"])
+            mime_type = str(prepared.get("mimeType") or "image/jpeg")
+    except Exception:
+        pass
+    return {"mimeType": mime_type, "data": raw_b64}
+
+
 def _report_tool_image(
     reporter: Optional[Callable[[dict], None]], name: str, output: Any
 ) -> None:
@@ -522,12 +559,15 @@ def _report_tool_image(
     - is not an image and never reaches this channel, so the chat cannot
     accidentally display a tool's other output.
     """
-    if reporter is None or not isinstance(output, Mapping):
+    if reporter is None:
         return
-    image = output.get("imageBase64")
+    mapping = _extract_picture_mapping(output)
+    if mapping is None:
+        return
+    image = mapping.get("imageBase64")
     if not isinstance(image, str) or not image.strip():
         return
-    mime_type = output.get("mimeType")
+    mime_type = mapping.get("mimeType")
     reporter(
         {
             "tool": name,
@@ -555,10 +595,17 @@ def _tool_result_for_model(output: Any) -> dict[str, Any]:
     note that it exists.
     """
     result = _json_object(output)
-    image = result.get("imageBase64")
+    mapping = _extract_picture_mapping(result)
+    if mapping is None:
+        return result
+    image = mapping.get("imageBase64")
     if not isinstance(image, str) or not image.strip():
         return result
-    compact = {key: value for key, value in result.items() if key != "imageBase64"}
+    compact = {
+        key: value
+        for key, value in mapping.items()
+        if key not in ("imageBase64", "imagePath")
+    }
     compact["imageCaptured"] = True
     compact["imageEncodedLength"] = len(image)
     return compact
@@ -610,6 +657,16 @@ def build_gemini_request(
                     }
                 }
             )
+            inline_img = message.get("inline_image")
+            if isinstance(inline_img, Mapping) and inline_img.get("data"):
+                pending_responses.append(
+                    {
+                        "inlineData": {
+                            "mimeType": str(inline_img.get("mimeType") or "image/jpeg"),
+                            "data": str(inline_img["data"]),
+                        }
+                    }
+                )
             continue
         flush_responses()
         if role == "assistant":

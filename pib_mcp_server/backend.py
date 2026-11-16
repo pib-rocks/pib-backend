@@ -848,12 +848,24 @@ class PibBackend:
         if detail:
             return {"imageBase64": image, "mimeType": "image/jpeg"}
         digest = hashlib.sha256(image.encode("utf-8")).hexdigest()
-        return {
+        payload: dict[str, Any] = {
             "imageRef": digest[:16],
             "mimeType": "image/jpeg",
             "byteLength": len(image.encode("utf-8")),
             "sha256": digest,
         }
+        try:
+            import base64 as _b64
+            from pathlib import Path
+
+            raw = _b64.b64decode(image.strip(), validate=False)
+            if raw:
+                path = Path(f"/tmp/pib_capture_{digest[:16]}.jpg")
+                path.write_bytes(raw)
+                payload["imagePath"] = str(path)
+        except Exception:
+            pass
+        return payload
 
     def _motor_result_rows(
         self,

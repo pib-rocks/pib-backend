@@ -488,6 +488,8 @@ class TalkLiveLoop:
         self._ready = asyncio.Event()
         self._pending_text: dict[bool, str] = {True: "", False: ""}
         self._message_ids: dict[bool, str] = {True: "", False: ""}
+        self._pending_live_images: deque[tuple[bytes, str]] = deque()
+        self._pending_chat_images: list[str] = []
 
         # Uplink speech/silence shaping & barge-in state
         self._preroll: deque[bytes] = deque(maxlen=PREROLL_CHUNKS)
@@ -940,7 +942,12 @@ class TalkLiveLoop:
 
         self._session_paused = True
         try:
-            outcome = execute_mcp_tool(name, parsed)
+            call_args = dict(parsed)
+            if name == "capture_image":
+                call_args["detail"] = True
+            outcome = execute_mcp_tool(name, call_args)
+            if name == "capture_image" and isinstance(outcome, dict):
+                outcome = self._prepare_live_capture_image(outcome)
             if (
                 name == "pib_remember"
                 and isinstance(outcome, dict)
@@ -960,6 +967,55 @@ class TalkLiveLoop:
             self._mute_uplink_until = time.monotonic() + PLAYBACK_TAIL_S
             self._session_paused = False
         return json.dumps(outcome, ensure_ascii=False)
+
+    def _prepare_live_capture_image(self, outcome: dict[str, Any]) -> dict[str, Any]:
+        """Extract base64 JPEG from capture_image, queue it for Gemini Live mediaChunks and chat attachment, and return compact metadata."""
+        import base64 as _b64
+
+        payload = (
+            outcome.get("result")
+            if isinstance(outcome.get("result"), dict)
+            else outcome
+        )
+        raw_b64 = payload.get("imageBase64") if isinstance(payload, dict) else None
+        mime_type = (
+            str(payload.get("mimeType") or "image/jpeg")
+            if isinstance(payload, dict)
+            else "image/jpeg"
+        )
+        if not isinstance(raw_b64, str) or not raw_b64.strip():
+            return outcome
+
+        scaled_b64 = raw_b64.strip()
+        try:
+            from voice_assistant.chat import prepare_tool_image
+
+            prepared = prepare_tool_image(
+                scaled_b64, mime_type, max_edge=768, quality=78
+            )
+            if isinstance(prepared, dict) and prepared.get("imageBase64"):
+                scaled_b64 = str(prepared["imageBase64"])
+                mime_type = str(prepared.get("mimeType") or "image/jpeg")
+        except Exception:
+            pass
+
+        try:
+            image_bytes = _b64.b64decode(scaled_b64, validate=False)
+            if image_bytes:
+                self._pending_live_images.append((image_bytes, mime_type))
+                self._pending_chat_images.append(scaled_b64)
+        except Exception:
+            pass
+
+        return {
+            "ok": True,
+            "result": {
+                "imageCaptured": True,
+                "imageDeliveredToLiveSession": True,
+                "mimeType": mime_type,
+                "note": "Das Kamerabild wurde soeben als Live-Bildframe übertragen. Beschreibe nun direkt, was du darauf siehst.",
+            },
+        }
 
     @staticmethod
     def _append_profile_memory(personality_id: str, note: str) -> None:
@@ -1062,19 +1118,58 @@ class TalkLiveLoop:
                 logger.warning("Chat service unavailable; transcript dropped")
                 return
         future = self._chat_client.call_async(request)
-        if not final:
+        pending_images = (
+            list(self._pending_chat_images)
+            if (not is_user and final and self._pending_chat_images)
+            else []
+        )
+        if not is_user and final and self._pending_chat_images:
+            self._pending_chat_images.clear()
+        if not final or pending_images:
+            chat_id = self._chat_id
 
             def _capture_id(fut):
                 try:
                     res = fut.result()
                     if res is not None and getattr(res, "successful", False):
                         mid = getattr(res, "message_id", "")
-                        if mid:
+                        if mid and not final:
                             self._message_ids[is_user] = mid
+                        if mid and pending_images:
+                            threading.Thread(
+                                target=self._attach_live_chat_images,
+                                args=(chat_id, mid, cleaned, pending_images),
+                                daemon=True,
+                            ).start()
                 except Exception:
                     pass
 
             future.add_done_callback(_capture_id)
+
+    @staticmethod
+    def _attach_live_chat_images(
+        chat_id: str, message_id: str, content: str, images_b64: list[str]
+    ) -> None:
+        try:
+            from pib_api_client import voice_assistant_client
+
+            refs = []
+            for img_b64 in images_b64:
+                ref = voice_assistant_client.add_chat_message_image(
+                    chat_id, message_id, img_b64
+                )
+                if ref:
+                    refs.append(ref)
+            if refs:
+                voice_assistant_client.update_chat_message(
+                    chat_id,
+                    content,
+                    False,
+                    message_id,
+                    meta={"source": "live", "images": refs},
+                )
+        except Exception:
+            logger.debug("Could not attach live captured image to chat", exc_info=True)
 
     def _log_turn_trace(self, *, interrupted: bool = False) -> None:
         onset = self._speech_onset_at
@@ -1422,9 +1517,16 @@ class TalkLiveLoop:
                     output = await asyncio.to_thread(
                         self._run_tool, event.name, event.arguments
                     )
-                    await session.send(
-                        [rt.SubmitToolResult(call_id=event.call_id, output=output)]
+                    commands: list[rt.RealtimeCommand] = []
+                    while self._pending_live_images:
+                        img_bytes, img_mime = self._pending_live_images.popleft()
+                        commands.append(
+                            rt.AppendInputImage(data=img_bytes, mime_type=img_mime)
+                        )
+                    commands.append(
+                        rt.SubmitToolResult(call_id=event.call_id, output=output)
                     )
+                    await session.send(commands)
 
                 elif isinstance(event, (rt.SpeechStarted, rt.OutputInterrupted)):
                     # Server confirmed interruption (serverContent.interrupted = true)

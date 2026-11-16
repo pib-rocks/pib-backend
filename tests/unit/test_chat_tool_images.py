@@ -369,6 +369,47 @@ def test_the_gemini_request_carries_no_frame_bytes(tool_loop_module):
     assert "imageCaptured" in serialised
 
 
+def test_the_gemini_request_attaches_inline_image_when_present_on_tool_message(
+    tool_loop_module,
+):
+    """PR-2314: run_direct_turn attaches inline_image so Gemini sees the captured frame as inlineData."""
+    output = {
+        "ok": True,
+        "result": {"imageBase64": "Q0FNRVJBX0pQRUc=", "mimeType": "image/jpeg"},
+    }
+    inline_image = tool_loop_module._extract_inline_tool_image(output)
+    assert inline_image == {"mimeType": "image/jpeg", "data": "Q0FNRVJBX0pQRUc="}
+
+    messages = [
+        {"role": "user", "content": "was siehst du?"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"id": "capture_image-0", "name": "capture_image", "arguments": {}}
+            ],
+        },
+        {
+            "role": "tool",
+            "name": "capture_image",
+            "tool_call_id": "capture_image-0",
+            "content": tool_loop_module._tool_result_for_model(output),
+            "inline_image": inline_image,
+        },
+    ]
+
+    _url, _headers, body = tool_loop_module.build_gemini_request(
+        messages, None, "test-key"
+    )
+    user_parts = body["contents"][-1]["parts"]
+    assert user_parts[0]["functionResponse"]["name"] == "capture_image"
+    assert user_parts[0]["functionResponse"]["response"]["imageCaptured"] is True
+    assert "imageBase64" not in user_parts[0]["functionResponse"]["response"]
+    assert user_parts[1] == {
+        "inlineData": {"mimeType": "image/jpeg", "data": "Q0FNRVJBX0pQRUc="}
+    }
+
+
 # --- fixtures -------------------------------------------------------------
 
 

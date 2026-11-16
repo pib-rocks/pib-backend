@@ -529,6 +529,30 @@ class ChatHermesMixin:
                     ):
                         events.put(("delta", delta))
                     for record in hermes_tools:
+                        img_path = (
+                            record.get("imagePath")
+                            if isinstance(record, dict)
+                            else None
+                        )
+                        if isinstance(img_path, str) and os.path.isfile(img_path):
+                            try:
+                                import base64 as _b64
+
+                                with open(img_path, "rb") as img_fh:
+                                    b64_data = _b64.b64encode(img_fh.read()).decode(
+                                        "ascii"
+                                    )
+                                record_img = getattr(self, "_record_tool_image", None)
+                                if callable(record_img):
+                                    record_img(
+                                        {
+                                            "tool": "capture_image",
+                                            "mimeType": "image/jpeg",
+                                            "imageBase64": b64_data,
+                                        }
+                                    )
+                            except Exception:
+                                pass
                         self._record_tool_call(
                             {
                                 "name": str(record.get("name") or "tool"),
@@ -691,6 +715,7 @@ class ChatHermesMixin:
             allow_image=allow_image,
             on_tool_call=getattr(self, "_record_tool_finished", None),
             on_tool_start=getattr(self, "_record_tool_started", None),
+            on_tool_image=getattr(self, "_record_tool_image", None),
             local_fallback=lambda: self._iter_local_tokens(
                 chat_id, content, system_prompt
             ),

@@ -2,6 +2,8 @@ import {Block} from "blockly/core/block";
 
 function pibDisplayRuntime() {
     return `
+import signal
+import sys
 import time
 import rclpy
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
@@ -19,6 +21,7 @@ except NameError:
     _pib_display_web_pub = _pib_display_node.create_publisher(String, "/pib/display_web", 10)
     _pib_display_web_hide_pub = _pib_display_node.create_publisher(String, "/pib/display_web_hide", 10)
     _pib_display_ready = False
+    _pib_display_web_open = False
 
     def _pib_on_display_ready(msg):
         global _pib_display_ready
@@ -32,6 +35,25 @@ except NameError:
         depth=1,
     )
     _pib_display_node.create_subscription(String, "/pib/display_ready", _pib_on_display_ready, _pib_ready_qos)
+
+    def _pib_on_terminate(_signum, _frame):
+        global _pib_display_web_open
+        if _pib_display_web_open:
+            _pib_display_web_open = False
+            try:
+                _msg = String()
+                _msg.data = "hide"
+                _pib_display_web_hide_pub.publish(_msg)
+                deadline = time.time() + 0.25
+                while time.time() < deadline:
+                    rclpy.spin_once(_pib_display_node, timeout_sec=0.02)
+                    time.sleep(0.01)
+            except Exception:
+                pass
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, _pib_on_terminate)
+    signal.signal(signal.SIGINT, _pib_on_terminate)
 
 try:
     _pib_display_ready
@@ -57,8 +79,13 @@ def _pib_fix_text_encoding(value):
         return value
 
 def _pib_publish_string(pub, value, label="display"):
+    global _pib_display_web_open
     if label == "text":
         value = _pib_fix_text_encoding(value)
+    if label == "display web page":
+        _pib_display_web_open = True
+    elif label == "display web hide":
+        _pib_display_web_open = False
 
     _pib_wait_for_subscriber(pub, label)
     _msg = String()
@@ -107,4 +134,3 @@ export function closeCerebraFullscreenGenerator(_block: Block) {
 _pib_publish_string(_pib_display_web_hide_pub, "hide", "display web hide")
 `;
 }
-

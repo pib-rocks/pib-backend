@@ -1292,6 +1292,35 @@ def _tools_used(result: object) -> list:
         and message.get("name")
     ]
     if answered:
+        for item, message in zip(
+            answered,
+            [
+                m
+                for m in messages
+                if isinstance(m, dict) and m.get("role") == "tool" and m.get("name")
+            ],
+        ):
+            name = item["name"]
+            if name in ("capture_image", "mcp__pib__capture_image"):
+                content_raw = message.get("content")
+                if isinstance(content_raw, str) and content_raw.strip():
+                    try:
+                        parsed_content = json.loads(content_raw)
+                        res_obj = (
+                            parsed_content.get("result")
+                            if isinstance(parsed_content, dict)
+                            and isinstance(parsed_content.get("result"), dict)
+                            else parsed_content
+                        )
+                        img_path = (
+                            res_obj.get("imagePath")
+                            if isinstance(res_obj, dict)
+                            else None
+                        )
+                        if isinstance(img_path, str) and os.path.isfile(img_path):
+                            item["imagePath"] = img_path
+                    except Exception:
+                        pass
         return answered
     requested: list = []
     for message in messages:

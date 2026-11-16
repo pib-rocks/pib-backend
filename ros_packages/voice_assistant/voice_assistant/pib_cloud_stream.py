@@ -552,6 +552,7 @@ def stream_pib_cloud_chat(
     execute_tool: Optional[Callable[[str, dict[str, Any]], Any]] = None,
     on_tool_call: Optional[Callable[[dict], None]] = None,
     on_tool_start: Optional[Callable[[dict], None]] = None,
+    on_tool_image: Optional[Callable[[dict], None]] = None,
     allow_image: bool = False,
     max_tool_rounds: int = direct_tool_loop.MAX_TOOL_ROUNDS,
 ) -> Iterator[str]:
@@ -1016,11 +1017,14 @@ def stream_pib_cloud_chat(
                 arguments=parsed_args,
             )
             started = time.monotonic()
+            run_args = dict(parsed_args)
+            if name == direct_tool_loop.IMAGE_TOOL:
+                run_args["detail"] = True
             try:
                 if name in ANSWER_GESTURE_TOOLS:
-                    output = issue_answer_gesture(name, parsed_args, runner)
+                    output = issue_answer_gesture(name, run_args, runner)
                 else:
-                    output = runner(name, parsed_args)
+                    output = runner(name, run_args)
             except Exception as exc:
                 direct_tool_loop._report_tool_call(
                     on_tool_call,
@@ -1041,7 +1045,8 @@ def stream_pib_cloud_chat(
                 ok=True,
                 error="",
             )
-            tool_payload = output if isinstance(output, dict) else {"result": output}
+            direct_tool_loop._report_tool_image(on_tool_image, name, output)
+            tool_payload = direct_tool_loop._tool_result_for_model(output)
             messages.append(
                 {
                     "role": "tool",
@@ -1049,6 +1054,25 @@ def stream_pib_cloud_chat(
                     "content": json.dumps(tool_payload),
                 }
             )
+            inline_image = direct_tool_loop._extract_inline_tool_image(output)
+            if inline_image is not None and inline_image.get("data"):
+                mime_type = str(inline_image.get("mimeType") or "image/jpeg")
+                data_url = f"data:{mime_type};base64,{inline_image['data']}"
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "Hier ist das aufgenommene Kamerabild.",
+                            },
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": data_url},
+                            },
+                        ],
+                    }
+                )
 
     _trace_stream_end("done")
     if not emitted_content:

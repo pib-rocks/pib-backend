@@ -360,8 +360,11 @@ def test_talk_live_pib_web_search_emits_search_filler_when_silent(monkeypatch):
     loop._player._writing = False
     loop._player._last_write_end = 0.0
 
+    import voice_assistant.direct_tool_loop as dtl
+
     monkeypatch.setattr(
-        "voice_assistant.direct_tool_loop.execute_mcp_tool",
+        dtl,
+        "execute_mcp_tool",
         lambda name, args: {"ok": True, "answer": "sonnig"},
     )
 
@@ -392,8 +395,11 @@ def test_talk_live_pib_web_search_skips_filler_when_turn_audio_started(monkeypat
     loop._player._writing = False
     loop._player._last_write_end = 0.0
 
+    import voice_assistant.direct_tool_loop as dtl
+
     monkeypatch.setattr(
-        "voice_assistant.direct_tool_loop.execute_mcp_tool",
+        dtl,
+        "execute_mcp_tool",
         lambda name, args: {"ok": True, "answer": "sonnig"},
     )
 
@@ -477,3 +483,72 @@ def test_talk_live_loop_subscribes_high_rate_topics_only_while_active(monkeypatc
     assert loop._vad_sub is None
     assert loop._speech_sub is None
     assert node.destroy_subscription.call_count == 3
+
+
+def test_talk_live_capture_image_queues_media_chunk_and_returns_compact_result(
+    monkeypatch,
+):
+    """PR-2314: capture_image in TalkLiveLoop queues AppendInputImage (realtimeInput.mediaChunks) and strips base64 from toolResponse."""
+    import json
+    from ros_stubs import install_ros_stubs
+
+    install_ros_stubs()
+    _pyaudio = types.ModuleType("pyaudio")
+    _pyaudio.PyAudio = MagicMock()
+    _pyaudio.paInt16 = 8
+    monkeypatch.setitem(sys.modules, "pyaudio", _pyaudio)
+    _google = types.ModuleType("google")
+    _genai = types.ModuleType("google.genai")
+    _genai.Client = MagicMock()
+    _google.genai = _genai
+    monkeypatch.setitem(sys.modules, "google", _google)
+    monkeypatch.setitem(sys.modules, "google.genai", _genai)
+
+    from voice_assistant.talk_live_loop import TalkLiveLoop
+
+    node = MagicMock()
+    loop = TalkLiveLoop(node)
+    called_args = {}
+
+    def fake_exec(name, args):
+        called_args["name"] = name
+        called_args["args"] = dict(args)
+        return {
+            "ok": True,
+            "result": {
+                "imageBase64": base64.b64encode(b"\xff\xd8\xff\xd9").decode("ascii"),
+                "mimeType": "image/jpeg",
+            },
+        }
+
+    import voice_assistant.direct_tool_loop as dtl
+
+    monkeypatch.setattr(dtl, "execute_mcp_tool", fake_exec)
+    out = json.loads(loop._run_tool("capture_image", "{}"))
+    assert called_args == {"name": "capture_image", "args": {"detail": True}}
+    assert out["ok"] is True
+    assert out["result"]["imageDeliveredToLiveSession"] is True
+    assert "imageBase64" not in json.dumps(out)
+    assert len(loop._pending_live_images) == 1
+    img_bytes, img_mime = loop._pending_live_images.popleft()
+    assert img_bytes == b"\xff\xd8\xff\xd9"
+    assert img_mime == "image/jpeg"
+
+    session = provider.GeminiRealtimeSession(
+        auth_token="auth_tokens/test",
+        auth_source="pib-cloud",
+        input_sample_rate=16000,
+    )
+    encoded = session._encode([rt.AppendInputImage(data=img_bytes, mime_type=img_mime)])
+    assert encoded == [
+        {
+            "realtimeInput": {
+                "mediaChunks": [
+                    {
+                        "mimeType": "image/jpeg",
+                        "data": base64.b64encode(b"\xff\xd8\xff\xd9").decode("ascii"),
+                    }
+                ]
+            }
+        }
+    ]

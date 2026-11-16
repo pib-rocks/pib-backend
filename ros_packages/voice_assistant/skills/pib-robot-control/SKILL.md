@@ -22,7 +22,7 @@ invent identifiers or payload fields. Prefer a read tool before a write.
   of asking for a URDF, a CAD file or another document: the model is already
   installed. It takes no arguments and returns the rendered model plus a joint
   table, so read the limits from it rather than guessing a range.
-- Capture a camera frame with `mcp__pib__capture_image`.
+- Capture a camera frame with `mcp__pib__capture_image`. When you need to visually inspect or describe what is in the camera frame (colours, text, objects, people, surroundings), pass the returned `imagePath` from `mcp__pib__capture_image` to `vision_analyze(image_url=<imagePath>, question=...)`.
 - Actuate only on explicit request with `mcp__pib__move_motor`, `mcp__pib__apply_pose`,
   `mcp__pib__run_program`, `mcp__pib__set_led`, or `mcp__pib__set_relay`. The actuator gate is
   open by default.
