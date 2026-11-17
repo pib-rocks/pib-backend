@@ -1,6 +1,16 @@
 # System update API
 
-The host runner (`setup/update_runner.sh`) still performs fetch, build, backup, migration, and rollback. Flask only writes the file protocol and reads status. There is no second executor, lock, or updater daemon.
+The host runner (`setup/update_runner.sh`) still performs fetch, build, backup, migration, and rollback. Flask only writes the file protocol and reads status. The runner and boot-time Compose recovery share `/home/pib/app/.update/deployment.lock`; the update runner also keeps its separate `runner.lock` to reject duplicate update jobs.
+
+## Boot-time Compose recovery
+
+The installer records both Compose deployments in `/home/pib/app/.update/deployments.json` and enables `pib-deployment-recovery.service`. The file records stable project names, Compose paths, image tags, profiles, and the fully resolved Compose model, including service environment. It is atomically replaced with mode `0600` because it can contain credentials. Re-run the installer after changing deployment settings so the saved recovery state stays current. Existing devices need the host installer once after this change to install and enable the new system unit; an ordinary software update cannot install system units.
+
+At boot, systemd starts recovery after Docker. It waits for the shared deployment lock, validates the saved state and Compose files, then runs each project with `up -d --no-recreate --no-build --pull never`. It starts stopped containers and recreates missing ones while leaving existing containers alone. Missing state, invalid settings, Compose errors, or unavailable local image tags fail the service; it never pulls or builds.
+
+The installer records state after both stacks start. The update runner refreshes it after a verified update and after a verified rollback. It holds the same lock while checking out revisions and changing Compose projects, so recovery cannot race an update or rollback.
+
+The current Compose files keep application data outside container writable layers. Backend data, secrets, Hermes profiles, model files, audio data, and system configuration use host bind mounts; `programs` and `chat_images` are named volumes. Cerebra has no data volume. Neither project declares anonymous volumes. Docker Purge only prunes dangling images, preserving tagged images needed by offline recovery; ordinary volume prune leaves named volumes in place.
 
 The device channel is the `channel` field in `pib-backend.revision.json` and `cerebra.revision.json`. `system_properties` has no update-channel key, so this change does not add a schema migration. `software.version` stays unrelated. A development device is not rewritten as a release device.
 

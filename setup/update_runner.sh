@@ -11,6 +11,7 @@ CEREBRA_DIR="${PIB_CEREBRA_DIR:-/home/pib/app/cerebra}"
 REQUEST_FILE="$UPDATE_DIR/request.json"
 STATUS_FILE="$UPDATE_DIR/status.json"
 RUNNER_LOCK="$UPDATE_DIR/runner.lock"
+DEPLOYMENT_LOCK="$UPDATE_DIR/deployment.lock"
 CANCEL_FILE="$UPDATE_DIR/cancel.json"
 CHECK_FILE="$UPDATE_DIR/check.json"
 AVAILABLE_FILE="$UPDATE_DIR/available.json"
@@ -557,7 +558,40 @@ acquire_runner_lock() {
         fail "The flock command is required for update locking but was not found on PATH; install util-linux"
     fi
     exec 9>"$RUNNER_LOCK"
-    flock -n 9 || fail "Another update or deployment holds $RUNNER_LOCK; wait for it to finish or inspect the running job in $UPDATE_DIR/status.json and $LOG_FILE"
+    flock -n 9 || fail "Another update job holds $RUNNER_LOCK; wait for it to finish or inspect the running job in $UPDATE_DIR/status.json and $LOG_FILE"
+}
+
+acquire_deployment_lock() {
+    if ! command -v flock >/dev/null 2>&1; then
+        fail "The flock command is required for deployment locking but was not found on PATH; install util-linux"
+    fi
+    exec 8>"$DEPLOYMENT_LOCK"
+    flock 8 || fail "Could not acquire the shared deployment lock $DEPLOYMENT_LOCK"
+}
+
+record_deployment_state() {
+    local smart_chats="1" hardware_variant=""
+    if [ -f /etc/pib_smart_chats ]; then
+        smart_chats="$(tr -d '[:space:]' </etc/pib_smart_chats 2>/dev/null || true)"
+        [ -n "$smart_chats" ] || smart_chats="1"
+    fi
+    case "$smart_chats" in
+      0 | disabled) smart_chats="0" ;;
+      *) smart_chats="1" ;;
+    esac
+    if [ -f /etc/pib_hardware_variant ]; then
+        hardware_variant="$(tr -d '[:space:]' </etc/pib_hardware_variant 2>/dev/null || true)"
+    fi
+    local backend_tag cerebra_tag
+    backend_tag="$(python3 "$BACKEND_IMAGES_HELPER" resolve-tag "${APP_VERSION:-}")" || return 1
+    cerebra_tag="$backend_tag"
+    python3 "$BACKEND_DIR/setup/deployment_recovery.py" record \
+      --backend-tag "$backend_tag" \
+      --cerebra-tag "$cerebra_tag" \
+      --backend-version "${APP_VERSION:-}" \
+      --cerebra-version "${APP_VERSION:-}" \
+      --hardware-variant "$hardware_variant" \
+      --smart-chats "$smart_chats"
 }
 
 assert_checkouts_match_targets() {
@@ -722,9 +756,14 @@ backend_extra_profile_flags() {
     if [ -z "$smart" ] && [ -f /etc/pib_smart_chats ]; then
         smart="$(tr -d '[:space:]' </etc/pib_smart_chats 2>/dev/null || true)"
     fi
-    if [ "${smart:-1}" != "0" ]; then
+    case "${smart:-1}" in
+      0 | disabled)
+        return 0
+        ;;
+      *)
         printf '%s\n' "--profile" "hermes"
-    fi
+        ;;
+    esac
 }
 
 refresh_backend_base_images() {
@@ -1388,6 +1427,7 @@ rollback_once() {
     BACKEND_TARGET="$BACKEND_BEFORE"
     CEREBRA_TARGET="$CEREBRA_BEFORE"
     if wait_for_flask && verify_migration && verify_pib_sdk && verify_result; then
+        record_deployment_state || fail "Rollback succeeded but deployment recovery state could not be recorded"
         write_revision "pib-backend" "$BACKEND_BEFORE" "unknown"
         write_revision "cerebra" "$CEREBRA_BEFORE" "unknown"
         write_status "rolled_back" "Verification failed. Previous revisions were rebuilt (pib-backend ${BACKEND_BEFORE}, cerebra ${CEREBRA_BEFORE}). The WAL-safe backup was kept and was not applied; user data was not rolled back."
@@ -1426,6 +1466,7 @@ fi
 write_status "preflight" "Validating repositories, disk, watchdog ownership, and database backup (attempt ${ATTEMPT} of ${MAX_ATTEMPTS})"
 check_cancel
 check_update_dir
+acquire_deployment_lock
 readarray -t INITIAL_EXTRA_PROFILES < <(backend_extra_profile_flags)
 BACKEND_SERVICES_BEFORE="$(snapshot_running_services "$BACKEND_DIR/docker-compose.yaml" --profile all "${INITIAL_EXTRA_PROFILES[@]}")"
 CEREBRA_SERVICES_BEFORE="$(snapshot_running_services "$CEREBRA_DIR/docker-compose.yaml")"
@@ -1536,6 +1577,7 @@ if ! verify_result; then
     rollback_once
 fi
 
+record_deployment_state || fail "Update completed but deployment recovery state could not be recorded"
 prune_obsolete_release_images
 discard_model_store_snapshot
 write_revision "pib-backend" "$BACKEND_TARGET"

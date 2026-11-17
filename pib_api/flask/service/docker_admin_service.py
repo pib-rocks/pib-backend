@@ -327,19 +327,20 @@ def _human_bytes(value: int) -> str:
 
 
 def purge_docker() -> Tuple[int, Dict[str, Any]]:
-    """Prune everything the device no longer needs, and report what that freed.
+    """Prune expendable Docker objects while keeping cached PIB image tags.
 
-    Two Engine defaults made the old purge a no-op on an installed robot (PR-2099):
-    ``POST /images/prune`` without a filter removes only *untagged* images, so the
-    tagged leftovers of test runs stayed, and ``POST /build/prune`` prunes the
-    legacy builder, not the BuildKit cache this installation actually fills.
+    ``POST /images/prune`` removes only dangling images so tagged PIB images stay
+    available for boot-time offline recovery after stopped containers are purged.
+    ``POST /build/prune`` targets the BuildKit cache used by this installation.
     """
     results: Dict[str, Any] = {}
     errors: List[str] = []
     reclaimed = 0
 
     # filters must be the URL-encoded JSON the Engine expects.
-    image_filters = quote(json.dumps({"dangling": ["false"]}))
+    # Keep tagged images even after their stopped Compose containers are pruned.
+    # Boot-time recovery is deliberately offline and depends on these cached tags.
+    image_filters = quote(json.dumps({"dangling": ["true"]}))
     endpoints = [
         ("containers", "/containers/prune"),
         ("images", f"/images/prune?filters={image_filters}"),

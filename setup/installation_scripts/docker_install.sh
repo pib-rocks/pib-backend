@@ -123,6 +123,9 @@ function setup_update_service() {
       "$BACKEND_DIR/setup/setup_files/pib-update-check.service" \
       /etc/systemd/system/pib-update-check.service
     sudo install -o root -g root -m 0644 \
+      "$BACKEND_DIR/setup/setup_files/pib-deployment-recovery.service" \
+      /etc/systemd/system/pib-deployment-recovery.service
+    sudo install -o root -g root -m 0644 \
       "$BACKEND_DIR/setup/setup_files/pib-update-check.path" \
       /etc/systemd/system/pib-update-check.path
     # The runner's executable bit lives in git (mode 100755). Do NOT chmod it
@@ -139,6 +142,10 @@ function setup_update_service() {
     fi
     if ! enable_output=$(sudo systemctl enable pib-update-check.path 2>&1); then
         print ERROR "failed to enable pib-update-check.path: ${enable_output}"
+        return 1
+    fi
+    if ! enable_output=$(sudo systemctl enable pib-deployment-recovery.service 2>&1); then
+        print ERROR "failed to enable pib-deployment-recovery.service: ${enable_output}"
         return 1
     fi
     local start_output
@@ -286,6 +293,10 @@ function release_tag_at() {
 
 function start_container() {
     print INFO "Starting container"
+    sudo install -d -o pib -g pib -m 2770 /home/pib/app/.update || return 1
+    local deployment_lock_fd
+    exec {deployment_lock_fd}>>/home/pib/app/.update/deployment.lock || return 1
+    flock "$deployment_lock_fd" || return 1
     echo "TRYB_URL_PREFIX=https://platform.tryb.ai" > "$BACKEND_DIR"/password.env
     local backend_version="" frontend_version="" backend_tag="develop" frontend_tag="develop"
     local use_registry=1
@@ -366,6 +377,14 @@ function start_container() {
           docker compose -f "$FRONTEND_DIR/docker-compose.yaml" up -d --build || return 1
     fi
     print SUCCESS "Started cerebra container"
+
+    python3 "$BACKEND_DIR/setup/deployment_recovery.py" record \
+      --backend-tag "$backend_tag" \
+      --cerebra-tag "$frontend_tag" \
+      --backend-version "$backend_version" \
+      --cerebra-version "$frontend_version" \
+      --hardware-variant "$PIB_HARDWARE_VARIANT" \
+      --smart-chats "${PIB_SMART_CHATS:-1}" || return 1
 }
 
 function add_pib_to_docker_group() {

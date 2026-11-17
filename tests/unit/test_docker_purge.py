@@ -1,9 +1,8 @@
-"""The Docker purge must remove unused tagged images and the BuildKit cache.
+"""The Docker purge preserves tagged images and prunes the BuildKit cache.
 
-Measured on 192.168.1.172 (PR-2099): the button reported success while five
-pibtest_*-rosbridge-ws images (tagged :latest, 6-14 days old) and 3.0 GB of
-BuildKit cache stayed on disk. POST /images/prune defaults to dangling=true and
-POST /build/prune prunes the legacy builder, not BuildKit.
+Tagged Compose images must survive container purge so the boot recovery service
+can recreate the PIB stacks without pulling from a registry. POST /build/prune
+targets the BuildKit cache rather than the legacy builder.
 """
 
 from __future__ import annotations
@@ -33,7 +32,7 @@ def _fake_engine(responses):
     return _request, calls, timeouts
 
 
-def test_purge_asks_for_all_unused_images_and_the_buildkit_cache(monkeypatch):
+def test_purge_keeps_tagged_images_and_prunes_the_buildkit_cache(monkeypatch):
     responses = {
         "/containers/prune": (200, json.dumps({"SpaceReclaimed": 1000}).encode()),
         "/images/prune": (200, json.dumps({"SpaceReclaimed": 8_000_000}).encode()),
@@ -51,7 +50,7 @@ def test_purge_asks_for_all_unused_images_and_the_buildkit_cache(monkeypatch):
     images_call = next(p for p in calls if p.startswith("/images/prune"))
     assert "filters=" in images_call
     payload = json.loads(unquote(images_call.split("filters=", 1)[1]))
-    assert payload == {"dangling": ["false"]}
+    assert payload == {"dangling": ["true"]}
     assert any(p.startswith("/build/prune") and "all=true" in p for p in calls)
     assert body["reclaimedBytes"] == 11_001_000
     assert body["status"] == "success"

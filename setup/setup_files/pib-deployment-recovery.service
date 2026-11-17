@@ -1,0 +1,18 @@
+[Unit]
+Description=Recreate missing PIB Compose services from local images
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=pib
+Group=pib
+WorkingDirectory=/home/pib/app/pib-backend
+Environment=PIB_UPDATE_DIR=/home/pib/app/.update
+ExecStart=/usr/bin/python3 /home/pib/app/pib-backend/setup/deployment_recovery.py recover
+UMask=0077
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
