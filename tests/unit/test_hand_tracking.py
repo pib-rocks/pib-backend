@@ -2,7 +2,6 @@
 
 import ast
 import math
-import os
 import subprocess
 import sys
 import time
@@ -570,27 +569,6 @@ def _rotate_about(icx, icy, px, py, rotation_rad):
 
 
 def test_prerotated_pixel_crop_rect_matches_depthai_imagemanip_and_rr2img():
-    if os.environ.get("PIB_DEPTHAI_HOST_TEST_CHILD") != "1":
-        child_env = os.environ.copy()
-        child_env["PIB_DEPTHAI_HOST_TEST_CHILD"] = "1"
-        result = subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "pytest",
-                "-q",
-                f"{Path(__file__).resolve()}::test_prerotated_pixel_crop_rect_matches_depthai_imagemanip_and_rr2img",
-            ],
-            cwd=REPO_ROOT,
-            env=child_env,
-            capture_output=True,
-            text=True,
-            timeout=30,
-            check=False,
-        )
-        assert result.returncode == 0, result.stdout + result.stderr
-        return
-
     source_width, source_height = 1152, 648
     side, pad_w, pad_h = letterbox_square(source_width, source_height)
     sqn_rr_center_x, sqn_rr_center_y, sqn_rr_size = 0.4, 0.55, 0.25
