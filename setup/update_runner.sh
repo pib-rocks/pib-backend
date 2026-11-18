@@ -12,6 +12,7 @@ REQUEST_FILE="$UPDATE_DIR/request.json"
 STATUS_FILE="$UPDATE_DIR/status.json"
 RUNNER_LOCK="$UPDATE_DIR/runner.lock"
 DEPLOYMENT_LOCK="$UPDATE_DIR/deployment.lock"
+DEPLOYMENT_RECOVERY_HELPER="$UPDATE_DIR/deployment_recovery.py"
 CANCEL_FILE="$UPDATE_DIR/cancel.json"
 CHECK_FILE="$UPDATE_DIR/check.json"
 AVAILABLE_FILE="$UPDATE_DIR/available.json"
@@ -571,27 +572,46 @@ acquire_deployment_lock() {
 
 record_deployment_state() {
     local smart_chats="1" hardware_variant=""
-    if [ -f /etc/pib_smart_chats ]; then
-        smart_chats="$(tr -d '[:space:]' </etc/pib_smart_chats 2>/dev/null || true)"
-        [ -n "$smart_chats" ] || smart_chats="1"
-    fi
-    case "$smart_chats" in
-      0 | disabled) smart_chats="0" ;;
-      *) smart_chats="1" ;;
-    esac
+    smart_chats="${SMART_CHATS_SETTING:-$(resolve_smart_chats)}"
     if [ -f /etc/pib_hardware_variant ]; then
         hardware_variant="$(tr -d '[:space:]' </etc/pib_hardware_variant 2>/dev/null || true)"
     fi
     local backend_tag cerebra_tag
     backend_tag="$(python3 "$BACKEND_IMAGES_HELPER" resolve-tag "${APP_VERSION:-}")" || return 1
     cerebra_tag="$backend_tag"
-    python3 "$BACKEND_DIR/setup/deployment_recovery.py" record \
+    python3 "$DEPLOYMENT_RECOVERY_HELPER" record \
       --backend-tag "$backend_tag" \
       --cerebra-tag "$cerebra_tag" \
       --backend-version "${APP_VERSION:-}" \
       --cerebra-version "${APP_VERSION:-}" \
       --hardware-variant "$hardware_variant" \
       --smart-chats "$smart_chats"
+}
+
+resolve_smart_chats() {
+    local smart="${PIB_SMART_CHATS:-}"
+    local settings_file="${PIB_SMART_CHATS_FILE:-/etc/pib_smart_chats}"
+    if [ -z "$smart" ] && [ -f "$settings_file" ]; then
+        smart="$(tr -d '[:space:]' <"$settings_file" 2>/dev/null || true)"
+    fi
+    case "${smart:-1}" in
+      0 | disabled) printf '0\n' ;;
+      *) printf '1\n' ;;
+    esac
+}
+
+sync_deployment_recovery_helper() {
+    local source="$BACKEND_DIR/setup/deployment_recovery.py"
+    local staged="$UPDATE_DIR/.deployment_recovery.py.$$"
+    if [ ! -f "$source" ]; then
+        log "No deployment recovery helper in checked-out revision; keeping the persistent helper"
+        return 0
+    fi
+    if ! cp "$source" "$staged" || ! chmod 0750 "$staged" || ! mv -f "$staged" "$DEPLOYMENT_RECOVERY_HELPER"; then
+        rm -f "$staged"
+        log "Failed to install persistent deployment recovery helper from $source"
+        return 1
+    fi
 }
 
 assert_checkouts_match_targets() {
@@ -752,11 +772,8 @@ ensure_ollama_for_update() {
 # point at ghcr.io; `docker compose pull` is tried first in build_backend_stack.
 # Offline: a failed pull build retries without --pull.
 backend_extra_profile_flags() {
-    local smart="${PIB_SMART_CHATS:-}"
-    if [ -z "$smart" ] && [ -f /etc/pib_smart_chats ]; then
-        smart="$(tr -d '[:space:]' </etc/pib_smart_chats 2>/dev/null || true)"
-    fi
-    case "${smart:-1}" in
+    local smart="${SMART_CHATS_SETTING:-$(resolve_smart_chats)}"
+    case "$smart" in
       0 | disabled)
         return 0
         ;;
@@ -1467,6 +1484,7 @@ write_status "preflight" "Validating repositories, disk, watchdog ownership, and
 check_cancel
 check_update_dir
 acquire_deployment_lock
+SMART_CHATS_SETTING="$(resolve_smart_chats)"
 readarray -t INITIAL_EXTRA_PROFILES < <(backend_extra_profile_flags)
 BACKEND_SERVICES_BEFORE="$(snapshot_running_services "$BACKEND_DIR/docker-compose.yaml" --profile all "${INITIAL_EXTRA_PROFILES[@]}")"
 CEREBRA_SERVICES_BEFORE="$(snapshot_running_services "$CEREBRA_DIR/docker-compose.yaml")"
@@ -1474,6 +1492,7 @@ VOICE_HEALTH_BEFORE="$(docker inspect "$VOICE_CONTAINER" --format '{{if .State.H
 log "Services running before the update: pib-backend=[$(printf '%s' "$BACKEND_SERVICES_BEFORE" | tr '\n' ' ')] cerebra=[$(printf '%s' "$CEREBRA_SERVICES_BEFORE" | tr '\n' ' ')]"
 validate_repository "pib-backend" "$BACKEND_DIR"
 validate_repository "cerebra" "$CEREBRA_DIR"
+sync_deployment_recovery_helper || fail "Failed to preserve the deployment recovery helper before checkout"
 check_watchdog_conflict
 reclaim_docker_disk_before_build
 check_disk_budget
@@ -1512,6 +1531,7 @@ else
     CEREBRA_TARGET="$(git -C "$CEREBRA_DIR" rev-parse HEAD)"
 fi
 git -C "$CEREBRA_DIR" submodule update --init --recursive || fail "Failed to update cerebra submodules"
+sync_deployment_recovery_helper || fail "Failed to stage the deployment recovery helper"
 if ! APP_VERSION="$(resolve_app_version "$BACKEND_DIR")"; then
     if [ -n "${RELEASE_TAG:-}" ]; then
         APP_VERSION="$RELEASE_TAG"

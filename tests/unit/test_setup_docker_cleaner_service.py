@@ -178,6 +178,27 @@ echo "hermes_view_status=$?"
     assert "failed to start pib-voice-hermes-view.service" in result.stdout
 
 
+def test_deployment_recovery_service_uses_persistent_helper(tmp_path):
+    script = HARNESS + "\nsetup_update_service\n"
+    result, calls = _run(tmp_path, script)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert any(
+        call.endswith(
+            "setup/deployment_recovery.py "
+            "/home/pib/app/.update/deployment_recovery.py"
+        )
+        for call in calls
+    )
+    unit = (
+        REPO_ROOT / "setup" / "setup_files" / "pib-deployment-recovery.service"
+    ).read_text(encoding="utf-8")
+    assert (
+        "ExecStart=/usr/bin/python3 "
+        "/home/pib/app/.update/deployment_recovery.py recover"
+    ) in unit
+
+
 def test_start_container_forwards_release_tag_to_backend_and_frontend_compose(tmp_path):
     backend_dir = _make_backend_dir(tmp_path)
     frontend_dir = tmp_path / "cerebra"

@@ -113,6 +113,12 @@ function setup_update_service() {
     # group; together with 0660 in the backend's atomic write this is what lets
     # the runner (User=pib) read request.json at all.
     sudo install -d -o pib -g pib -m 2770 /home/pib/app/.update
+    # Keep recovery code outside the checkouts: rollback may reset backend to a
+    # revision that predates deployment_recovery.py, while systemd still needs
+    # the helper after reboot.
+    sudo install -o pib -g pib -m 0750 \
+      "$BACKEND_DIR/setup/deployment_recovery.py" \
+      /home/pib/app/.update/deployment_recovery.py || return 1
     sudo install -o root -g root -m 0644 \
       "$BACKEND_DIR/setup/setup_files/pib-update.service" \
       /etc/systemd/system/pib-update.service
