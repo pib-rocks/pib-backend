@@ -607,44 +607,36 @@ def test_prerotated_pixel_crop_rect_matches_depthai_imagemanip_and_rr2img():
     img.setHeight(source_height)
 
     lm_input = 224
-    pipeline = dai.Pipeline(createImplicitDevice=False)
-    manip = pipeline.create(dai.node.ImageManip)
-    manip.setRunOnHost(True)
-    image_queue = manip.inputImage.createInputQueue(maxSize=2, blocking=False)
-    config_queue = manip.inputConfig.createInputQueue(maxSize=2, blocking=False)
-    output_queue = manip.out.createOutputQueue(maxSize=2, blocking=False)
-    try:
-        pipeline.start()
-        for angle_deg in (45.0, -60.0):
-            rotation = math.radians(angle_deg)
-            crop_w = sqn_rr_size * side
-            cx, cy, w, h, rr_angle = prerotated_pixel_crop_rect(
-                target_cx,
-                target_cy,
-                crop_w,
-                crop_w,
-                rotation,
-                source_width,
-                source_height,
-            )
-            rr = dai.RotatedRect()
-            rr.center = dai.Point2f(cx, cy)
-            rr.size = dai.Size2f(w, h)
-            rr.angle = rr_angle
-            cfg = dai.ImageManipConfig()
-            cfg.addCropRotatedRect(rr, False)
-            cfg.setOutputSize(
-                lm_input, lm_input, dai.ImageManipConfig.ResizeMode.STRETCH
-            )
-            config_queue.send(cfg)
+    for angle_deg in (45.0, -60.0):
+        rotation = math.radians(angle_deg)
+        crop_w = sqn_rr_size * side
+        cx, cy, w, h, rr_angle = prerotated_pixel_crop_rect(
+            target_cx,
+            target_cy,
+            crop_w,
+            crop_w,
+            rotation,
+            source_width,
+            source_height,
+        )
+        rr = dai.RotatedRect()
+        rr.center = dai.Point2f(cx, cy)
+        rr.size = dai.Size2f(w, h)
+        rr.angle = rr_angle
+
+        pipeline = dai.Pipeline(createImplicitDevice=False)
+        manip = pipeline.create(dai.node.ImageManip)
+        manip.setRunOnHost(True)
+        manip.initialConfig.addCropRotatedRect(rr, False)
+        manip.initialConfig.setOutputSize(
+            lm_input, lm_input, dai.ImageManipConfig.ResizeMode.STRETCH
+        )
+        image_queue = manip.inputImage.createInputQueue(maxSize=1, blocking=True)
+        output_queue = manip.out.createOutputQueue(maxSize=1, blocking=True)
+        try:
+            pipeline.start()
             image_queue.send(img)
-            out = None
-            for _ in range(100):
-                out = output_queue.tryGet()
-                if out is not None:
-                    break
-                time.sleep(0.02)
-            assert out is not None
+            out = output_queue.get()
             inv = out.getTransformation().invTransformPoint
             center = inv(dai.Point2f(0.5 * lm_input, 0.5 * lm_input))
             assert center.x == pytest.approx(expected_x, abs=0.1)
@@ -661,9 +653,9 @@ def test_prerotated_pixel_crop_rect_matches_depthai_imagemanip_and_rr2img():
                 )
                 assert mapped.x == pytest.approx(sqn_x * side - pad_w, abs=0.1)
                 assert mapped.y == pytest.approx(sqn_y * side - pad_h, abs=0.1)
-    finally:
-        manip.stopPipeline()
-        del output_queue, config_queue, image_queue, manip, pipeline
+        finally:
+            manip.stopPipeline()
+            del output_queue, image_queue, manip, pipeline
 
 
 def test_fast_script_preserves_single_hand_roi_and_averages_handedness():
