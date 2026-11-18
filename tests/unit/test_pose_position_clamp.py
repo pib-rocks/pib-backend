@@ -93,12 +93,11 @@ def test_position_inside_the_range_is_kept(app):
 
 def test_clamping_is_logged(app, caplog):
     with caplog.at_level(logging.WARNING, logger="service.pose_service"):
-        pose_id = _store_pose(
-            app, "Clamp Test Logging", [("turn_head_motor", -9026)]
-        )
+        pose_id = _store_pose(app, "Clamp Test Logging", [("turn_head_motor", -9026)])
     try:
         assert any(
-            "clamped pose position for turn_head_motor from -9026 to -9000" in record.message
+            "clamped pose position for turn_head_motor from -9026 to -9000"
+            in record.message
             for record in caplog.records
         ), [record.message for record in caplog.records]
     finally:
@@ -112,7 +111,11 @@ def test_position_update_clamps_as_well(app):
         with app.test_client() as client:
             response = client.patch(
                 f"/pose/{pose_id}/motor-positions",
-                json={"motorPositions": [{"motorName": "turn_head_motor", "position": 9026}]},
+                json={
+                    "motorPositions": [
+                        {"motorName": "turn_head_motor", "position": 9026}
+                    ]
+                },
             )
         assert response.status_code == 200, response.get_data(as_text=True)
         assert _stored_positions(app, pose_id)["turn_head_motor"] == 9000
@@ -126,7 +129,11 @@ def test_update_keeps_positions_inside_the_range(app):
         with app.test_client() as client:
             response = client.patch(
                 f"/pose/{pose_id}/motor-positions",
-                json={"motorPositions": [{"motorName": "turn_head_motor", "position": -9026}]},
+                json={
+                    "motorPositions": [
+                        {"motorName": "turn_head_motor", "position": -9026}
+                    ]
+                },
             )
         assert response.status_code == 200, response.get_data(as_text=True)
         assert _stored_positions(app, pose_id)["turn_head_motor"] == -9000
