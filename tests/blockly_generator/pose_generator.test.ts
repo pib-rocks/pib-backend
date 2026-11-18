@@ -45,6 +45,30 @@ function createMockGenerator(): MockGenerator {
 }
 
 describe("moveToPoseGenerator", () => {
+  it("skips a pose that no longer exists instead of failing the program", () => {
+    // A stored program keeps the pose UUID it was built with; re-recording a pose
+    // allocates a new UUID, so the old reference answers 404. Both generated helpers must
+    // skip it with one line instead of ending the program in a traceback (measured on
+    // .168: BackendError GET /pose/by-name/<uuid> -> HTTP 404 and no motion).
+    const generator = createMockGenerator();
+    moveToPoseGenerator(
+      { getFieldValue: () => "gone-pose" } as unknown as Block,
+      generator,
+    );
+    play_pose_sequence(
+      {
+        itemCount_: 1,
+        getFieldValue: (name: string) => (name === "POSE_0" ? "gone-pose" : 1),
+      } as unknown as Block,
+      generator,
+    );
+
+    const defs = Object.values(generator.definitions_).join("\n");
+    expect(defs).toContain('logging.warning(f"pose {poseId} is not available');
+    expect(defs).toContain('print(f"pose {identifier} is not available');
+    expect(defs).toContain("continue");
+  });
+
   it("generates apply_pose call with pose UUID and converts centi-degrees to degrees in a single batched Write.move", () => {
     const poseId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
     const block = {

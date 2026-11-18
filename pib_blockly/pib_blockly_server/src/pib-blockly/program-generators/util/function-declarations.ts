@@ -290,9 +290,13 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(poseId: str) -> None:
     logging.info(f"Pose ID: {poseId}")
     logging.info(f"moving to pose..")
 
-    successful, motor_positions = pose_client.get_motor_positions_of_pose(
-            poseId
-        )
+    try:
+        successful, motor_positions = pose_client.get_motor_positions_of_pose(
+                poseId
+            )
+    except Exception as exc:
+        logging.warning(f"pose {poseId} is not available ({exc}); skipping")
+        return
     if not successful:
         logging.error(f"getting motor-positions of pose failed.")
         return
@@ -348,7 +352,11 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(sequence) -> None:
         try:
             pose = get_pose(pose_backend, pose_id=identifier)
         except Exception:
-            pose = get_pose(pose_backend, name=identifier)
+            try:
+                pose = get_pose(pose_backend, name=identifier)
+            except Exception as exc:
+                print(f"pose {identifier} is not available ({exc}); skipping")
+                continue
         resolved_poses.append((pose, max(0.05, float(leg_seconds))))
 
     joint_names = []
