@@ -1099,9 +1099,10 @@ def test_pulse_plugin_device_is_used_when_a_server_is_configured(monkeypatch):
     )
 
 
-def test_pulse_plugin_device_is_ignored_without_a_server():
+def test_pulse_plugin_device_is_ignored_without_a_server(monkeypatch):
     from ros_audio_io.device_retry import pulse_plugin_device_index
 
+    monkeypatch.delenv("PULSE_SERVER", raising=False)
     infos = [{"index": 1, "name": "pulse", "maxInputChannels": 2}]
 
     assert pulse_plugin_device_index(infos, pulse_server="") is None
