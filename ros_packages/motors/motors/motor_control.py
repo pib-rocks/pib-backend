@@ -147,12 +147,11 @@ def _rad_to_centideg_for_joint(
     motor = name_to_motors[joint_name][0]
     min_pos = motor.rotation_range_min
     max_pos = motor.rotation_range_max
-    if centideg < min_pos or centideg > max_pos:
-        raise ValueError(
-            f"joint '{joint_name}' position {radians} rad ({centideg} centideg) "
-            f"is outside allowed range [{min_pos}, {max_pos}] centidegrees"
-        )
-    return float(centideg)
+    # A servo reports its position with its own tolerance, so live feedback can land a few
+    # centidegrees beyond the configured range (measured: shoulder_vertical_left -9018).
+    # Rejecting the whole trajectory for that makes the robot un-drivable, so the value is
+    # clamped to the boundary instead - the same clamping Motor.set_position already applies.
+    return float(min(max(centideg, min_pos), max_pos))
 
 
 class MotorControl(Node):

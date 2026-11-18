@@ -230,7 +230,13 @@ def test_service_conversion_produces_centidegrees_for_executor(
     assert converted.points[0].positions[0] == pytest.approx(9000.0)
 
 
-def test_out_of_range_radian_request_is_rejected(motor_control_module) -> None:
+def test_out_of_range_radian_request_is_clamped(motor_control_module) -> None:
+    """A servo slightly beyond its range is clamped to the boundary, not rejected.
+
+    Live feedback can land a few centidegrees past the configured range (measured on .168:
+    shoulder_vertical_left -9018). Rejecting the whole trajectory for that made the robot
+    un-drivable, so the conversion clamps instead.
+    """
     module, lookup, _ = motor_control_module
     jt = FakeJointTrajectory()
     jt.joint_names = ["elbow_left"]
@@ -238,8 +244,9 @@ def test_out_of_range_radian_request_is_rejected(motor_control_module) -> None:
     point.positions.append(2.0)
     jt.points.append(point)
 
-    with pytest.raises(ValueError, match="outside allowed range"):
-        module.joint_trajectory_radians_to_centidegrees(jt, lookup)
+    converted = module.joint_trajectory_radians_to_centidegrees(jt, lookup)
+    # 2.0 rad ~= 11459 centideg, clamped to the elbow's +9000 range.
+    assert converted.points[0].positions[0] == pytest.approx(9000.0)
 
 
 def test_non_finite_radian_request_is_rejected(motor_control_module) -> None:
