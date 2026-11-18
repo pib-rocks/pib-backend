@@ -301,24 +301,20 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(poseId: str) -> None:
         logging.error(f"getting motor-positions of pose failed.")
         return
 
-    args = []
+    names = []
+    centidegrees = []
     for motor_position in motor_positions["motorPositions"]:
-        args.extend(
-            (
-                motor_position["motorName"],
-                centidegrees_to_degrees(motor_position["position"]),
-            )
-        )
-    if not args:
+        names.append(motor_position["motorName"])
+        centidegrees.append(float(motor_position["position"]))
+    if not names:
         return
 
+    # send_timed_trajectory takes centidegrees and converts without the +-90 degree cap,
+    # so a pose whose finger servos travel beyond +-90 degrees still plays. writer.move()
+    # would raise "position_deg must be between -90 and 90" for such a pose.
     rosbridge_host = os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")
-    try:
-        with pib_sdk.Write(host=rosbridge_host, port=9090) as writer:
-            writer.move(*args)
-    except Exception:
-        with pib_sdk.Write(host="localhost", port=9090) as writer:
-            writer.move(*args)
+    with pib_sdk.Write(host=rosbridge_host, port=9090) as writer:
+        writer.send_timed_trajectory(names, [(centidegrees, 1.0)])
 `;
 
 export const SAVE_CURRENT_POSE_FUNCTION = (

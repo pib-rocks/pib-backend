@@ -69,7 +69,7 @@ describe("moveToPoseGenerator", () => {
     expect(defs).toContain("continue");
   });
 
-  it("generates apply_pose call with pose UUID and converts centi-degrees to degrees in a single batched Write.move", () => {
+  it("generates apply_pose call with pose UUID and drives the pose in centi-degrees (no +-90 cap)", () => {
     const poseId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
     const block = {
       getFieldValue: (field: string) => {
@@ -85,13 +85,11 @@ describe("moveToPoseGenerator", () => {
     const defs = Object.values(generator.definitions_).join("\n");
     expect(defs).toContain("from pib_api_client import pose_client");
     expect(defs).toContain("import pib_sdk");
-    expect(defs).toContain("def centidegrees_to_degrees");
-    expect(defs).toContain(
-      "centidegrees_to_degrees(motor_position[\"position\"])",
-    );
+    expect(defs).toContain("centidegrees.append(float(motor_position[\"position\"]))");
     expect(defs).toContain("with pib_sdk.Write(host=rosbridge_host, port=9090) as writer:");
-    expect(defs).toContain("writer.move(*args)");
-    expect(defs).not.toContain('.move(motor_name, position)');
+    expect(defs).toContain("writer.send_timed_trajectory(names, [(centidegrees, 1.0)])");
+    // A finger servo legitimately travels past +-90 degrees; move() would refuse it.
+    expect(defs).not.toContain("writer.move(*args)");
   });
 
     it("registers move_to_pose without polluting Blockly.Blocks with init or getPoses", () => {
