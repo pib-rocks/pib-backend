@@ -97,10 +97,34 @@ def create_pose(pose_dto: dict[str, Any]) -> Pose:
     return pose
 
 
+def _programs_referencing(pose_id: str) -> List[str]:
+    """Names of the Blockly programs that still point at this pose UUID.
+
+    A stored program keeps the pose UUID it was built with. Re-recording a pose means
+    deleting it and creating a new one, which allocates a new UUID: the program then
+    references a pose that no longer exists and ends in a 404 traceback when it runs.
+    Refusing the delete while a program uses the pose keeps that from happening - the pose
+    has to be updated in place or the program has to be changed first.
+    """
+    from model.program_model import Program
+
+    return [
+        program.name
+        for program in Program.query.all()
+        if program.code_visual and pose_id in program.code_visual
+    ]
+
+
 def delete_pose(pose_id: str) -> None:
     pose = get_pose(pose_id)
     if not pose.deletable:
         raise PoseRefusedError(f"Pose '{pose.name}' is not deletable")
+    referencing = _programs_referencing(pose.pose_id)
+    if referencing:
+        raise PoseRefusedError(
+            f"Pose '{pose.name}' is used by the program(s) {', '.join(sorted(referencing))}; "
+            "change those programs first or update the pose in place."
+        )
     db.session.delete(pose)
     db.session.flush()
 
