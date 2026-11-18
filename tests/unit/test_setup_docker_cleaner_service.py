@@ -6,6 +6,7 @@ stub on PATH that records its argv and can fail `systemctl start` on demand.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -21,14 +22,22 @@ START_CALL = "systemctl start docker_cleaner.service"
 # Records every sudo invocation, one command per line, with the leading
 # VAR=value assignments dropped so the log holds the command that was run.
 SUDO_STUB = """#!/bin/bash
+assignments=()
+while [[ "${1:-}" == [A-Za-z_]*=* ]]; do
+    assignments+=("$1")
+    shift
+done
 args=()
 for arg in "$@"; do
-    if [ ${#args[@]} -eq 0 ] && [[ "$arg" == [A-Za-z_]*=* ]]; then
-        continue
-    fi
     args+=("$arg")
 done
 printf '%s\\n' "${args[*]}" >> "$STUB_LOG"
+
+if [ "${args[0]:-}" = "docker" ] && [ "${args[1]:-}" = "compose" ]; then
+    # Model sudo's default environment filtering for a non-allowlisted override.
+    env -u PIB_VOICE_DATA_DIR "${assignments[@]}" "${args[@]}"
+    exit $?
+fi
 
 if [ "${args[0]:-}" = "systemctl" ] && [ "${args[1]:-}" = "start" ]; then
     status=${STUB_SYSTEMCTL_START_STATUS:-0}
@@ -53,9 +62,20 @@ if [ "${1:-}" = "compose" ] && [[ "$joined" == *" config --format json"* ]]; the
     previous=""
     for argument in "$@"; do
         if [ "$previous" = "--project-name" ]; then project="$argument"; break; fi
+        if [ "$previous" = "-f" ]; then project="$(basename "$(dirname "$argument")")"; fi
         previous="$argument"
     done
-    printf '{"name":"%s","services":{"fixture":{"image":"fixture:latest"}}}\\n' "$project"
+    tag="${PIB_IMAGE_TAG:-develop}"
+    if [ "$project" = "pib-backend" ]; then
+        image="ghcr.io/pib-rocks/pib-backend-flask:$tag"
+        voice_data="${PIB_VOICE_DATA_DIR:-/data/voice}"
+        printf '{"name":"%s","services":{"fixture":{"image":"%s","volumes":[{"type":"bind","source":"%s","target":"/data/voice"}]}}}\\n' \
+            "$project" "$image" "$voice_data"
+    else
+        image="ghcr.io/pib-rocks/cerebra:$tag"
+        printf '{"name":"%s","services":{"fixture":{"image":"%s"}}}\\n' \
+            "$project" "$image"
+    fi
     exit 0
 fi
 exit 0
@@ -222,7 +242,12 @@ def test_start_container_forwards_release_tag_to_backend_and_frontend_compose(tm
     (tmp_path / "update").mkdir()
     stub_bin = _make_stub_bin(tmp_path)
     (stub_bin / "sudo").write_text(
-        '#!/bin/bash\nprintf "%s\\n" "$*" >> "$SUDO_RAW_LOG"\nexit 0\n',
+        '#!/bin/bash\nprintf "%s\\n" "$*" >> "$SUDO_RAW_LOG"\n'
+        "assignments=()\n"
+        'while [[ "${1:-}" == [A-Za-z_]*=* ]]; do assignments+=("$1"); shift; done\n'
+        'if [ "${1:-}" = "docker" ] && [ "${2:-}" = "compose" ] && [[ " $* " == *" config --format json "* ]]; then\n'
+        '  env -u PIB_VOICE_DATA_DIR "${assignments[@]}" "$@"\n  exit $?\nfi\n'
+        "exit 0\n",
         encoding="utf-8",
     )
     env = dict(os.environ)
@@ -233,6 +258,7 @@ def test_start_container_forwards_release_tag_to_backend_and_frontend_compose(tm
         BACKEND_DIR=str(backend_dir),
         FRONTEND_DIR=str(frontend_dir),
         PIB_HARDWARE_VARIANT="pib5edu",
+        PIB_VOICE_DATA_DIR="/caller-only-voice-data",
         DOCKER_INSTALL=str(DOCKER_INSTALL),
         PIB_DOCKER_BUILD_LOG=str(tmp_path / "docker-build.log"),
         PIB_UPDATE_DIR=str(tmp_path / "update"),
@@ -240,15 +266,27 @@ def test_start_container_forwards_release_tag_to_backend_and_frontend_compose(tm
         PIB_CEREBRA_DIR=str(frontend_dir),
     )
     subprocess.run(["bash", "-c", HARNESS], env=env, check=True, capture_output=True)
+    recorded = (tmp_path / "update" / "deployments.json").read_text(encoding="utf-8")
+    state = json.loads(recorded)
+    backend_state = next(
+        project for project in state["projects"] if project["name"] == "pib-backend"
+    )
+    assert backend_state["composeConfig"]["services"]["fixture"]["volumes"][0][
+        "source"
+    ] == ("/data/voice")
     raw_calls = sudo_raw.read_text(encoding="utf-8").splitlines()
     compose_calls = [c for c in raw_calls if "docker compose" in c]
-    assert len(compose_calls) == 4, compose_calls
+    assert len(compose_calls) == 6, compose_calls
     assert all("APP_VERSION=v0.7.0" in c for c in compose_calls)
     assert all("PIB_IMAGE_TAG=v0.7.0" in c for c in compose_calls)
     assert compose_calls[0].endswith(" pull")
     assert compose_calls[1].endswith(" up -d --no-build")
     assert compose_calls[2].endswith(" pull")
     assert compose_calls[3].endswith(" up -d --no-build")
+    assert "config --format json" in compose_calls[4]
+    assert "--project-name pib-backend" in compose_calls[4]
+    assert "config --format json" in compose_calls[5]
+    assert "--project-name cerebra" in compose_calls[5]
 
 
 def test_start_container_falls_back_to_build_when_registry_disabled(tmp_path):
@@ -295,11 +333,12 @@ def test_start_container_falls_back_to_build_when_registry_disabled(tmp_path):
     subprocess.run(["bash", "-c", HARNESS], env=env, check=True, capture_output=True)
     raw_calls = sudo_raw.read_text(encoding="utf-8").splitlines()
     compose_calls = [c for c in raw_calls if "docker compose" in c]
-    assert len(compose_calls) == 2, compose_calls
-    assert "APP_VERSION=v0.7.0" in compose_calls[0]
-    assert "APP_VERSION=v0.7.0" in compose_calls[1]
+    assert len(compose_calls) == 4, compose_calls
+    assert all("APP_VERSION=v0.7.0" in call for call in compose_calls)
     assert "--build" in compose_calls[0]
     assert "--build" in compose_calls[1]
+    assert "config --format json" in compose_calls[2]
+    assert "config --format json" in compose_calls[3]
 
 
 def test_failing_start_returns_non_zero_and_does_not_report_success(tmp_path):

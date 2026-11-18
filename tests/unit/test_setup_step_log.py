@@ -209,6 +209,15 @@ def test_docker_install_reports_each_service_as_its_own_step():
 
 # `sudo docker compose ...` is replaced by a stub that prints build noise and exits as told.
 SUDO_STUB = """#!/bin/bash
+assignments=()
+while [[ "${1:-}" == [A-Za-z_]*=* ]]; do
+    assignments+=("$1")
+    shift
+done
+if [ "${1:-}" = "docker" ] && [ "${2:-}" = "compose" ] && [[ " $* " == *" config --format json "* ]]; then
+    env "${assignments[@]}" "$@"
+    exit $?
+fi
 if [ "${1:-}" = "install" ] && [ "${2:-}" = "-d" ]; then
     mkdir -p "${@: -1}"
     exit 0
@@ -226,9 +235,16 @@ if [ "${1:-}" = "compose" ] && [[ "$joined" == *" config --format json"* ]]; the
     previous=""
     for argument in "$@"; do
         if [ "$previous" = "--project-name" ]; then project="$argument"; break; fi
+        if [ "$previous" = "-f" ]; then project="$(basename "$(dirname "$argument")")"; fi
         previous="$argument"
     done
-    printf '{"name":"%s","services":{"fixture":{"image":"fixture:latest"}}}\\n' "$project"
+    tag="${PIB_IMAGE_TAG:-develop}"
+    if [ "$project" = "pib-backend" ]; then
+        image="ghcr.io/pib-rocks/pib-backend-flask:$tag"
+    else
+        image="ghcr.io/pib-rocks/cerebra:$tag"
+    fi
+    printf '{"name":"%s","services":{"fixture":{"image":"%s"}}}\\n' "$project" "$image"
 fi
 exit 0
 """

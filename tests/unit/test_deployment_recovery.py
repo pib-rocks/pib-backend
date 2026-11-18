@@ -69,6 +69,27 @@ def test_recorded_deployments_recover_with_local_images_without_build_or_pull(
     tmp_path: Path,
 ) -> None:
     env, docker_log = _helper_env(tmp_path)
+    backend_model = tmp_path / "backend-compose.json"
+    cerebra_model = tmp_path / "cerebra-compose.json"
+    backend_model.write_text(
+        json.dumps(
+            {
+                "name": "pib-backend",
+                "services": {"flask": {"image": "ghcr.io/custom/backend-flask:v1.2.3"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    cerebra_model.write_text(
+        json.dumps(
+            {
+                "name": "cerebra",
+                "services": {"ui": {"image": "registry.example/robot-ui:v1.2.3"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    env["PIB_VOICE_DATA_DIR"] = "/caller-environment-value"
     record = subprocess.run(
         [
             sys.executable,
@@ -86,6 +107,10 @@ def test_recorded_deployments_recover_with_local_images_without_build_or_pull(
             "pib5advanced",
             "--smart-chats",
             "0",
+            "--backend-compose-config",
+            str(backend_model),
+            "--cerebra-compose-config",
+            str(cerebra_model),
         ],
         env=env,
         capture_output=True,
@@ -100,6 +125,15 @@ def test_recorded_deployments_recover_with_local_images_without_build_or_pull(
     )
     assert backend["profiles"] == ["all"]
     assert backend["imageTag"] == "v1.2.3"
+    assert backend["composeConfig"]["services"]["flask"]["image"].startswith(
+        "ghcr.io/custom/"
+    )
+    cerebra = next(
+        project for project in state["projects"] if project["name"] == "cerebra"
+    )
+    assert cerebra["composeConfig"]["services"]["ui"]["image"] == (
+        "registry.example/robot-ui:v1.2.3"
+    )
 
     recover = subprocess.run(
         [sys.executable, str(HELPER), "recover"],
@@ -140,3 +174,105 @@ def test_recovery_reports_missing_state_without_invoking_docker(
     assert result.returncode == 1
     assert "deployment state is missing" in result.stderr
     assert docker_log.read_text(encoding="utf-8") == ""
+
+
+def test_record_uses_the_compose_models_captured_from_the_installer_environment(
+    tmp_path: Path,
+) -> None:
+    env, _ = _helper_env(tmp_path)
+    backend_model = tmp_path / "backend-compose.json"
+    cerebra_model = tmp_path / "cerebra-compose.json"
+    backend_model.write_text(
+        json.dumps(
+            {
+                "name": "pib-backend",
+                "services": {
+                    "flask": {
+                        "image": "registry.example/pib-flask:develop",
+                        "volumes": [
+                            {
+                                "type": "bind",
+                                "source": "/custom/voice",
+                                "target": "/data/voice",
+                            }
+                        ],
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    cerebra_model.write_text(
+        json.dumps(
+            {
+                "name": "cerebra",
+                "services": {"ui": {"image": "registry.example/custom-ui:develop"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    env["PIB_VOICE_DATA_DIR"] = "/different-caller-value"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(HELPER),
+            "record",
+            "--backend-tag",
+            "develop",
+            "--cerebra-tag",
+            "develop",
+            "--backend-compose-config",
+            str(backend_model),
+            "--cerebra-compose-config",
+            str(cerebra_model),
+        ],
+        env=env,
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    state = json.loads((tmp_path / ".update" / "deployments.json").read_text())
+    backend = next(
+        project for project in state["projects"] if project["name"] == "pib-backend"
+    )
+    assert backend["composeConfig"]["services"]["flask"]["volumes"][0]["source"] == (
+        "/custom/voice"
+    )
+
+
+def test_record_keeps_compatibility_with_older_installer_callers(
+    tmp_path: Path,
+) -> None:
+    env, _ = _helper_env(tmp_path)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(HELPER),
+            "record",
+            "--backend-tag",
+            "v2.0.0",
+            "--cerebra-tag",
+            "v2.0.0",
+            "--backend-version",
+            "2.0.0",
+            "--cerebra-version",
+            "2.0.0",
+            "--hardware-variant",
+            "pib5advanced",
+            "--smart-chats",
+            "0",
+        ],
+        env=env,
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    state = json.loads((tmp_path / ".update" / "deployments.json").read_text())
+    assert len(state["projects"]) == 2
+    assert all(project["imageTag"] == "v2.0.0" for project in state["projects"])

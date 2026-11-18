@@ -579,13 +579,40 @@ record_deployment_state() {
     local backend_tag cerebra_tag
     backend_tag="$(python3 "$BACKEND_IMAGES_HELPER" resolve-tag "${APP_VERSION:-}")" || return 1
     cerebra_tag="$backend_tag"
+    local backend_config="$UPDATE_DIR/.deployment-backend-$$.json"
+    local cerebra_config="$UPDATE_DIR/.deployment-cerebra-$$.json"
+    local compose_status=0
+    local -a backend_profiles=(--profile all) extra_profiles=()
+    readarray -t extra_profiles < <(backend_extra_profile_flags)
+    backend_profiles+=("${extra_profiles[@]}")
+
+    docker compose --project-name pib-backend -f "$BACKEND_DIR/docker-compose.yaml" \
+      "${backend_profiles[@]}" config --format json >"$backend_config" || compose_status=$?
+    if [ "$compose_status" -eq 0 ]; then
+        docker compose --project-name cerebra -f "$CEREBRA_DIR/docker-compose.yaml" \
+          config --format json >"$cerebra_config" || compose_status=$?
+    fi
+    if [ "$compose_status" -ne 0 ]; then
+        log "Could not capture the deployed Docker Compose configuration (rc=${compose_status})"
+        rm -f "$backend_config" "$cerebra_config"
+        return 1
+    fi
+    chmod 600 "$backend_config" "$cerebra_config" || {
+        rm -f "$backend_config" "$cerebra_config"
+        return 1
+    }
+    local record_status=0
     python3 "$DEPLOYMENT_RECOVERY_HELPER" record \
       --backend-tag "$backend_tag" \
       --cerebra-tag "$cerebra_tag" \
       --backend-version "${APP_VERSION:-}" \
       --cerebra-version "${APP_VERSION:-}" \
       --hardware-variant "$hardware_variant" \
-      --smart-chats "$smart_chats"
+      --smart-chats "$smart_chats" \
+      --backend-compose-config "$backend_config" \
+      --cerebra-compose-config "$cerebra_config" || record_status=$?
+    rm -f "$backend_config" "$cerebra_config"
+    return "$record_status"
 }
 
 resolve_smart_chats() {
@@ -866,6 +893,9 @@ recreate_backend_from_registry() {
 # Second argument `skip_base_refresh`: when non-empty, skips `build --pull` (rollback).
 build_backend_stack() {
     local skip_base_refresh="${1:-}"
+    if [ -z "${PIB_IMAGE_TAG:-}" ]; then
+        export PIB_IMAGE_TAG="$(python3 "$BACKEND_IMAGES_HELPER" resolve-tag "${APP_VERSION:-}")" || return 1
+    fi
     if [ -z "$skip_base_refresh" ]; then
         if recreate_backend_from_registry; then
             return 0
@@ -937,6 +967,9 @@ recreate_cerebra_from_registry() {
 
 build_cerebra_stack() {
     local skip_registry="${1:-}"
+    if [ -z "${PIB_IMAGE_TAG:-}" ]; then
+        export PIB_IMAGE_TAG="$(python3 "$BACKEND_IMAGES_HELPER" resolve-tag "${APP_VERSION:-}")" || return 1
+    fi
     if [ -z "$skip_registry" ]; then
         if recreate_cerebra_from_registry; then
             return 0
@@ -1389,7 +1422,7 @@ prune_obsolete_release_images() {
     local ref repository tag
     current_tag="$(python3 "$BACKEND_IMAGES_HELPER" resolve-tag "${APP_VERSION:-}")"
     if [ -n "${PREVIOUS_APP_VERSION:-}" ]; then
-        previous_tag="$(python3 "$BACKEND_IMAGES_HELPER" resolve-tag "${PREVIOUS_APP_VERSION}")"
+        previous_tag="$(PIB_IMAGE_TAG= python3 "$BACKEND_IMAGES_HELPER" resolve-tag "${PREVIOUS_APP_VERSION}")"
     else
         previous_tag=""
     fi
@@ -1431,6 +1464,7 @@ rollback_once() {
     else
         log "WARNING: rolled-back checkout has no release tag; backend rebuild will use the compose-file fallback"
         unset APP_VERSION
+        unset PIB_IMAGE_TAG
     fi
     if PIB_SDK_VERSION="$(read_pib_sdk_version)"; then
         export PIB_SDK_VERSION

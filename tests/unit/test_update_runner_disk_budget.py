@@ -114,7 +114,13 @@ if [ "${1:-}" = "compose" ] && [[ "$joined" == *" config --format json"* ]]; the
         if [ "$previous" = "--project-name" ]; then project="$argument"; break; fi
         previous="$argument"
     done
-    printf '{"name":"%s","services":{"fixture":{"image":"fixture:latest"}}}\\n' "$project"
+    tag="${PIB_IMAGE_TAG:-develop}"
+    if [ "$project" = "pib-backend" ]; then
+        image="ghcr.io/pib-rocks/pib-backend-flask:$tag"
+    else
+        image="ghcr.io/pib-rocks/cerebra:$tag"
+    fi
+    printf '{"name":"%s","services":{"fixture":{"image":"%s"}}}\\n' "$project" "$image"
     exit 0
 fi
 if [[ "$joined" == *" --profile all "* && "$joined" == *" build "* ]]; then

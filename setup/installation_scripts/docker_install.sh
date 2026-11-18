@@ -385,14 +385,42 @@ function start_container() {
     fi
     print SUCCESS "Started cerebra container"
 
+    # Capture the exact resolved Compose models under the same sudo allowlist and
+    # profiles used above. Recomputing them in the caller's environment can record
+    # different bind mounts or images than the running containers actually use.
+    local backend_compose_config="${update_dir}/.pib-deployment-backend-$$.json"
+    local frontend_compose_config="${update_dir}/.pib-deployment-cerebra-$$.json"
+    local compose_status=0
+    sudo "${backend_env[@]}" docker compose --project-name pib-backend -f "$BACKEND_DIR/docker-compose.yaml" \
+      "${compose_profiles[@]}" config --format json >"$backend_compose_config" 2>>"$DOCKER_BUILD_LOG" || compose_status=$?
+    if [ "$compose_status" -eq 0 ]; then
+        sudo "${frontend_env[@]}" docker compose --project-name cerebra -f "$FRONTEND_DIR/docker-compose.yaml" \
+          config --format json >"$frontend_compose_config" 2>>"$DOCKER_BUILD_LOG" || compose_status=$?
+    fi
+    if [ "$compose_status" -ne 0 ]; then
+        print ERROR "Could not capture the installed Docker Compose configuration (rc=${compose_status})"
+        tail -n 40 "$DOCKER_BUILD_LOG"
+        rm -f "$backend_compose_config" "$frontend_compose_config"
+        return 1
+    fi
+    chmod 600 "$backend_compose_config" "$frontend_compose_config" || {
+        rm -f "$backend_compose_config" "$frontend_compose_config"
+        return 1
+    }
+
     PIB_UPDATE_DIR="$update_dir" PIB_BACKEND_DIR="$BACKEND_DIR" PIB_CEREBRA_DIR="$FRONTEND_DIR" \
-      python3 "$BACKEND_DIR/setup/deployment_recovery.py" record \
+    local record_status=0
+    python3 "$BACKEND_DIR/setup/deployment_recovery.py" record \
       --backend-tag "$backend_tag" \
       --cerebra-tag "$frontend_tag" \
       --backend-version "$backend_version" \
       --cerebra-version "$frontend_version" \
       --hardware-variant "$PIB_HARDWARE_VARIANT" \
-      --smart-chats "${PIB_SMART_CHATS:-1}" || return 1
+      --smart-chats "${PIB_SMART_CHATS:-1}" \
+      --backend-compose-config "$backend_compose_config" \
+      --cerebra-compose-config "$frontend_compose_config" || record_status=$?
+    rm -f "$backend_compose_config" "$frontend_compose_config"
+    [ "$record_status" -eq 0 ] || return "$record_status"
 }
 
 function add_pib_to_docker_group() {
