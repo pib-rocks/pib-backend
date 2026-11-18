@@ -116,7 +116,7 @@ if [ "${1:-}" = "compose" ] && [[ "$joined" == *" config --format json"* ]]; the
     done
     tag="${PIB_IMAGE_TAG:-develop}"
     if [ "$project" = "pib-backend" ]; then
-        image="ghcr.io/pib-rocks/pib-backend-flask:$tag"
+        image="ghcr.io/pib-rocks/pib-backend-flask-app:$tag"
     else
         image="ghcr.io/pib-rocks/cerebra:$tag"
     fi
@@ -291,9 +291,11 @@ def _run(
                 "ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.2",
                 "ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.3",
                 "ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.4",
+                "ghcr.io/pib-rocks/pib-backend-flask-app:latest",
                 "ghcr.io/pib-rocks/cerebra:v0.7.2",
                 "ghcr.io/pib-rocks/cerebra:v0.7.3",
                 "ghcr.io/pib-rocks/cerebra:v0.7.4",
+                "ghcr.io/pib-rocks/cerebra:latest",
             ]
         )
         + "\n",
@@ -427,7 +429,9 @@ def test_rollback_writes_running_status_before_rebuild(tmp_path: Path) -> None:
     assert "rollback attempt also failed" in status["message"]
 
 
-def test_post_success_cleanup_keeps_current_and_previous_tags(tmp_path: Path) -> None:
+def test_post_success_cleanup_keeps_only_current_deployment_tags(
+    tmp_path: Path,
+) -> None:
     _result, update_dir, docker_log, log = _run(
         tmp_path,
         free_kib="8388608",
@@ -441,16 +445,16 @@ def test_post_success_cleanup_keeps_current_and_previous_tags(tmp_path: Path) ->
     assert "Post-update image cleanup" in log
     assert "ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.2" in docker_log
     assert "image rm -f ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.2" in docker_log
-    assert (
-        "image rm -f ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.3" not in docker_log
-    )
+    assert "image rm -f ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.3" in docker_log
     assert (
         "image rm -f ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.4" not in docker_log
     )
+    assert "image rm -f ghcr.io/pib-rocks/pib-backend-flask-app:latest" in docker_log
     assert "ghcr.io/pib-rocks/cerebra:v0.7.2" in docker_log
     assert "image rm -f ghcr.io/pib-rocks/cerebra:v0.7.2" in docker_log
-    assert "image rm -f ghcr.io/pib-rocks/cerebra:v0.7.3" not in docker_log
+    assert "image rm -f ghcr.io/pib-rocks/cerebra:v0.7.3" in docker_log
     assert "image rm -f ghcr.io/pib-rocks/cerebra:v0.7.4" not in docker_log
+    assert "image rm -f ghcr.io/pib-rocks/cerebra:latest" in docker_log
     status = json.loads((update_dir / "status.json").read_text(encoding="utf-8"))
     assert status["state"] == "done"
 
@@ -465,10 +469,12 @@ def test_runner_defines_cerebra_registry_stack_helpers() -> None:
     assert "build_cerebra_stack rollback" in rollback
     main = text.split('write_status "building"', 1)[1].split("check_cancel", 2)[0]
     assert "build_cerebra_stack || fail" in main
-    prune = text.split("prune_obsolete_release_images() {", 1)[1].split(
+    prune = text.split("prune_obsolete_deployment_images() {", 1)[1].split(
         "\nrollback_once()", 1
     )[0]
-    assert r"^ghcr\.io/pib-rocks/(pib-backend-|cerebra:)" in prune
+    assert 'project_names != {"pib-backend", "cerebra"}' in prune
+    assert "docker images --format '{{.Repository}}:{{.Tag}}'" in prune
+    assert '"$ref" != "$current_ref"' in prune
 
 
 def test_rollback_prefers_cached_images_with_no_build_and_writes_granular_progress(

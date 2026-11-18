@@ -3,7 +3,9 @@ import re
 import socket
 import json
 import logging
+import fcntl
 from urllib.parse import quote
+from pathlib import Path
 from typing import Dict, Any, List, Tuple, Optional
 
 DOCKER_SOCK = "/var/run/docker.sock"
@@ -326,24 +328,125 @@ def _human_bytes(value: int) -> str:
     return f"{size:.1f} TB"
 
 
-def purge_docker() -> Tuple[int, Dict[str, Any]]:
-    """Prune expendable Docker objects while keeping cached PIB image tags.
+def _current_recovery_image_refs() -> set[str]:
+    update_dir = Path(os.environ.get("PIB_UPDATE_DIR", "/app/.update"))
+    state_path = update_dir / "deployments.json"
+    try:
+        document = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise RuntimeError(f"cannot read deployment recovery state: {error}") from error
+    if not isinstance(document, dict) or document.get("schemaVersion") != 1:
+        raise RuntimeError("deployment recovery state has an unsupported schema")
+    projects = document.get("projects")
+    if not isinstance(projects, list) or not projects:
+        raise RuntimeError("deployment recovery state has no Compose projects")
 
-    ``POST /images/prune`` removes only dangling images so tagged PIB images stay
-    available for boot-time offline recovery after stopped containers are purged.
-    ``POST /build/prune`` targets the BuildKit cache used by this installation.
+    references: set[str] = set()
+    project_names: set[str] = set()
+    for project in projects:
+        name = project.get("name") if isinstance(project, dict) else None
+        if not isinstance(name, str) or not name.strip():
+            raise RuntimeError("deployment recovery state has a project without a name")
+        project_names.add(name.strip())
+        model = project.get("composeConfig") if isinstance(project, dict) else None
+        services = model.get("services") if isinstance(model, dict) else None
+        if not isinstance(services, dict) or not services:
+            raise RuntimeError("deployment recovery state has an invalid Compose model")
+        for service in services.values():
+            image = service.get("image") if isinstance(service, dict) else None
+            if not isinstance(image, str) or not image.strip():
+                raise RuntimeError(
+                    "deployment recovery state has a service without an image"
+                )
+            references.add(image.strip())
+    if (
+        project_names != {"pib-backend", "cerebra"}
+        or len(projects) != 2
+        or not references
+    ):
+        raise RuntimeError(
+            "deployment recovery state does not contain both PIB Compose projects"
+        )
+    return references
+
+
+def _prune_obsolete_images() -> Tuple[Dict[str, Any], List[str]]:
+    """Delete non-current image tags while retaining every saved Compose image."""
+    try:
+        protected = _current_recovery_image_refs()
+    except RuntimeError as error:
+        return {"skipped": str(error)}, [f"images: {error}"]
+
+    code, body = _docker_request(
+        "GET", "/images/json?all=true", timeout=PURGE_TIMEOUT_SECONDS
+    )
+    if code != 200:
+        return {}, [f"images: list failed with {code}"]
+    try:
+        images = json.loads(body.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError) as error:
+        return {}, [f"images: list response is invalid: {error}"]
+    if not isinstance(images, list):
+        return {}, ["images: list response is not an array"]
+
+    removed: List[str] = []
+    errors: List[str] = []
+    for image in images:
+        tags = image.get("RepoTags") if isinstance(image, dict) else None
+        if not isinstance(tags, list):
+            continue
+        for reference in tags:
+            if (
+                not isinstance(reference, str)
+                or reference == "<none>:<none>"
+                or reference in protected
+            ):
+                continue
+            delete_path = f"/images/{quote(reference, safe='')}?force=0"
+            delete_code, _ = _docker_request(
+                "DELETE", delete_path, timeout=PURGE_TIMEOUT_SECONDS
+            )
+            if delete_code in (200, 204, 404):
+                removed.append(reference)
+            else:
+                errors.append(f"images: could not remove {reference} ({delete_code})")
+
+    dangling_filter = quote(json.dumps({"dangling": ["true"]}))
+    prune_code, prune_body = _docker_request(
+        "POST",
+        f"/images/prune?filters={dangling_filter}",
+        timeout=PURGE_TIMEOUT_SECONDS,
+    )
+    reclaimed = 0
+    if prune_code in (200, 204):
+        try:
+            prune_result = json.loads(prune_body.decode("utf-8"))
+            reclaimed = int(prune_result.get("SpaceReclaimed", 0))
+        except (
+            AttributeError,
+            TypeError,
+            ValueError,
+            UnicodeError,
+            json.JSONDecodeError,
+        ):
+            pass
+    else:
+        errors.append(f"images: dangling-image prune failed with {prune_code}")
+    return {"removed": removed, "SpaceReclaimed": reclaimed}, errors
+
+
+def _purge_docker_locked() -> Tuple[int, Dict[str, Any]]:
+    """Prune unused objects while retaining the images needed by saved recovery.
+
+    All other tagged images are removed. Saved Compose image references remain
+    available for boot-time recovery after stopped containers are purged.
     """
     results: Dict[str, Any] = {}
     errors: List[str] = []
     reclaimed = 0
 
-    # filters must be the URL-encoded JSON the Engine expects.
-    # Keep tagged images even after their stopped Compose containers are pruned.
-    # Boot-time recovery is deliberately offline and depends on these cached tags.
-    image_filters = quote(json.dumps({"dangling": ["true"]}))
     endpoints = [
         ("containers", "/containers/prune"),
-        ("images", f"/images/prune?filters={image_filters}"),
         ("volumes", "/volumes/prune"),
         ("networks", "/networks/prune"),
         ("build", "/build/prune?all=true"),
@@ -367,6 +470,11 @@ def purge_docker() -> Tuple[int, Dict[str, Any]]:
         except Exception as e:
             errors.append(f"{key}: {str(e)}")
 
+    image_result, image_errors = _prune_obsolete_images()
+    results["images"] = image_result
+    reclaimed += image_result.get("SpaceReclaimed", 0)
+    errors.extend(image_errors)
+
     message = f"Docker purge completed: {_human_bytes(reclaimed)} freed."
     if errors:
         message += f" {len(errors)} step(s) failed."
@@ -378,3 +486,28 @@ def purge_docker() -> Tuple[int, Dict[str, Any]]:
         "details": results,
         "errors": errors if errors else None,
     }
+
+
+def purge_docker() -> Tuple[int, Dict[str, Any]]:
+    update_dir = Path(os.environ.get("PIB_UPDATE_DIR", "/app/.update"))
+    try:
+        update_dir.mkdir(parents=True, exist_ok=True)
+        with (update_dir / "deployment.lock").open("a", encoding="utf-8") as lock:
+            try:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return 409, {
+                    "status": "error",
+                    "message": "Docker purge cannot run while an update or recovery is in progress.",
+                    "errors": ["deployment lock is held"],
+                }
+            try:
+                return _purge_docker_locked()
+            finally:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+    except OSError as error:
+        return 500, {
+            "status": "error",
+            "message": f"Docker purge could not acquire deployment lock: {error}",
+            "errors": [str(error)],
+        }

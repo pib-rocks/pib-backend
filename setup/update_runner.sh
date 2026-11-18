@@ -1417,36 +1417,74 @@ check_disk_budget() {
     log "Disk budget satisfied: required ${required_mib} MiB (${required} KiB), available ${available_mib} MiB (${available} KiB)"
 }
 
-prune_obsolete_release_images() {
-    local current_tag previous_tag free_before free_after reclaimed_kib removed=0
-    local ref repository tag
-    current_tag="$(python3 "$BACKEND_IMAGES_HELPER" resolve-tag "${APP_VERSION:-}")"
-    if [ -n "${PREVIOUS_APP_VERSION:-}" ]; then
-        previous_tag="$(PIB_IMAGE_TAG= python3 "$BACKEND_IMAGES_HELPER" resolve-tag "${PREVIOUS_APP_VERSION}")"
-    else
-        previous_tag=""
+prune_obsolete_deployment_images() {
+    local free_before free_after reclaimed_kib removed=0
+    local ref repository current_ref current_repository current_images_file
+    local -a current_images=()
+    current_images_file="$UPDATE_DIR/current-image-refs-$$.txt"
+    if ! python3 - "$UPDATE_DIR/deployments.json" >"$current_images_file" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as source:
+    state = json.load(source)
+if state.get("schemaVersion") != 1 or not isinstance(state.get("projects"), list):
+    raise SystemExit("invalid deployment recovery state")
+project_names = set()
+for project in state["projects"]:
+    if not isinstance(project, dict) or not isinstance(project.get("name"), str):
+        raise SystemExit("deployment recovery state has a project without a name")
+    project_names.add(project["name"])
+    services = project.get("composeConfig", {}).get("services", {})
+    if not isinstance(services, dict) or not services:
+        raise SystemExit("deployment recovery state has an invalid Compose model")
+    for service in services.values():
+        image = service.get("image") if isinstance(service, dict) else None
+        if not isinstance(image, str) or not image.strip():
+            raise SystemExit("deployment recovery state has a service without an image")
+        image = image.strip()
+        without_digest = image.split("@", 1)[0]
+        slash = without_digest.rfind("/")
+        colon = without_digest.rfind(":")
+        repository = without_digest[:colon] if colon > slash else without_digest
+        print(f"{repository}\t{image}")
+if project_names != {"pib-backend", "cerebra"} or len(state["projects"]) != 2:
+    raise SystemExit("deployment recovery state does not contain both PIB Compose projects")
+PY
+    then
+        rm -f "$current_images_file"
+        log "WARNING: could not read current deployment images; retaining cached image tags"
+        return 0
+    fi
+    mapfile -t current_images <"$current_images_file"
+    rm -f "$current_images_file"
+    if [ "${#current_images[@]}" -eq 0 ]; then
+        log "WARNING: no current deployment image references were found; retaining cached image tags"
+        return 0
     fi
     free_before="$(read_free_kib)"
     while IFS= read -r ref; do
         [ -n "$ref" ] || continue
-        tag="${ref##*:}"
-        if [ "$tag" = "$current_tag" ] || [ "$tag" = "latest" ]; then
-            continue
-        fi
-        if [ -n "$previous_tag" ] && [ "$tag" = "$previous_tag" ]; then
-            continue
-        fi
-        if docker image rm -f "$ref" >/dev/null 2>&1; then
-            removed=$((removed + 1))
-        fi
-    done < <(docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | grep -E '^ghcr\.io/pib-rocks/(pib-backend-|cerebra:)' || true)
+        repository="${ref%:*}"
+        for current_ref in "${current_images[@]}"; do
+            current_repository="${current_ref%%$'\t'*}"
+            current_ref="${current_ref#*$'\t'}"
+            if [ "$repository" != "$current_repository" ]; then
+                continue
+            fi
+            if [ "$ref" != "$current_ref" ] && docker image rm -f "$ref" >/dev/null 2>&1; then
+                removed=$((removed + 1))
+            fi
+            break
+        done
+    done < <(docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null || true)
     docker image prune -f >/dev/null 2>&1 || true
     free_after="$(read_free_kib)"
     reclaimed_kib=$((free_after - free_before))
     if [ "$reclaimed_kib" -lt 0 ]; then
         reclaimed_kib=0
     fi
-    log "Post-update image cleanup: reclaimed ${reclaimed_kib} KiB ($(kib_to_mib "$reclaimed_kib") MiB); free disk now ${free_after} KiB ($(kib_to_mib "$free_after") MiB). Kept release tags ${current_tag} and ${previous_tag:-<none>}; removed ${removed} obsolete tagged image(s)."
+    log "Post-update image cleanup: reclaimed ${reclaimed_kib} KiB ($(kib_to_mib "$reclaimed_kib") MiB); free disk now ${free_after} KiB ($(kib_to_mib "$free_after") MiB). Kept only the images referenced by the current Compose deployment; removed ${removed} obsolete tag(s)."
 }
 
 rollback_once() {
@@ -1632,7 +1670,7 @@ if ! verify_result; then
 fi
 
 record_deployment_state || fail "Update completed but deployment recovery state could not be recorded"
-prune_obsolete_release_images
+prune_obsolete_deployment_images
 discard_model_store_snapshot
 write_revision "pib-backend" "$BACKEND_TARGET"
 write_revision "cerebra" "$CEREBRA_TARGET"
