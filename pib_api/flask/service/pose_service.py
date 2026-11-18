@@ -9,11 +9,6 @@ from model.motor_model import Motor
 
 logger = logging.getLogger(__name__)
 
-# pib_sdk.Write.move() takes degrees in [-90, 90] and refuses anything outside that range
-# with a ValueError, so a stored pose above this limit cannot be played by a Blockly
-# program: the generated apply_pose() dies in a traceback and the robot does not move.
-POSITION_LIMIT = 9000
-
 
 class PoseRefusedError(Exception):
     """The data model refuses this change to the pose (PR-1974).
@@ -46,21 +41,23 @@ def get_pose_by_name(pose_name: str) -> Pose:
 
 
 def _position_limits() -> Dict[str, Tuple[int, int]]:
-    """Allowed centidegree range per motor, clamped to the playable +-90 degrees.
+    """Allowed centidegree range per motor, taken from the motor's configured range.
 
     A servo reports its position with its own tolerance, so a recorded joint can land a
-    few centidegrees beyond the configured range. Storing that value makes the pose
-    unplayable in Blockly; clamping keeps what the robot can actually reach.
+    few centidegrees beyond the configured range; the motors node refuses to play a
+    position outside that range, so the value is clamped to the servo's own range on save.
+
+    The finger servos have a wider range (+-18000 centidegree, i.e. +-180 degrees) than the
+    arm/head/wrist servos (+-9000). The clamp must use each motor's own range - a blanket
+    +-9000 cap corrupts any finger pose beyond 90 degrees (measured on .168: fingers at
+    -14766 centidegrees were stored as -9000).
     """
     limits: Dict[str, Tuple[int, int]] = {}
     for motor in Motor.query.all():
-        low, high = -POSITION_LIMIT, POSITION_LIMIT
-        if motor.rotation_range_min is not None:
-            low = max(low, int(motor.rotation_range_min))
-        if motor.rotation_range_max is not None:
-            high = min(high, int(motor.rotation_range_max))
+        low = int(motor.rotation_range_min)
+        high = int(motor.rotation_range_max)
         if low > high:
-            low, high = -POSITION_LIMIT, POSITION_LIMIT
+            low, high = -9000, 9000
         limits[motor.name] = (low, high)
     return limits
 

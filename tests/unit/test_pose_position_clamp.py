@@ -11,7 +11,8 @@ and calls ``pib_sdk.Write.move()``, whose ``_degrees_to_radians`` refuses anythi
 program ends in a traceback before a trajectory is sent, so the robot stays in the previous
 posture - which reads as "the new pose inherited the old angles".
 
-Saving therefore clamps to the motor's own range, intersected with the playable +-90 deg.
+Saving therefore clamps to the motor's own configured range - which for the finger servos
+is +-180 degrees, wider than the arm/head/wrist servos' +-90 degrees.
 """
 
 import logging
@@ -141,14 +142,35 @@ def test_update_keeps_positions_inside_the_range(app):
         _drop_pose(app, pose_id)
 
 
+def test_clamp_uses_the_motors_own_range_not_a_blanket_90_degrees():
+    """Finger servos travel beyond +-90 degrees; the clamp must respect their range.
+
+    A blanket +-9000 cap corrupted every finger pose beyond 90 degrees on .168 (fingers
+    recorded at -14766 centidegrees were stored as -9000 and could not be played back).
+    """
+    limits = {
+        "turn_head_motor": (-9000, 9000),
+        "index_right_stretch": (-18000, 18000),
+    }
+    assert pose_service.clamp_position("turn_head_motor", -9026, limits) == -9000
+    assert pose_service.clamp_position("index_right_stretch", -14766, limits) == -14766
+    assert pose_service.clamp_position("index_right_stretch", 18001, limits) == 18000
+
+
 def test_every_stored_pose_of_the_seed_is_playable(app):
-    """Boot must not leave a pose that Blockly refuses (raise instead of moving)."""
+    """Boot must not leave a pose that the motors node refuses (position outside range)."""
     with app.app_context():
+        limits = pose_service._position_limits()
         poses = db.session.query(Pose).all()
         violations = [
             (pose.name, motor_position.motor_name, motor_position.position)
             for pose in poses
             for motor_position in pose.motor_positions
-            if not -9000 <= motor_position.position <= 9000
+            if motor_position.motor_name in limits
+            and not (
+                limits[motor_position.motor_name][0]
+                <= motor_position.position
+                <= limits[motor_position.motor_name][1]
+            )
         ]
     assert not violations, violations
