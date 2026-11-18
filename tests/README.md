@@ -108,4 +108,4 @@ Requires the `pib-blockly` submodule at `pib_blockly/pib_blockly_server/src/pib-
 
 ## CI note
 
-Only Black lint runs in GitHub Actions today; execute these suites locally or wire them into CI separately.
+GitHub Actions runs the device-free unit suite (`tests/run_unit_suite.sh`) and Blockly Jest on pull requests and pushes to `develop` or `main`. The Black workflow is triggered by pushes. These workflows do not replace the Docker, Robot Framework, frontend, or live robot suites described above. See `.github/workflows/tests.yml`, `.github/workflows/black.yml`, and the workspace skill `.agents/skills/pib-testing-workflow/SKILL.md` for current PR verification guidance.

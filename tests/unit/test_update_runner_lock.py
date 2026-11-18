@@ -96,6 +96,16 @@ DOCKER_STUB = """#!/bin/bash
 } >> "${DOCKER_LOG:?}"
 
 joined=" $* "
+if [ "${1:-}" = "compose" ] && [[ "$joined" == *" config --format json"* ]]; then
+    project="default"
+    previous=""
+    for argument in "$@"; do
+        if [ "$previous" = "--project-name" ]; then project="$argument"; break; fi
+        previous="$argument"
+    done
+    printf '{"name":"%s","services":{"fixture":{"image":"fixture:latest"}}}\\n' "$project"
+    exit 0
+fi
 if [[ "$joined" == *" --profile all "* && "$joined" == *" build "* ]]; then
     if [[ "$joined" == *" --pull "* ]] || [[ "$joined" == *" --pull" ]]; then
         printf 'pull\\n' >> "${STUB_PROFILE_BUILD_LOG:?}"
@@ -270,6 +280,16 @@ def test_runner_acquires_lock_and_completes(tmp_path: Path) -> None:
     status = json.loads((update_dir / "status.json").read_text(encoding="utf-8"))
     assert status["state"] == "done"
     assert (update_dir / "runner.lock").is_file()
+    deployment = json.loads(
+        (update_dir / "deployments.json").read_text(encoding="utf-8")
+    )
+    assert [project["name"] for project in deployment["projects"]] == [
+        "pib-backend",
+        "cerebra",
+    ]
+    assert all(
+        project["composeConfig"]["services"] for project in deployment["projects"]
+    )
     assert profile_log.read_text(encoding="utf-8").strip() == "pull"
 
 
@@ -295,7 +315,7 @@ def test_second_runner_fails_while_lock_held(tmp_path: Path) -> None:
     status = json.loads((update_dir / "status.json").read_text(encoding="utf-8"))
     assert status["state"] == "failed"
     assert "runner.lock" in status["message"]
-    assert "Another update or deployment holds" in status["message"]
+    assert "Another update job holds" in status["message"]
     assert recreate_log.read_text(encoding="utf-8") == ""
     assert "--force-recreate" not in docker_log.read_text(encoding="utf-8")
 

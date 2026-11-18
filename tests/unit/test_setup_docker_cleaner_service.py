@@ -7,6 +7,7 @@ stub on PATH that records its argv and can fail `systemctl start` on demand.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -37,11 +38,26 @@ if [ "${args[0]:-}" = "systemctl" ] && [ "${args[1]:-}" = "start" ]; then
     fi
     exit "$status"
 fi
+if [ "${args[0]:-}" = "install" ] && [ "${args[1]:-}" = "-d" ]; then
+    mkdir -p "${args[-1]}"
+    exit 0
+fi
 exit 0
 """
 
 # `command_exists docker` must be true so install_docker_engine skips the apt work.
 DOCKER_STUB = """#!/bin/bash
+joined=" $* "
+if [ "${1:-}" = "compose" ] && [[ "$joined" == *" config --format json"* ]]; then
+    project="default"
+    previous=""
+    for argument in "$@"; do
+        if [ "$previous" = "--project-name" ]; then project="$argument"; break; fi
+        previous="$argument"
+    done
+    printf '{"name":"%s","services":{"fixture":{"image":"fixture:latest"}}}\\n' "$project"
+    exit 0
+fi
 exit 0
 """
 
@@ -88,6 +104,12 @@ def _make_backend_dir(tmp_path: Path) -> Path:
     blockly.parent.mkdir(parents=True)
     blockly.write_text("// vendored\n", encoding="utf-8")
     (backend_dir / "pib_api/flask").mkdir(parents=True)
+    (backend_dir / "setup").mkdir()
+    shutil.copy2(
+        REPO_ROOT / "setup" / "deployment_recovery.py",
+        backend_dir / "setup" / "deployment_recovery.py",
+    )
+    (backend_dir / "docker-compose.yaml").write_text("services: {}\n", encoding="utf-8")
     return backend_dir
 
 
@@ -96,6 +118,11 @@ def _run(tmp_path: Path, script: str, start_status: int = 0):
     log.touch()
     stub_bin = _make_stub_bin(tmp_path)
     backend_dir = _make_backend_dir(tmp_path)
+    frontend_dir = tmp_path / "cerebra"
+    frontend_dir.mkdir(exist_ok=True)
+    (frontend_dir / "docker-compose.yaml").write_text(
+        "services: {}\n", encoding="utf-8"
+    )
 
     env = dict(os.environ)
     env.update(
@@ -103,10 +130,13 @@ def _run(tmp_path: Path, script: str, start_status: int = 0):
         STUB_LOG=str(log),
         STUB_SYSTEMCTL_START_STATUS=str(start_status),
         BACKEND_DIR=str(backend_dir),
-        FRONTEND_DIR=str(tmp_path / "cerebra"),
+        FRONTEND_DIR=str(frontend_dir),
         DOCKER_INSTALL=str(DOCKER_INSTALL),
         # The compose output file defaults to $HOME; keep it inside the sandbox.
         PIB_DOCKER_BUILD_LOG=str(tmp_path / "docker-build.log"),
+        PIB_UPDATE_DIR=str(tmp_path / "update"),
+        PIB_BACKEND_DIR=str(backend_dir),
+        PIB_CEREBRA_DIR=str(tmp_path / "cerebra"),
     )
     result = subprocess.run(
         ["bash", "-c", script],
@@ -152,6 +182,9 @@ def test_start_container_forwards_release_tag_to_backend_and_frontend_compose(tm
     backend_dir = _make_backend_dir(tmp_path)
     frontend_dir = tmp_path / "cerebra"
     frontend_dir.mkdir()
+    (frontend_dir / "docker-compose.yaml").write_text(
+        "services: {}\n", encoding="utf-8"
+    )
     for repo in (backend_dir, frontend_dir):
         subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
         subprocess.run(
@@ -165,6 +198,7 @@ def test_start_container_forwards_release_tag_to_backend_and_frontend_compose(tm
 
     sudo_raw = tmp_path / "sudo_raw.log"
     sudo_raw.touch()
+    (tmp_path / "update").mkdir()
     stub_bin = _make_stub_bin(tmp_path)
     (stub_bin / "sudo").write_text(
         '#!/bin/bash\nprintf "%s\\n" "$*" >> "$SUDO_RAW_LOG"\nexit 0\n',
@@ -180,6 +214,9 @@ def test_start_container_forwards_release_tag_to_backend_and_frontend_compose(tm
         PIB_HARDWARE_VARIANT="pib5edu",
         DOCKER_INSTALL=str(DOCKER_INSTALL),
         PIB_DOCKER_BUILD_LOG=str(tmp_path / "docker-build.log"),
+        PIB_UPDATE_DIR=str(tmp_path / "update"),
+        PIB_BACKEND_DIR=str(backend_dir),
+        PIB_CEREBRA_DIR=str(frontend_dir),
     )
     subprocess.run(["bash", "-c", HARNESS], env=env, check=True, capture_output=True)
     raw_calls = sudo_raw.read_text(encoding="utf-8").splitlines()
@@ -197,6 +234,9 @@ def test_start_container_falls_back_to_build_when_registry_disabled(tmp_path):
     backend_dir = _make_backend_dir(tmp_path)
     frontend_dir = tmp_path / "cerebra"
     frontend_dir.mkdir()
+    (frontend_dir / "docker-compose.yaml").write_text(
+        "services: {}\n", encoding="utf-8"
+    )
     for repo in (backend_dir, frontend_dir):
         subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
         subprocess.run(
@@ -210,6 +250,7 @@ def test_start_container_falls_back_to_build_when_registry_disabled(tmp_path):
 
     sudo_raw = tmp_path / "sudo_raw.log"
     sudo_raw.touch()
+    (tmp_path / "update").mkdir()
     stub_bin = _make_stub_bin(tmp_path)
     (stub_bin / "sudo").write_text(
         '#!/bin/bash\nprintf "%s\\n" "$*" >> "$SUDO_RAW_LOG"\nexit 0\n',
@@ -226,6 +267,9 @@ def test_start_container_falls_back_to_build_when_registry_disabled(tmp_path):
         PIB_USE_REGISTRY_IMAGES="0",
         DOCKER_INSTALL=str(DOCKER_INSTALL),
         PIB_DOCKER_BUILD_LOG=str(tmp_path / "docker-build.log"),
+        PIB_UPDATE_DIR=str(tmp_path / "update"),
+        PIB_BACKEND_DIR=str(backend_dir),
+        PIB_CEREBRA_DIR=str(frontend_dir),
     )
     subprocess.run(["bash", "-c", HARNESS], env=env, check=True, capture_output=True)
     raw_calls = sudo_raw.read_text(encoding="utf-8").splitlines()

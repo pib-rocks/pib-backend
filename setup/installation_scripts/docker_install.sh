@@ -293,9 +293,10 @@ function release_tag_at() {
 
 function start_container() {
     print INFO "Starting container"
-    sudo install -d -o pib -g pib -m 2770 /home/pib/app/.update || return 1
+    local update_dir="${PIB_UPDATE_DIR:-/home/pib/app/.update}"
+    sudo install -d -o pib -g pib -m 2770 "$update_dir" || return 1
     local deployment_lock_fd
-    exec {deployment_lock_fd}>>/home/pib/app/.update/deployment.lock || return 1
+    exec {deployment_lock_fd}>>"$update_dir/deployment.lock" || return 1
     flock "$deployment_lock_fd" || return 1
     echo "TRYB_URL_PREFIX=https://platform.tryb.ai" > "$BACKEND_DIR"/password.env
     local backend_version="" frontend_version="" backend_tag="develop" frontend_tag="develop"
@@ -378,7 +379,8 @@ function start_container() {
     fi
     print SUCCESS "Started cerebra container"
 
-    python3 "$BACKEND_DIR/setup/deployment_recovery.py" record \
+    PIB_UPDATE_DIR="$update_dir" PIB_BACKEND_DIR="$BACKEND_DIR" PIB_CEREBRA_DIR="$FRONTEND_DIR" \
+      python3 "$BACKEND_DIR/setup/deployment_recovery.py" record \
       --backend-tag "$backend_tag" \
       --cerebra-tag "$frontend_tag" \
       --backend-version "$backend_version" \

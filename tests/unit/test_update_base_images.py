@@ -76,6 +76,16 @@ DOCKER_STUB = """#!/bin/bash
 } >> "${DOCKER_LOG:?}"
 
 joined=" $* "
+if [ "${1:-}" = "compose" ] && [[ "$joined" == *" config --format json"* ]]; then
+    project="default"
+    previous=""
+    for argument in "$@"; do
+        if [ "$previous" = "--project-name" ]; then project="$argument"; break; fi
+        previous="$argument"
+    done
+    printf '{"name":"%s","services":{"fixture":{"image":"fixture:latest"}}}\\n' "$project"
+    exit 0
+fi
 if [[ "$joined" == *" --profile all "* && "$joined" == *" build "* ]]; then
     if [[ "$joined" == *" --pull "* ]] || [[ "$joined" == *" --pull" ]]; then
         printf 'pull\\n' >> "${STUB_PROFILE_BUILD_LOG:?}"

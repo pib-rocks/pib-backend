@@ -108,6 +108,16 @@ if [ "${1:-}" = "inspect" ]; then
 fi
 
 joined=" $* "
+if [ "${1:-}" = "compose" ] && [[ "$joined" == *" config --format json"* ]]; then
+    project="default"
+    previous=""
+    for argument in "$@"; do
+        if [ "$previous" = "--project-name" ]; then project="$argument"; break; fi
+        previous="$argument"
+    done
+    printf '{"name":"%s","services":{"fixture":{"image":"fixture:latest"}}}\\n' "$project"
+    exit 0
+fi
 if [[ "$joined" == *" exec "* ]]; then
     if [[ "$joined" == *" ros-programs "* ]] && [[ "$joined" == *"pib_sdk"* ]]; then
         if [ "${STUB_PIB_SDK_EXEC_FAIL:-0}" = "1" ]; then
