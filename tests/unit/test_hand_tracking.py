@@ -627,16 +627,24 @@ def test_prerotated_pixel_crop_rect_matches_depthai_imagemanip_and_rr2img():
         pipeline = dai.Pipeline(createImplicitDevice=False)
         manip = pipeline.create(dai.node.ImageManip)
         manip.setRunOnHost(True)
-        manip.initialConfig.addCropRotatedRect(rr, False)
-        manip.initialConfig.setOutputSize(
-            lm_input, lm_input, dai.ImageManipConfig.ResizeMode.STRETCH
-        )
+        manip.inputConfig.setWaitForMessage(True)
         image_queue = manip.inputImage.createInputQueue(maxSize=1, blocking=True)
+        config_queue = manip.inputConfig.createInputQueue(maxSize=1, blocking=True)
         output_queue = manip.out.createOutputQueue(maxSize=1, blocking=True)
+        cfg = dai.ImageManipConfig()
+        cfg.addCropRotatedRect(rr, False)
+        cfg.setOutputSize(lm_input, lm_input, dai.ImageManipConfig.ResizeMode.STRETCH)
         try:
             pipeline.start()
+            config_queue.send(cfg)
             image_queue.send(img)
-            out = output_queue.get()
+            out = None
+            for _ in range(100):
+                out = output_queue.tryGet()
+                if out is not None:
+                    break
+                time.sleep(0.02)
+            assert out is not None, "DepthAI ImageManip did not return a frame within 2 seconds"
             inv = out.getTransformation().invTransformPoint
             center = inv(dai.Point2f(0.5 * lm_input, 0.5 * lm_input))
             assert center.x == pytest.approx(expected_x, abs=0.1)
@@ -655,7 +663,7 @@ def test_prerotated_pixel_crop_rect_matches_depthai_imagemanip_and_rr2img():
                 assert mapped.y == pytest.approx(sqn_y * side - pad_h, abs=0.1)
         finally:
             manip.stopPipeline()
-            del output_queue, image_queue, manip, pipeline
+            del output_queue, config_queue, image_queue, manip, pipeline
 
 
 def test_fast_script_preserves_single_hand_roi_and_averages_handedness():

@@ -114,6 +114,9 @@ if [[ "$joined" == *" exec "* ]]; then
             printf '%s\\n' 'ImportError: no module named pib_sdk' >&2
             exit 1
         fi
+        if [ "${STUB_PIB_SDK_WARNING:-0}" = "1" ]; then
+            printf '%s\\n' 'WARNING: compose diagnostic on stderr' >&2
+        fi
         printf '%s\\n' "${STUB_PIB_SDK_INSTALLED:-0.7.4}"
         exit 0
     fi
@@ -202,6 +205,7 @@ def _run(
     release: str = "",
     pib_sdk_installed: str = "0.7.4",
     pib_sdk_exec_fail: bool = False,
+    pib_sdk_warning: bool = False,
 ) -> tuple[subprocess.CompletedProcess[str], Path, str]:
     update_dir = tmp_path / "update"
     backend = tmp_path / "backend"
@@ -265,6 +269,7 @@ def _run(
         STUB_HEAD2_MISSING="1" if second_parent_missing else "0",
         STUB_PIB_SDK_INSTALLED=pib_sdk_installed,
         STUB_PIB_SDK_EXEC_FAIL="1" if pib_sdk_exec_fail else "0",
+        STUB_PIB_SDK_WARNING="1" if pib_sdk_warning else "0",
     )
     if targets is not None:
         env["GIT_ARGV_LOG"] = str(tmp_path / "git-argv.log")
@@ -515,3 +520,21 @@ def test_update_fails_when_ros_programs_cannot_report_sdk_version(
     log = (update_dir / "update.log").read_text(encoding="utf-8")
     assert "pib-sdk verification failed" in log
     assert "did not answer" in log
+
+
+def test_update_parses_sdk_version_when_compose_warns_on_stderr(
+    tmp_path: Path,
+) -> None:
+    result, update_dir, docker_log = _run(
+        tmp_path,
+        "develop",
+        second_parent_missing=True,
+        pib_sdk_warning=True,
+    )
+
+    _assert_succeeded(result, update_dir)
+    _assert_version_passed(docker_log, "develop")
+    log = (update_dir / "update.log").read_text(encoding="utf-8")
+    assert "pib-sdk verification passed" in log
+    assert "pib-sdk mismatch" not in log
+    assert "WARNING: compose diagnostic on stderr" in log
