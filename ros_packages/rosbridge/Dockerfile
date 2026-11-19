@@ -20,7 +20,8 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y \
 # Rewrite only the known constructor onto the node clock, and fail the build
 # on any other source shape.
 COPY ./rosbridge/patch_rosapi_param_clock.py /opt/pib/patch_rosapi_param_clock.py
-RUN chmod +x /opt/pib/patch_rosapi_param_clock.py && \
+COPY ./rosbridge/run_rosbridge.py /opt/pib/run_rosbridge.py
+RUN chmod +x /opt/pib/patch_rosapi_param_clock.py /opt/pib/run_rosbridge.py && \
     /opt/pib/patch_rosapi_param_clock.py --ros-root "/opt/ros/${ROS_DISTRO}"
 
 WORKDIR /app
