@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -208,10 +209,44 @@ def test_docker_install_reports_each_service_as_its_own_step():
 
 # `sudo docker compose ...` is replaced by a stub that prints build noise and exits as told.
 SUDO_STUB = """#!/bin/bash
+assignments=()
+while [[ "${1:-}" == [A-Za-z_]*=* ]]; do
+    assignments+=("$1")
+    shift
+done
+if [ "${1:-}" = "docker" ] && [ "${2:-}" = "compose" ] && [[ " $* " == *" config --format json "* ]]; then
+    env "${assignments[@]}" "$@"
+    exit $?
+fi
+if [ "${1:-}" = "install" ] && [ "${2:-}" = "-d" ]; then
+    mkdir -p "${@: -1}"
+    exit 0
+fi
 echo "#1 [internal] load build definition"
 echo "#2 pip install noise"
 echo "warning: build noise on stderr" >&2
 exit "${STUB_COMPOSE_STATUS:-0}"
+"""
+
+DOCKER_STUB = """#!/bin/bash
+joined=" $* "
+if [ "${1:-}" = "compose" ] && [[ "$joined" == *" config --format json"* ]]; then
+    project="default"
+    previous=""
+    for argument in "$@"; do
+        if [ "$previous" = "--project-name" ]; then project="$argument"; break; fi
+        if [ "$previous" = "-f" ]; then project="$(basename "$(dirname "$argument")")"; fi
+        previous="$argument"
+    done
+    tag="${PIB_IMAGE_TAG:-develop}"
+    if [ "$project" = "pib-backend" ]; then
+        image="ghcr.io/pib-rocks/pib-backend-flask:$tag"
+    else
+        image="ghcr.io/pib-rocks/cerebra:$tag"
+    fi
+    printf '{"name":"%s","services":{"fixture":{"image":"%s"}}}\\n' "$project" "$image"
+fi
+exit 0
 """
 
 
@@ -220,14 +255,26 @@ def _run_start_container(tmp_path: Path, status: int):
     stub_bin.mkdir()
     (stub_bin / "sudo").write_text(SUDO_STUB, encoding="utf-8")
     (stub_bin / "sudo").chmod(0o755)
+    (stub_bin / "docker").write_text(DOCKER_STUB, encoding="utf-8")
+    (stub_bin / "docker").chmod(0o755)
     backend = tmp_path / "backend"
     backend.mkdir()
+    (backend / "setup").mkdir()
+    shutil.copy2(
+        REPO_ROOT / "setup" / "deployment_recovery.py",
+        backend / "setup" / "deployment_recovery.py",
+    )
+    (backend / "docker-compose.yaml").write_text("services: {}\n", encoding="utf-8")
+    frontend = tmp_path / "cerebra"
+    frontend.mkdir()
+    (frontend / "docker-compose.yaml").write_text("services: {}\n", encoding="utf-8")
     build_log = tmp_path / "docker-build.log"
     script = (
         PRELUDE
         + 'DOCKER_BUILD_LOG="${PIB_DOCKER_BUILD_LOG:-$HOME/setup-pib-docker-build.log}"\n'
         + _extract(DOCKER_INSTALL, "run_logged_compose")
         + _extract(DOCKER_INSTALL, "release_tag_at")
+        + _extract(DOCKER_INSTALL, "backend_compose_profiles")
         + _extract(DOCKER_INSTALL, "start_container")
         + "\nstart_container\necho rc=$?\n"
     )
@@ -237,9 +284,12 @@ def _run_start_container(tmp_path: Path, status: int):
             "PATH": f"{stub_bin}{os.pathsep}{os.environ['PATH']}",
             "STUB_COMPOSE_STATUS": str(status),
             "BACKEND_DIR": str(backend),
-            "FRONTEND_DIR": str(tmp_path / "cerebra"),
+            "FRONTEND_DIR": str(frontend),
             "PIB_DOCKER_BUILD_LOG": str(build_log),
             "PIB_HARDWARE_VARIANT": "pib5edu",
+            "PIB_UPDATE_DIR": str(tmp_path / "update"),
+            "PIB_BACKEND_DIR": str(backend),
+            "PIB_CEREBRA_DIR": str(tmp_path / "cerebra"),
         },
     )
     return result, build_log

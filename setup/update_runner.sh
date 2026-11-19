@@ -11,6 +11,8 @@ CEREBRA_DIR="${PIB_CEREBRA_DIR:-/home/pib/app/cerebra}"
 REQUEST_FILE="$UPDATE_DIR/request.json"
 STATUS_FILE="$UPDATE_DIR/status.json"
 RUNNER_LOCK="$UPDATE_DIR/runner.lock"
+DEPLOYMENT_LOCK="$UPDATE_DIR/deployment.lock"
+DEPLOYMENT_RECOVERY_HELPER="$UPDATE_DIR/deployment_recovery.py"
 CANCEL_FILE="$UPDATE_DIR/cancel.json"
 CHECK_FILE="$UPDATE_DIR/check.json"
 AVAILABLE_FILE="$UPDATE_DIR/available.json"
@@ -557,7 +559,90 @@ acquire_runner_lock() {
         fail "The flock command is required for update locking but was not found on PATH; install util-linux"
     fi
     exec 9>"$RUNNER_LOCK"
-    flock -n 9 || fail "Another update or deployment holds $RUNNER_LOCK; wait for it to finish or inspect the running job in $UPDATE_DIR/status.json and $LOG_FILE"
+    flock -n 9 || fail "Another update job holds $RUNNER_LOCK; wait for it to finish or inspect the running job in $UPDATE_DIR/status.json and $LOG_FILE"
+}
+
+acquire_deployment_lock() {
+    if ! command -v flock >/dev/null 2>&1; then
+        fail "The flock command is required for deployment locking but was not found on PATH; install util-linux"
+    fi
+    local previous_umask
+    previous_umask="$(umask)"
+    umask 0007
+    exec 8>>"$DEPLOYMENT_LOCK"
+    umask "$previous_umask"
+    flock 8 || fail "Could not acquire the shared deployment lock $DEPLOYMENT_LOCK"
+}
+
+record_deployment_state() {
+    local smart_chats="1" hardware_variant=""
+    smart_chats="${SMART_CHATS_SETTING:-$(resolve_smart_chats)}"
+    if [ -f /etc/pib_hardware_variant ]; then
+        hardware_variant="$(tr -d '[:space:]' </etc/pib_hardware_variant 2>/dev/null || true)"
+    fi
+    local backend_tag cerebra_tag
+    backend_tag="$(python3 "$BACKEND_IMAGES_HELPER" resolve-tag "${APP_VERSION:-}")" || return 1
+    cerebra_tag="$backend_tag"
+    local backend_config="$UPDATE_DIR/.deployment-backend-$$.json"
+    local cerebra_config="$UPDATE_DIR/.deployment-cerebra-$$.json"
+    local compose_status=0
+    local -a backend_profiles=(--profile all) extra_profiles=()
+    readarray -t extra_profiles < <(backend_extra_profile_flags)
+    backend_profiles+=("${extra_profiles[@]}")
+
+    docker compose --project-name pib-backend -f "$BACKEND_DIR/docker-compose.yaml" \
+      "${backend_profiles[@]}" config --format json >"$backend_config" || compose_status=$?
+    if [ "$compose_status" -eq 0 ]; then
+        docker compose --project-name cerebra -f "$CEREBRA_DIR/docker-compose.yaml" \
+          config --format json >"$cerebra_config" || compose_status=$?
+    fi
+    if [ "$compose_status" -ne 0 ]; then
+        log "Could not capture the deployed Docker Compose configuration (rc=${compose_status})"
+        rm -f "$backend_config" "$cerebra_config"
+        return 1
+    fi
+    chmod 600 "$backend_config" "$cerebra_config" || {
+        rm -f "$backend_config" "$cerebra_config"
+        return 1
+    }
+    local record_status=0
+    python3 "$DEPLOYMENT_RECOVERY_HELPER" record \
+      --backend-tag "$backend_tag" \
+      --cerebra-tag "$cerebra_tag" \
+      --backend-version "${APP_VERSION:-}" \
+      --cerebra-version "${APP_VERSION:-}" \
+      --hardware-variant "$hardware_variant" \
+      --smart-chats "$smart_chats" \
+      --backend-compose-config "$backend_config" \
+      --cerebra-compose-config "$cerebra_config" || record_status=$?
+    rm -f "$backend_config" "$cerebra_config"
+    return "$record_status"
+}
+
+resolve_smart_chats() {
+    local smart="${PIB_SMART_CHATS:-}"
+    local settings_file="${PIB_SMART_CHATS_FILE:-/etc/pib_smart_chats}"
+    if [ -z "$smart" ] && [ -f "$settings_file" ]; then
+        smart="$(tr -d '[:space:]' <"$settings_file" 2>/dev/null || true)"
+    fi
+    case "${smart:-1}" in
+      0 | disabled) printf '0\n' ;;
+      *) printf '1\n' ;;
+    esac
+}
+
+sync_deployment_recovery_helper() {
+    local source="$BACKEND_DIR/setup/deployment_recovery.py"
+    local staged="$UPDATE_DIR/.deployment_recovery.py.$$"
+    if [ ! -f "$source" ]; then
+        log "No deployment recovery helper in checked-out revision; keeping the persistent helper"
+        return 0
+    fi
+    if ! cp "$source" "$staged" || ! chmod 0750 "$staged" || ! mv -f "$staged" "$DEPLOYMENT_RECOVERY_HELPER"; then
+        rm -f "$staged"
+        log "Failed to install persistent deployment recovery helper from $source"
+        return 1
+    fi
 }
 
 assert_checkouts_match_targets() {
@@ -718,13 +803,15 @@ ensure_ollama_for_update() {
 # point at ghcr.io; `docker compose pull` is tried first in build_backend_stack.
 # Offline: a failed pull build retries without --pull.
 backend_extra_profile_flags() {
-    local smart="${PIB_SMART_CHATS:-}"
-    if [ -z "$smart" ] && [ -f /etc/pib_smart_chats ]; then
-        smart="$(tr -d '[:space:]' </etc/pib_smart_chats 2>/dev/null || true)"
-    fi
-    if [ "${smart:-1}" != "0" ]; then
+    local smart="${SMART_CHATS_SETTING:-$(resolve_smart_chats)}"
+    case "$smart" in
+      0 | disabled)
+        return 0
+        ;;
+      *)
         printf '%s\n' "--profile" "hermes"
-    fi
+        ;;
+    esac
 }
 
 refresh_backend_base_images() {
@@ -810,6 +897,9 @@ recreate_backend_from_registry() {
 # Second argument `skip_base_refresh`: when non-empty, skips `build --pull` (rollback).
 build_backend_stack() {
     local skip_base_refresh="${1:-}"
+    if [ -z "${PIB_IMAGE_TAG:-}" ]; then
+        export PIB_IMAGE_TAG="$(python3 "$BACKEND_IMAGES_HELPER" resolve-tag "${APP_VERSION:-}")" || return 1
+    fi
     if [ -z "$skip_base_refresh" ]; then
         if recreate_backend_from_registry; then
             return 0
@@ -881,6 +971,9 @@ recreate_cerebra_from_registry() {
 
 build_cerebra_stack() {
     local skip_registry="${1:-}"
+    if [ -z "${PIB_IMAGE_TAG:-}" ]; then
+        export PIB_IMAGE_TAG="$(python3 "$BACKEND_IMAGES_HELPER" resolve-tag "${APP_VERSION:-}")" || return 1
+    fi
     if [ -z "$skip_registry" ]; then
         if recreate_cerebra_from_registry; then
             return 0
@@ -1328,36 +1421,124 @@ check_disk_budget() {
     log "Disk budget satisfied: required ${required_mib} MiB (${required} KiB), available ${available_mib} MiB (${available} KiB)"
 }
 
-prune_obsolete_release_images() {
-    local current_tag previous_tag free_before free_after reclaimed_kib removed=0
-    local ref repository tag
-    current_tag="$(python3 "$BACKEND_IMAGES_HELPER" resolve-tag "${APP_VERSION:-}")"
-    if [ -n "${PREVIOUS_APP_VERSION:-}" ]; then
-        previous_tag="$(python3 "$BACKEND_IMAGES_HELPER" resolve-tag "${PREVIOUS_APP_VERSION}")"
-    else
-        previous_tag=""
+prune_obsolete_deployment_images() {
+    local free_before free_after reclaimed_kib removed=0 failed=0
+    local ref image_id repository current_ref current_repository current_images_file digest current_digest
+    local running_containers_file running_images_file image_list_file container_id
+    local has_current_repository keep_reference
+    local -a current_images=()
+    current_images_file="$UPDATE_DIR/current-image-refs-$$.txt"
+    if ! python3 - "$UPDATE_DIR/deployments.json" >"$current_images_file" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as source:
+    state = json.load(source)
+if state.get("schemaVersion") != 1 or not isinstance(state.get("projects"), list):
+    raise SystemExit("invalid deployment recovery state")
+project_names = set()
+for project in state["projects"]:
+    if not isinstance(project, dict) or not isinstance(project.get("name"), str):
+        raise SystemExit("deployment recovery state has a project without a name")
+    project_names.add(project["name"])
+    services = project.get("composeConfig", {}).get("services", {})
+    if not isinstance(services, dict) or not services:
+        raise SystemExit("deployment recovery state has an invalid Compose model")
+    for service in services.values():
+        image = service.get("image") if isinstance(service, dict) else None
+        if not isinstance(image, str) or not image.strip():
+            raise SystemExit("deployment recovery state has a service without an image")
+        image = image.strip()
+        without_digest = image.split("@", 1)[0]
+        slash = without_digest.rfind("/")
+        colon = without_digest.rfind(":")
+        if "@" not in image and colon <= slash:
+            image += ":latest"
+            without_digest = image
+            slash = without_digest.rfind("/")
+            colon = without_digest.rfind(":")
+        repository = without_digest[:colon] if colon > slash else without_digest
+        print(f"{repository}\t{image}")
+if project_names != {"pib-backend", "cerebra"} or len(state["projects"]) != 2:
+    raise SystemExit("deployment recovery state does not contain both PIB Compose projects")
+PY
+    then
+        rm -f "$current_images_file"
+        log "WARNING: could not read current deployment images; retaining cached image tags"
+        return 0
     fi
+    mapfile -t current_images <"$current_images_file"
+    rm -f "$current_images_file"
+    if [ "${#current_images[@]}" -eq 0 ]; then
+        log "WARNING: no current deployment image references were found; retaining cached image tags"
+        return 0
+    fi
+    running_containers_file="$UPDATE_DIR/running-containers-$$.txt"
+    running_images_file="$UPDATE_DIR/running-images-$$.txt"
+    image_list_file="$UPDATE_DIR/image-list-$$.txt"
+    : >"$running_images_file"
+    if ! docker ps -q >"$running_containers_file"; then
+        rm -f "$current_images_file" "$running_containers_file" "$running_images_file" "$image_list_file"
+        log "WARNING: could not list running containers; retaining cached image tags"
+        return 0
+    fi
+    while IFS= read -r container_id; do
+        [ -n "$container_id" ] || continue
+        if ! image_id="$(docker inspect --format '{{.Image}}' "$container_id")" || [ -z "$image_id" ]; then
+            rm -f "$current_images_file" "$running_containers_file" "$running_images_file" "$image_list_file"
+            log "WARNING: could not inspect running container images; retaining cached image tags"
+            return 0
+        fi
+        printf '%s\n' "$image_id" >>"$running_images_file"
+    done <"$running_containers_file"
+    if ! docker images --digests --no-trunc --format '{{.ID}} {{.Repository}}:{{.Tag}} {{.Digest}}' >"$image_list_file"; then
+        rm -f "$current_images_file" "$running_containers_file" "$running_images_file" "$image_list_file"
+        log "WARNING: could not list image IDs; retaining cached image tags"
+        return 0
+    fi
+    rm -f "$running_containers_file"
     free_before="$(read_free_kib)"
-    while IFS= read -r ref; do
+    while read -r image_id ref digest; do
         [ -n "$ref" ] || continue
-        tag="${ref##*:}"
-        if [ "$tag" = "$current_tag" ] || [ "$tag" = "latest" ]; then
+        if grep -Fxq "$image_id" "$running_images_file"; then
             continue
         fi
-        if [ -n "$previous_tag" ] && [ "$tag" = "$previous_tag" ]; then
-            continue
+        repository="${ref%:*}"
+        has_current_repository=0
+        keep_reference=0
+        for current_ref in "${current_images[@]}"; do
+            current_repository="${current_ref%%$'\t'*}"
+            current_ref="${current_ref#*$'\t'}"
+            current_digest=""
+            if [ "$repository" != "$current_repository" ]; then
+                continue
+            fi
+            has_current_repository=1
+            if [ "$ref" = "$current_ref" ]; then
+                keep_reference=1
+            elif [[ "$current_ref" == *@* ]]; then
+                current_digest="${current_ref##*@}"
+                if [ "$digest" = "$current_digest" ]; then
+                    keep_reference=1
+                fi
+            fi
+        done
+        if [ "$has_current_repository" -eq 1 ] && [ "$keep_reference" -eq 0 ]; then
+            if docker image rm -f "$ref" >/dev/null 2>&1; then
+                removed=$((removed + 1))
+            else
+                failed=$((failed + 1))
+            fi
         fi
-        if docker image rm -f "$ref" >/dev/null 2>&1; then
-            removed=$((removed + 1))
-        fi
-    done < <(docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | grep -E '^ghcr\.io/pib-rocks/(pib-backend-|cerebra:)' || true)
+    done <"$image_list_file"
+    rm -f "$running_images_file" "$image_list_file"
     docker image prune -f >/dev/null 2>&1 || true
     free_after="$(read_free_kib)"
     reclaimed_kib=$((free_after - free_before))
     if [ "$reclaimed_kib" -lt 0 ]; then
         reclaimed_kib=0
     fi
-    log "Post-update image cleanup: reclaimed ${reclaimed_kib} KiB ($(kib_to_mib "$reclaimed_kib") MiB); free disk now ${free_after} KiB ($(kib_to_mib "$free_after") MiB). Kept release tags ${current_tag} and ${previous_tag:-<none>}; removed ${removed} obsolete tagged image(s)."
+    log "Post-update image cleanup: reclaimed ${reclaimed_kib} KiB ($(kib_to_mib "$reclaimed_kib") MiB); free disk now ${free_after} KiB ($(kib_to_mib "$free_after") MiB). Preserved current Compose image references; removed ${removed} obsolete tag(s), ${failed} removal(s) failed."
 }
 
 rollback_once() {
@@ -1375,6 +1556,7 @@ rollback_once() {
     else
         log "WARNING: rolled-back checkout has no release tag; backend rebuild will use the compose-file fallback"
         unset APP_VERSION
+        unset PIB_IMAGE_TAG
     fi
     if PIB_SDK_VERSION="$(read_pib_sdk_version)"; then
         export PIB_SDK_VERSION
@@ -1388,6 +1570,7 @@ rollback_once() {
     BACKEND_TARGET="$BACKEND_BEFORE"
     CEREBRA_TARGET="$CEREBRA_BEFORE"
     if wait_for_flask && verify_migration && verify_pib_sdk && verify_result; then
+        record_deployment_state || fail "Rollback succeeded but deployment recovery state could not be recorded"
         write_revision "pib-backend" "$BACKEND_BEFORE" "unknown"
         write_revision "cerebra" "$CEREBRA_BEFORE" "unknown"
         write_status "rolled_back" "Verification failed. Previous revisions were rebuilt (pib-backend ${BACKEND_BEFORE}, cerebra ${CEREBRA_BEFORE}). The WAL-safe backup was kept and was not applied; user data was not rolled back."
@@ -1426,6 +1609,8 @@ fi
 write_status "preflight" "Validating repositories, disk, watchdog ownership, and database backup (attempt ${ATTEMPT} of ${MAX_ATTEMPTS})"
 check_cancel
 check_update_dir
+acquire_deployment_lock
+SMART_CHATS_SETTING="$(resolve_smart_chats)"
 readarray -t INITIAL_EXTRA_PROFILES < <(backend_extra_profile_flags)
 BACKEND_SERVICES_BEFORE="$(snapshot_running_services "$BACKEND_DIR/docker-compose.yaml" --profile all "${INITIAL_EXTRA_PROFILES[@]}")"
 CEREBRA_SERVICES_BEFORE="$(snapshot_running_services "$CEREBRA_DIR/docker-compose.yaml")"
@@ -1433,6 +1618,7 @@ VOICE_HEALTH_BEFORE="$(docker inspect "$VOICE_CONTAINER" --format '{{if .State.H
 log "Services running before the update: pib-backend=[$(printf '%s' "$BACKEND_SERVICES_BEFORE" | tr '\n' ' ')] cerebra=[$(printf '%s' "$CEREBRA_SERVICES_BEFORE" | tr '\n' ' ')]"
 validate_repository "pib-backend" "$BACKEND_DIR"
 validate_repository "cerebra" "$CEREBRA_DIR"
+sync_deployment_recovery_helper || fail "Failed to preserve the deployment recovery helper before checkout"
 check_watchdog_conflict
 reclaim_docker_disk_before_build
 check_disk_budget
@@ -1471,6 +1657,7 @@ else
     CEREBRA_TARGET="$(git -C "$CEREBRA_DIR" rev-parse HEAD)"
 fi
 git -C "$CEREBRA_DIR" submodule update --init --recursive || fail "Failed to update cerebra submodules"
+sync_deployment_recovery_helper || fail "Failed to stage the deployment recovery helper"
 if ! APP_VERSION="$(resolve_app_version "$BACKEND_DIR")"; then
     if [ -n "${RELEASE_TAG:-}" ]; then
         APP_VERSION="$RELEASE_TAG"
@@ -1536,7 +1723,8 @@ if ! verify_result; then
     rollback_once
 fi
 
-prune_obsolete_release_images
+record_deployment_state || fail "Update completed but deployment recovery state could not be recorded"
+prune_obsolete_deployment_images
 discard_model_store_snapshot
 write_revision "pib-backend" "$BACKEND_TARGET"
 write_revision "cerebra" "$CEREBRA_TARGET"
