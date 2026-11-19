@@ -45,7 +45,31 @@ function createMockGenerator(): MockGenerator {
 }
 
 describe("moveToPoseGenerator", () => {
-  it("generates apply_pose call with pose UUID and converts centi-degrees to degrees in a single batched Write.move", () => {
+  it("skips a pose that no longer exists instead of failing the program", () => {
+    // A stored program keeps the pose UUID it was built with; re-recording a pose
+    // allocates a new UUID, so the old reference answers 404. Both generated helpers must
+    // skip it with one line instead of ending the program in a traceback (measured on
+    // .168: BackendError GET /pose/by-name/<uuid> -> HTTP 404 and no motion).
+    const generator = createMockGenerator();
+    moveToPoseGenerator(
+      { getFieldValue: () => "gone-pose" } as unknown as Block,
+      generator,
+    );
+    play_pose_sequence(
+      {
+        itemCount_: 1,
+        getFieldValue: (name: string) => (name === "POSE_0" ? "gone-pose" : 1),
+      } as unknown as Block,
+      generator,
+    );
+
+    const defs = Object.values(generator.definitions_).join("\n");
+    expect(defs).toContain('logging.warning(f"pose {poseId} is not available');
+    expect(defs).toContain('print(f"pose {identifier} is not available');
+    expect(defs).toContain("continue");
+  });
+
+  it("generates apply_pose call with pose UUID and drives the pose in centi-degrees (no +-90 cap)", () => {
     const poseId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
     const block = {
       getFieldValue: (field: string) => {
@@ -61,13 +85,11 @@ describe("moveToPoseGenerator", () => {
     const defs = Object.values(generator.definitions_).join("\n");
     expect(defs).toContain("from pib_api_client import pose_client");
     expect(defs).toContain("import pib_sdk");
-    expect(defs).toContain("def centidegrees_to_degrees");
-    expect(defs).toContain(
-      "centidegrees_to_degrees(motor_position[\"position\"])",
-    );
+    expect(defs).toContain("centidegrees.append(float(motor_position[\"position\"]))");
     expect(defs).toContain("with pib_sdk.Write(host=rosbridge_host, port=9090) as writer:");
-    expect(defs).toContain("writer.move(*args)");
-    expect(defs).not.toContain('.move(motor_name, position)');
+    expect(defs).toContain("writer.send_timed_trajectory(names, [(centidegrees, 1.0)])");
+    // A finger servo legitimately travels past +-90 degrees; move() would refuse it.
+    expect(defs).not.toContain("writer.move(*args)");
   });
 
     it("registers move_to_pose without polluting Blockly.Blocks with init or getPoses", () => {
