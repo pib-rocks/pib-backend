@@ -384,7 +384,7 @@ def test_timer_callback_throttles_idle_frames_and_unthrottles_on_consumer(monkey
     node.queue.tryGet.return_value = packet
 
     clock = [100.0]
-    monkeypatch.setattr("oak_d_lite.stereo.time.monotonic", lambda: clock[0])
+    monkeypatch.setattr(camera_stereo.time, "monotonic", lambda: clock[0])
 
     # First frame always runs immediately so /snapshot has a warm frame.
     node.timer_callback()
