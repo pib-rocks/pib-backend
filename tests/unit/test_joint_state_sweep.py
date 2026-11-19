@@ -350,3 +350,33 @@ def test_an_empty_sweep_does_not_report_success(monkeypatch):
     assert positions == {}
     assert mode == sweep_mod.MODE_SINGLE
     assert successes == [], "an empty sweep was reported as a success"
+
+
+def test_sweep_does_not_apply_sts_tohost_a_second_time(monkeypatch):
+    """ReadPosSpeed already runs sts_tohost(pos, 15); a second pass corrupts negatives."""
+    ft_mod, act_mod = _load_modules()
+    sweep_mod = _load_sweep_module(ft_mod)
+    sweep_mod.forget_dead_ports()
+
+    def real_sts_tohost(a: int, b: int) -> int:
+        return -(a & ~(1 << b)) if (a & (1 << b)) else a
+
+    def fake_sts(ph):
+        pk = FakeStsPacketHandler(ph)
+        setattr(pk, "sts_tohost", real_sts_tohost)
+        # Simulate ReadPosSpeed already returning signed host_ticks = -5.
+        pk.pos_ticks_by_id = {12: -5}
+        return pk
+
+    monkeypatch.setattr(ft_mod, "PortHandler", FakePortHandler)
+    monkeypatch.setattr(ft_mod, "sts", fake_sts)
+    ft_mod._port_cache.clear()
+
+    finger = act_mod.create_actuator("feetech_st_serial", 12, "WS-FINGER", "max")
+    motor = SimpleNamespace(name="index_right_stretch", actuators=[finger])
+
+    result = sweep_mod.sweep_feetech_joint_positions([motor])
+
+    assert result.positions_centideg["index_right_stretch"] == ft_mod.ticks_to_centideg(
+        -5
+    )

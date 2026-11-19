@@ -75,8 +75,10 @@ def _group_by_port(
     return grouped
 
 
-def _to_centideg(pk: Any, actuator: FeetechStSerialActuator, raw_ticks: Any) -> int:
-    host_ticks = pk.sts_tohost(raw_ticks, 15)
+def _to_centideg(actuator: FeetechStSerialActuator, host_ticks: int) -> int:
+    # pk.ReadPosSpeed() already calls pk.sts_tohost(raw, 15); calling it a second
+    # time would treat bit 15 of a negative two's-complement Python int as a sign bit
+    # and corrupt negative positions.
     centideg = ticks_to_centideg(int(host_ticks))
     return int(round(centideg * actuator.direction_sign))
 
@@ -94,7 +96,7 @@ def _read_single(
             continue
         if result != COMM_SUCCESS:
             continue
-        positions[motor_name] = _to_centideg(pk, actuator, raw_ticks)
+        positions[motor_name] = _to_centideg(actuator, raw_ticks)
     return positions
 
 

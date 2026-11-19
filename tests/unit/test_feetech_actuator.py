@@ -206,6 +206,14 @@ def test_centideg_to_ticks_rejects_out_of_range():
         )
 
 
+def test_centideg_to_ticks_stays_within_12bit_hardware_limit():
+    """+18000 centidegrees rounds to 4096, one tick past Max_Angle_Limit=4095."""
+    ft_mod, _ = _load_modules()
+
+    assert ft_mod.centideg_to_ticks(-18000, -18000, 18000) == 0
+    assert ft_mod.centideg_to_ticks(18000, -18000, 18000) == 4095
+
+
 def test_create_actuator_builds_feetech_serial_and_registers_capabilities(monkeypatch):
     ft_mod, act_mod = _load_modules()
     fake_pk = None
