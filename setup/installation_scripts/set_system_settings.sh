@@ -124,6 +124,45 @@ function configure_gnome_settings() {
     print INFO "Added terminal to favorites"
 }
 
+# Protect PipeWire (audio capture/playback) from being killed before desktop/test browsers
+# when the Pi runs low on memory (PR-2179). Debian's user@.service sets OOMScoreAdjust=100,
+# which clamps every unprivileged user unit to >= 100 and leaves pipewire-pulse at +200.
+# Lowering user@.service to -200 while keeping DefaultOOMScoreAdjust=200 for general user
+# units lets only pipewire/pipewire-pulse/wireplumber claim -200 alongside core containers.
+# PIB_SYSTEMD_ROOT lets unit tests point this at a scratch directory.
+function configure_pipewire_oom_protection() {
+    local systemd_root="${PIB_SYSTEMD_ROOT:-/etc/systemd}"
+    local unit
+
+    require_nonempty systemd_root || return 1
+
+    sudo mkdir -p "${systemd_root}/system/user@.service.d" "${systemd_root}/user.conf.d" || return 1
+    cat <<'EOF' | sudo tee "${systemd_root}/system/user@.service.d/99-pib-oom.conf" > /dev/null || return 1
+# Managed by pib setup (PR-2179): allow protected user audio units to use OOMScoreAdjust=-200.
+[Service]
+OOMScoreAdjust=-200
+EOF
+
+    cat <<'EOF' | sudo tee "${systemd_root}/user.conf.d/99-pib-oom.conf" > /dev/null || return 1
+# Managed by pib setup (PR-2179): keep general desktop/test user processes killable first.
+[Manager]
+DefaultOOMScoreAdjust=200
+EOF
+
+    for unit in pipewire.service pipewire-pulse.service wireplumber.service; do
+        sudo mkdir -p "${systemd_root}/user/${unit}.d" || return 1
+        cat <<'EOF' | sudo tee "${systemd_root}/user/${unit}.d/99-pib-oom.conf" > /dev/null || return 1
+# Managed by pib setup (PR-2179): protect robot audio from the kernel OOM killer.
+[Service]
+OOMScoreAdjust=-200
+EOF
+    done
+
+    sudo systemctl daemon-reload 2>/dev/null || true
+    systemctl --user daemon-reload 2>/dev/null || true
+    print INFO "Configured OOM protection for PipeWire user audio services"
+}
+
 function set_system_settings() {
     local status=0
 
@@ -131,6 +170,8 @@ function set_system_settings() {
 
     sudo systemctl daemon-reload
     sudo systemctl enable ssh --now
+
+    configure_pipewire_oom_protection || status=1
 
     if is_supported_raspbian; then
         configure_display_settings || status=1
