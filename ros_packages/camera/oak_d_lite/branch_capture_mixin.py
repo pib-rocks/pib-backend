@@ -506,9 +506,11 @@ class BranchCaptureMixin:
             return stereo.IDLE_CAMERA_FRAME_INTERVAL_SECONDS
 
     def _camera_has_active_consumers(self, now: float) -> bool:
+        # Note: /face_center is permanently subscribed by voice_assistant/chat even
+        # when the robot is idle, so it intentionally does not disable 1 Hz idle
+        # throttling (it still receives 1 Hz updates from the throttled ticks).
         for pub_name in (
             "compressed_publisher_",
-            "face_center_publisher_",
             "depth_publisher_",
         ):
             pub = getattr(self, pub_name, None)
