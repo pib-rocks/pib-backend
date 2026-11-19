@@ -295,12 +295,14 @@ def centideg_to_ticks(
     rotation_range_min: int | None = None,
     rotation_range_max: int | None = None,
 ) -> int:
-    """Map pib centidegrees to STS position ticks.
+    """Map pib centidegrees to STS position ticks (``0 .. TICKS_PER_REVOLUTION - 1``).
 
     Geometry: ``TICKS_PER_REVOLUTION`` (4096) ticks per revolution; joint zero is
     ``TICKS_AT_JOINT_ZERO`` (2048). Conversion uses ``round()`` toward the nearest
-    integer tick. Values outside the allowed centidegree range raise ``ValueError``
-    instead of clamping.
+    integer tick, then clamps to the 12-bit hardware range ``[0, 4095]`` so the
+    ``+18000`` boundary maps to ``4095`` instead of ``4096`` (one tick past the
+    servo's ``Max_Angle_Limit``). Values outside the allowed centidegree range raise
+    ``ValueError`` instead of clamping.
 
     When ``rotation_range_min`` / ``rotation_range_max`` are omitted, the legal
     range is ±90° (±9000 centidegrees).
@@ -319,12 +321,13 @@ def centideg_to_ticks(
         raise ValueError(
             f"centidegree {centideg} outside allowed range [{range_min}, {range_max}]"
         )
-    return int(
+    ticks = int(
         round(
             TICKS_AT_JOINT_ZERO
             + centideg * TICKS_PER_REVOLUTION / CENTIDEG_PER_REVOLUTION
         )
     )
+    return max(0, min(TICKS_PER_REVOLUTION - 1, ticks))
 
 
 def ticks_to_centideg(ticks: int) -> int:
