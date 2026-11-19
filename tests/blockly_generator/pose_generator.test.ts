@@ -251,11 +251,124 @@ describe("play_pose_sequence generator", () => {
       expect(defs).toContain("pose = get_pose(pose_backend, name=identifier)");
       expect(defs).toContain("live_joints = telemetry.get_positions_deg(joint_names)");
       expect(defs).toContain("writer.send_timed_trajectory(joint_names, waypoints)");
-      expect(defs).toContain("time.sleep(time_from_start)");
+      expect(defs).toContain("live_initial_loaded");
+      expect(defs).toContain("play_pose_sequence: reached waypoint");
     } finally {
       workspace.dispose();
       Blockly.Events.enable();
     }
+  });
+
+  it("keeps the first waypoint when live initial positions fail and logs waypoint progress (PR-2178)", () => {
+    const { execFileSync } = require("child_process");
+    const generator = createSequenceGenerator("");
+    play_pose_sequence({} as Block, generator);
+    const defs = Object.values(generator.definitions_).join("\n");
+
+    const script = `
+import logging, os, sys, time, types
+
+records = []
+class _Capture(logging.Handler):
+    def emit(self, rec):
+        records.append((rec.levelname, rec.getMessage()))
+
+logging.getLogger().setLevel(logging.INFO)
+logging.getLogger().addHandler(_Capture())
+
+class _Pose:
+    def __init__(self, name, angles):
+        self.name = name
+        self.pose_id = name
+        self.motor_angles_deg = angles
+
+poses = {
+    "pose_a": _Pose("pose_a", {"turn_head_motor": 10.0}),
+    "pose_b": _Pose("pose_b", {"turn_head_motor": 25.0}),
+}
+def _get_pose(_backend, pose_id=None, name=None):
+    key = pose_id or name
+    if key in poses:
+        return poses[key]
+    raise RuntimeError("missing")
+
+sent = []
+
+class _FailingTelemetry:
+    def __init__(self, host="", port=9090):
+        raise TimeoutError("rosbridge busy")
+
+class _Writer:
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
+    def send_timed_trajectory(self, names, waypoints):
+        sent.append((list(names), list(waypoints)))
+
+# Register stub pib_sdk package so generated imports execute cleanly without ROS.
+mod_sdk = types.ModuleType("pib_sdk")
+mod_sdk.Write = lambda host="", port=9090: _Writer()
+mod_backend = types.ModuleType("pib_sdk.backend")
+mod_backend.BackendClient = lambda host="", port=5000: object()
+mod_features = types.ModuleType("pib_sdk.features")
+mod_poses = types.ModuleType("pib_sdk.features.poses")
+mod_poses.save_current_pose = lambda *a, **kw: None
+mod_poses.list_poses = lambda *a, **kw: []
+mod_poses.get_pose = _get_pose
+mod_poses.play_pose_sequence_timed = lambda *a, **kw: None
+mod_telemetry = types.ModuleType("pib_sdk.telemetry")
+mod_telemetry.Telemetry = _FailingTelemetry
+
+sys.modules["pib_sdk"] = mod_sdk
+sys.modules["pib_sdk.backend"] = mod_backend
+sys.modules["pib_sdk.features"] = mod_features
+sys.modules["pib_sdk.features.poses"] = mod_poses
+sys.modules["pib_sdk.telemetry"] = mod_telemetry
+
+${defs}
+
+logging.getLogger().setLevel(logging.INFO)
+logging.getLogger().addHandler(_Capture())
+time.sleep = lambda _s: None
+_pib_play_pose_sequence_timed([("pose_a", 0.5), ("pose_b", 0.5)])
+assert len(sent) == 1, sent
+names, wps = sent[0]
+assert names == ["turn_head_motor"], names
+# Must NOT skip pose_a: t=0.0 at pose_a, t=0.5 at pose_a (held/driven), t=1.0 at pose_b
+assert len(wps) == 3, wps
+assert wps[1][0] == [1000.0] and wps[1][1] == 0.5, wps
+assert wps[2][0] == [2500.0] and wps[2][1] == 1.0, wps
+msgs = [m for _, m in records]
+assert any("live initial joint positions unavailable" in m for m in msgs), msgs
+assert any("reached waypoint 1/2 (pose_a)" in m for m in msgs), msgs
+assert any("reached waypoint 2/2 (pose_b)" in m for m in msgs), msgs
+
+# Also verify live-initial path: when robot is ALREADY at pose_a (10.0 deg), waypoint 1 starts at t=0.00s
+records.clear()
+sent.clear()
+class _LiveTelemetryAtPoseA:
+    def __init__(self, host="", port=9090):
+        self.ros = None
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
+    def get_positions_deg(self, _names):
+        return {"turn_head_motor": 10.0}
+
+Telemetry = _LiveTelemetryAtPoseA
+_pib_play_pose_sequence_timed([("pose_a", 0.5), ("pose_b", 0.5)])
+assert len(sent) == 1, sent
+names2, wps2 = sent[0]
+assert len(wps2) == 2, wps2
+assert wps2[0][0] == [1000.0] and wps2[0][1] == 0.0, wps2
+assert wps2[1][0] == [2500.0] and wps2[1][1] == 0.5, wps2
+msgs2 = [m for _, m in records]
+assert any("already within 0 cdeg of live position" in m for m in msgs2), msgs2
+assert any("reached waypoint 2/2 (pose_b)" in m for m in msgs2), msgs2
+print("OK")
+`;
+    const out = execFileSync("python3", ["-c", script], { encoding: "utf-8" });
+    expect(out.trim().split("\n").pop()).toBe("OK");
+    expect(out).toContain("reached waypoint 1/2 (pose_a)");
+    expect(out).toContain("reached waypoint 2/2 (pose_b)");
   });
 
   it("supports legacy SEQUENCE value input fallback when dynamic rows are absent", () => {

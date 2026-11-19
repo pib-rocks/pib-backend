@@ -384,6 +384,7 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(sequence) -> None:
             angle_map.setdefault(motor_name, first_known[motor_name])
 
     initial_angles = dict(first_known)
+    live_initial_loaded = False
     for host in (rosbridge_host, "localhost"):
         try:
             with Telemetry(host=host, port=9090) as telemetry:
@@ -409,15 +410,24 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(sequence) -> None:
                             batch_loaded = True
                 except Exception:
                     batch_loaded = False
-                if not batch_loaded:
+                if batch_loaded:
+                    live_initial_loaded = True
+                else:
                     live_joints = telemetry.get_positions_deg(joint_names)
                     for motor_name, angle_deg in (live_joints or {}).items():
                         if angle_deg is not None:
                             limit = 180.0 if ("stretch" in motor_name or "opposition" in motor_name) else 90.0
                             initial_angles[motor_name] = min(limit, max(-limit, float(angle_deg)))
+                            live_initial_loaded = True
                 break
         except Exception:
             continue
+
+    if not live_initial_loaded:
+        logging.warning(
+            "play_pose_sequence: live initial joint positions unavailable; "
+            "keeping first waypoint instead of skipping it"
+        )
 
     active_joints = [
         motor_name
@@ -432,13 +442,20 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(sequence) -> None:
 
     prev_cdeg = [float(round(initial_angles[motor_name] * 100.0)) for motor_name in joint_names]
     waypoints = [(prev_cdeg, 0.0)]
+    waypoint_schedule = []
     time_from_start = 0.0
-    for step_idx, ((_pose, leg_seconds), angle_map) in enumerate(zip(resolved_poses, filled)):
+    total_steps = len(resolved_poses)
+    for step_idx, ((pose, leg_seconds), angle_map) in enumerate(zip(resolved_poses, filled)):
+        pose_label = getattr(pose, "name", None) or getattr(pose, "pose_id", None) or f"step-{step_idx + 1}"
         target_cdeg = [float(round(angle_map[motor_name] * 100.0)) for motor_name in joint_names]
         max_delta = max((abs(p_to - p_from) for p_from, p_to in zip(prev_cdeg, target_cdeg)), default=0.0)
-        if step_idx == 0 and max_delta < 200.0:
+        if live_initial_loaded and step_idx == 0 and max_delta < 200.0:
             waypoints[0] = (target_cdeg, 0.0)
             prev_cdeg = target_cdeg
+            logging.info(
+                f"play_pose_sequence: waypoint 1/{total_steps} ({pose_label}) "
+                f"already within {max_delta:.0f} cdeg of live position; starting at t=0.00s"
+            )
             continue
         min_phys_sec = 0.0
         for motor_name, p_from, p_to in zip(joint_names, prev_cdeg, target_cdeg):
@@ -448,11 +465,17 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(sequence) -> None:
         eff_seconds = max(leg_seconds, min_phys_sec)
         time_from_start = round(time_from_start + eff_seconds, 4)
         waypoints.append((target_cdeg, time_from_start))
+        waypoint_schedule.append((step_idx + 1, pose_label, time_from_start))
         prev_cdeg = target_cdeg
 
     if len(waypoints) < 2:
         waypoints.append((prev_cdeg, 0.05))
         time_from_start = 0.05
+
+    logging.info(
+        f"play_pose_sequence: scheduled {len(waypoint_schedule)} waypoint(s) "
+        f"(total={time_from_start:.2f}s, live_initial={live_initial_loaded})"
+    )
 
     for host in (rosbridge_host, "localhost"):
         try:
@@ -468,8 +491,19 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(sequence) -> None:
             continue
 
     if time_from_start > 0.0:
-        time_from_start = round(time_from_start + 0.08, 4)
-        time.sleep(time_from_start)
+        seq_started = time.monotonic()
+        for wp_idx, wp_name, wp_target_t in waypoint_schedule:
+            remaining = wp_target_t - (time.monotonic() - seq_started)
+            if remaining > 0.0:
+                time.sleep(remaining)
+            elapsed = time.monotonic() - seq_started
+            logging.info(
+                f"play_pose_sequence: reached waypoint {wp_idx}/{total_steps} "
+                f"({wp_name}) at t={elapsed:.2f}s (scheduled {wp_target_t:.2f}s)"
+            )
+        tail_remaining = round(time_from_start + 0.08, 4) - (time.monotonic() - seq_started)
+        if tail_remaining > 0.0:
+            time.sleep(tail_remaining)
 `;
 
 // model inference
