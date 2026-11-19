@@ -225,6 +225,7 @@ IMU_RATE_WINDOW = 100
 # for throughput, but the report would then wait in the queue, and polling
 # faster than the publication period only adds empty wake-ups.
 IMU_POLL_PERIOD_SECONDS = 1.0 / IMU_PUBLISH_RATE_HZ
+IMU_IDLE_POLL_PERIOD_SECONDS = 0.2  # 5 Hz liveness drain when /imu has 0 subscribers
 # Expressed as missed publications rather than as a bare second: at 100 Hz a
 # one-second silence is a hundred lost samples, far too late to call the stream
 # healthy. 50 periods (0.5 s) still tolerates one long colour-frame encode
@@ -449,10 +450,9 @@ class CameraNode(
         )
         self._start_mjpeg_server()
         self.timer = self.create_timer(self.timer_period, self.timer_callback)
-        self.hand_fast_timer = self.create_timer(
-            HAND_FAST_POLL_PERIOD_SECONDS, self._poll_hand_tracking_fast
-        )
-        self.imu_timer = self.create_timer(IMU_POLL_PERIOD_SECONDS, self._process_imu)
+        self.hand_fast_timer = self.imu_timer = self._imu_timer_period = None
+        self._sync_hand_fast_timer()
+        self._sync_imu_timer_period(active=self._imu_has_subscribers())
         self.models_status_timer = self.create_timer(1.0, self.publish_model_statuses)
         self._hotplug_timer = self.create_timer(5.0, self._check_camera_hotplug)
 
@@ -941,6 +941,11 @@ class CameraNode(
         """Drain the non-blocking queue and publish at the configured rate."""
 
         if self.imu_queue is None:
+            return
+        has_subscribers = self._imu_has_subscribers()
+        self._sync_imu_timer_period(active=has_subscribers)
+        if not has_subscribers:
+            self._drain_imu_idle()
             return
         for _ in range(IMU_DRAIN_LIMIT):
             batch = self.imu_queue.tryGet()

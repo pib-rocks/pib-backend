@@ -546,3 +546,88 @@ class BranchCaptureMixin:
             and not self._camera_has_active_consumers(now)
             and (now - last_idle) < idle_interval
         )
+
+    def _imu_has_subscribers(self) -> bool:
+        pub = getattr(self, "imu_publisher_", None)
+        if pub is None:
+            return False
+        sub_count = getattr(pub, "get_subscription_count", None)
+        if not callable(sub_count):
+            return True
+        try:
+            count = sub_count()
+        except Exception:  # noqa: BLE001
+            return True
+        # Bare MagicMock publishers in unit tests return a non-int mock; treat as active.
+        if not isinstance(count, int):
+            return True
+        return count > 0
+
+    def _sync_imu_timer_period(self, *, active: bool) -> None:
+        create_timer = getattr(self, "create_timer", None)
+        if not callable(create_timer):
+            return
+        target = (
+            stereo.IMU_POLL_PERIOD_SECONDS
+            if active
+            else stereo.IMU_IDLE_POLL_PERIOD_SECONDS
+        )
+        current = getattr(self, "_imu_timer_period", None)
+        existing = getattr(self, "imu_timer", None)
+        if existing is not None and current == target:
+            return
+        if existing is not None:
+            try:
+                existing.cancel()
+            except Exception:  # noqa: BLE001
+                pass
+            destroy_timer = getattr(self, "destroy_timer", None)
+            if callable(destroy_timer):
+                try:
+                    destroy_timer(existing)
+                except Exception:  # noqa: BLE001
+                    pass
+        self.imu_timer = create_timer(target, self._process_imu)
+        self._imu_timer_period = target
+        if not active and hasattr(self, "_imu_publish_times"):
+            self._imu_publish_times.clear()
+
+    def _drain_imu_idle(self) -> None:
+        """Lightweight 5 Hz IMU liveness drain when /imu has 0 subscribers."""
+        got_report = False
+        for _ in range(stereo.IMU_DRAIN_LIMIT):
+            batch = self.imu_queue.tryGet()
+            if batch is None:
+                break
+            if getattr(batch, "packets", None):
+                got_report = True
+        if got_report:
+            self._imu_last_received_monotonic = stereo.time.monotonic()
+        if hasattr(self, "_imu_publish_times") and self._imu_publish_times:
+            self._imu_publish_times.clear()
+
+    def _sync_hand_fast_timer(self) -> None:
+        """Create the 30 Hz hand_tracking_fast timer only while hand_fast_queue is active."""
+        queue = getattr(self, "hand_fast_queue", None)
+        existing = getattr(self, "hand_fast_timer", None)
+        if queue is not None:
+            if existing is None:
+                create_timer = getattr(self, "create_timer", None)
+                if callable(create_timer):
+                    self.hand_fast_timer = create_timer(
+                        stereo.HAND_FAST_POLL_PERIOD_SECONDS,
+                        self._poll_hand_tracking_fast,
+                    )
+            return
+        if existing is not None:
+            try:
+                existing.cancel()
+            except Exception:  # noqa: BLE001
+                pass
+            destroy_timer = getattr(self, "destroy_timer", None)
+            if callable(destroy_timer):
+                try:
+                    destroy_timer(existing)
+                except Exception:  # noqa: BLE001
+                    pass
+            self.hand_fast_timer = None
