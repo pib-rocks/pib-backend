@@ -295,6 +295,32 @@ def test_summary_line_uses_only_keys_the_snapshot_has() -> None:
     }
 
 
+def test_bus_writer_snapshot_has_anomaly_suppresses_quiet_idle_ticks() -> None:
+    from pib_motors.bus_writer import bus_writer_snapshot_has_anomaly
+
+    quiet = {
+        "txs_per_sec": 10.0,
+        "queue_depth": 0,
+        "max_queue_wait_ms": 0.2,
+        "dropped_stream": 0,
+        "coalesced_stream": 0,
+        "max_tx_ms": 3.5,
+        "slow_transactions": 0,
+        "max_acquire_wait_ms": 0.0,
+    }
+    assert bus_writer_snapshot_has_anomaly(quiet) is False
+
+    for field in (
+        "queue_depth",
+        "dropped_stream",
+        "coalesced_stream",
+        "slow_transactions",
+    ):
+        noisy = dict(quiet)
+        noisy[field] = 1
+        assert bus_writer_snapshot_has_anomaly(noisy) is True, field
+
+
 def test_gather_collects_the_rest_of_the_tick_into_one_batch() -> None:
     """The second joint of the same tick must join the batch instead of making its own write.
 
