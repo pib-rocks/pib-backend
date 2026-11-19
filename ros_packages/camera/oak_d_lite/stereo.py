@@ -995,57 +995,11 @@ class CameraNode(
                         f"Dropping invalid IMU report: {type(exc).__name__}: {exc}"
                     )
 
-    def _idle_camera_frame_interval(self) -> float:
-        raw = os.environ.get("PIB_CAMERA_IDLE_INTERVAL_SEC", "").strip()
-        if not raw:
-            return IDLE_CAMERA_FRAME_INTERVAL_SECONDS
-        try:
-            return max(0.0, float(raw))
-        except ValueError:
-            return IDLE_CAMERA_FRAME_INTERVAL_SECONDS
-
-    def _camera_has_active_consumers(self, now: float) -> bool:
-        for pub_name in (
-            "compressed_publisher_",
-            "face_center_publisher_",
-            "depth_publisher_",
-        ):
-            pub = getattr(self, pub_name, None)
-            if pub is not None and pub.get_subscription_count() > 0:
-                return True
-        mjpeg_buf = getattr(self, "mjpeg_buffer", None)
-        if mjpeg_buf is not None and mjpeg_buf.has_active_consumers(
-            snapshot_grace_seconds=CAMERA_SNAPSHOT_GRACE_SECONDS, now=now
-        ):
-            return True
-        last_srv = float(getattr(self, "_last_camera_service_monotonic", 0.0) or 0.0)
-        if last_srv > 0.0 and (now - last_srv) < CAMERA_SNAPSHOT_GRACE_SECONDS:
-            return True
-        if getattr(self, "nn_queues", None):
-            return True
-        for queue_name in (
-            "hand_decoder_queue",
-            "imitation_queue",
-            "hand_palm_queue",
-            "hand_roi_queue",
-            "face_crop_queue",
-        ):
-            if getattr(self, queue_name, None) is not None:
-                return True
-        return False
-
     def timer_callback(self):
         if self._poll_colour_branch_capture():
             return
         now = time.monotonic()
-        idle_interval = self._idle_camera_frame_interval()
-        last_idle = float(getattr(self, "_last_idle_frame_monotonic", 0.0) or 0.0)
-        if (
-            idle_interval > 0.0
-            and last_idle > 0.0
-            and not self._camera_has_active_consumers(now)
-            and (now - last_idle) < idle_interval
-        ):
+        if self._should_skip_idle_frame_tick(now):
             return
         if self.queue:
             image_rgb = self._pending_color_packet
