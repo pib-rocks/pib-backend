@@ -126,6 +126,8 @@ COMPRESSED_IMAGE_TOPIC = "/oak/rgb/image_raw/compressed"
 COMPRESSED_IMAGE_FRAME_ID = "oak_rgb_camera_optical_frame"
 DEFAULT_QUALITY_FACTOR = 80
 DEFAULT_TIMER_PERIOD_SECONDS = 0.1
+IDLE_CAMERA_FRAME_INTERVAL_SECONDS = 1.0
+CAMERA_SNAPSHOT_GRACE_SECONDS = 5.0
 #: The device hand chain produces its own results at camera rate. Polling it on
 #: the stream timer (10 Hz) capped hand tracking at 10 detections/s whatever the
 #: device managed, so the chain gets its own poll.
@@ -340,6 +342,8 @@ class CameraNode(
         self.video_encoder = None
         self.mjpeg_buffer = MjpegFrameBuffer()
         self.mjpeg_server = None
+        self._last_idle_frame_monotonic = 0.0
+        self._last_camera_service_monotonic = 0.0
         self._load_startup_camera_settings()
         self.queue = None
         self.depth_queue = None
@@ -472,6 +476,7 @@ class CameraNode(
         return base64.b64encode(buffer).decode("utf-8")
 
     def get_camera_image_callback(self, request, response):
+        self._last_camera_service_monotonic = time.monotonic()
         # Prefer the hardware-encoded JPEG bytes from the OAK VideoEncoder.
         jpeg_bytes = getattr(self, "current_jpeg_bytes", b"")
         if jpeg_bytes:
@@ -993,12 +998,16 @@ class CameraNode(
     def timer_callback(self):
         if self._poll_colour_branch_capture():
             return
+        now = time.monotonic()
+        if self._should_skip_idle_frame_tick(now):
+            return
         if self.queue:
             image_rgb = self._pending_color_packet
             self._pending_color_packet = None
             if image_rgb is None:
                 image_rgb = self.queue.tryGet()
             if image_rgb is not None:
+                self._last_idle_frame_monotonic = now
                 self._preview_packet = image_rgb
                 jpeg_bytes = self._extract_packet_jpeg(image_rgb)
                 if jpeg_bytes is not None:
