@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import fcntl
 import json
+import os
+import stat
 import sys
 from pathlib import Path
 from urllib.parse import unquote
@@ -129,7 +131,10 @@ def test_purge_keeps_current_compose_images_and_prunes_obsolete_tags(
     assert any(p.startswith("/build/prune") and "all=true" in p for p in calls)
     assert body["reclaimedBytes"] == 11_001_000
     assert body["status"] == "success"
-    assert "freed" in body["message"]
+    assert "tagged image deletions are not included" in body["message"]
+    assert body["reclaimedBytesScope"] == (
+        "Docker-reported prune space; excludes tagged image deletions"
+    )
 
 
 def test_purge_preserves_running_container_image_by_id_even_without_current_tag(
@@ -235,6 +240,99 @@ def test_purge_matches_implicit_latest_and_digest_references(monkeypatch, tmp_pa
     }
     assert not any(path.startswith("/images/prune") for path in calls)
     assert body["status"] == "success"
+
+
+def test_purge_preserves_a_digest_image_with_only_an_obsolete_tag(
+    monkeypatch, tmp_path
+):
+    _write_deployment_state(tmp_path, monkeypatch)
+    update_dir = tmp_path / "update"
+    state_path = update_dir / "deployments.json"
+    document = json.loads(state_path.read_text(encoding="utf-8"))
+    document["projects"][0]["composeConfig"]["services"]["flask"][
+        "image"
+    ] = "registry.example/pib/backend@sha256:deadbeef"
+    state_path.write_text(json.dumps(document), encoding="utf-8")
+    responses = {
+        "/images/json": (
+            200,
+            json.dumps(
+                [
+                    {
+                        "Id": "sha256:cached-digest-image",
+                        "RepoTags": ["registry.example/pib/backend:v1.9.0"],
+                        "RepoDigests": [
+                            "registry.example/pib/backend@sha256:deadbeef"
+                        ],
+                    }
+                ]
+            ).encode(),
+        ),
+        "/build/prune": (200, b"{}"),
+    }
+    request, calls, _timeouts = _fake_engine(responses)
+    monkeypatch.setattr(docker_admin_service, "_docker_request", request)
+
+    code, body = docker_admin_service.purge_docker()
+
+    assert code == 200
+    deleted = {
+        unquote(path.split("?", 1)[0].removeprefix("/images/"))
+        for path in calls
+        if path.startswith("/images/")
+        and path.split("?", 1)[0] != "/images/json"
+        and not path.startswith("/images/prune")
+    }
+    assert "registry.example/pib/backend:v1.9.0" not in deleted
+    assert not any(path.startswith("/images/prune") for path in calls)
+    assert body["details"]["images"]["danglingPrune"] == (
+        "skipped to preserve a current digest-only recovery image"
+    )
+
+
+def test_purge_repairs_deployment_lock_permissions_without_replacing_inode(
+    monkeypatch, tmp_path
+):
+    update_dir = tmp_path / "update"
+    update_dir.mkdir()
+    monkeypatch.setenv("PIB_UPDATE_DIR", str(update_dir))
+    lock_path = update_dir / "deployment.lock"
+    lock_path.write_text("", encoding="utf-8")
+    inode = lock_path.stat().st_ino
+    request, _calls, _timeouts = _fake_engine({})
+    monkeypatch.setattr(docker_admin_service, "_docker_request", request)
+
+    code, _body = docker_admin_service.purge_docker()
+
+    lock_info = lock_path.stat()
+    assert code == 200
+    assert lock_info.st_ino == inode
+    assert lock_info.st_uid == update_dir.stat().st_uid
+    assert lock_info.st_gid == update_dir.stat().st_gid
+    assert stat.S_IMODE(lock_info.st_mode) == 0o660
+
+
+def test_purge_reports_image_transport_errors_as_partial_cleanup(
+    monkeypatch, tmp_path
+):
+    _write_deployment_state(tmp_path, monkeypatch)
+    calls = []
+
+    def request(method, path, payload=None, timeout=10.0):
+        calls.append(path)
+        if path.startswith("/containers/json"):
+            raise TimeoutError("Docker socket timed out")
+        return 200, b"{}"
+
+    monkeypatch.setattr(docker_admin_service, "_docker_request", request)
+
+    code, body = docker_admin_service.purge_docker()
+
+    assert code == 200
+    assert body["status"] == "partial"
+    assert any("images" in error and "timed out" in error for error in body["errors"])
+    assert "could not acquire deployment lock" not in body["message"]
+    assert any(path == "/build/prune?all=true" for path in calls)
 
 
 def test_purge_reports_a_failing_step_and_still_runs_the_others(monkeypatch, tmp_path):

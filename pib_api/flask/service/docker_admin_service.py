@@ -4,6 +4,7 @@ import socket
 import json
 import logging
 import fcntl
+import stat
 from urllib.parse import quote
 from pathlib import Path
 from typing import Dict, Any, List, Tuple, Optional
@@ -459,6 +460,7 @@ def _prune_obsolete_images() -> Tuple[Dict[str, Any], List[str]]:
         ]
         if protected_digests and not protected_tags:
             protect_dangling_prune = True
+            continue
         for reference in tags:
             if (
                 not isinstance(reference, str)
@@ -543,12 +545,19 @@ def _purge_docker_locked() -> Tuple[int, Dict[str, Any]]:
         except Exception as e:
             errors.append(f"{key}: {str(e)}")
 
-    image_result, image_errors = _prune_obsolete_images()
+    try:
+        image_result, image_errors = _prune_obsolete_images()
+    except OSError as error:
+        image_result = {"skipped": f"image cleanup transport failed: {error}"}
+        image_errors = [f"images: cleanup transport failed: {error}"]
     results["images"] = image_result
     reclaimed += image_result.get("SpaceReclaimed", 0)
     errors.extend(image_errors)
 
-    message = f"Docker purge completed: {_human_bytes(reclaimed)} freed."
+    message = (
+        f"Docker purge completed: {_human_bytes(reclaimed)} reported reclaimed by "
+        "Docker prune operations; tagged image deletions are not included."
+    )
     if errors:
         message += f" {len(errors)} step(s) failed."
     return 200, {
@@ -556,6 +565,7 @@ def _purge_docker_locked() -> Tuple[int, Dict[str, Any]]:
         "message": message,
         "reclaimedBytes": reclaimed,
         "reclaimedHuman": _human_bytes(reclaimed),
+        "reclaimedBytesScope": "Docker-reported prune space; excludes tagged image deletions",
         "details": results,
         "errors": errors if errors else None,
     }
@@ -565,7 +575,25 @@ def purge_docker() -> Tuple[int, Dict[str, Any]]:
     update_dir = Path(os.environ.get("PIB_UPDATE_DIR", "/app/.update"))
     try:
         update_dir.mkdir(parents=True, exist_ok=True)
-        with (update_dir / "deployment.lock").open("a", encoding="utf-8") as lock:
+        lock_path = update_dir / "deployment.lock"
+        lock_fd = os.open(
+            lock_path,
+            os.O_CREAT | os.O_RDWR | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0),
+            0o660,
+        )
+        try:
+            lock_info = os.fstat(lock_fd)
+            if not stat.S_ISREG(lock_info.st_mode) or lock_info.st_nlink != 1:
+                raise OSError("deployment lock must be a regular, singly linked file")
+            directory_info = update_dir.stat()
+            os.fchown(lock_fd, directory_info.st_uid, directory_info.st_gid)
+            os.fchmod(lock_fd, 0o660)
+            lock = os.fdopen(lock_fd, "a", encoding="utf-8")
+            lock_fd = -1
+        finally:
+            if lock_fd >= 0:
+                os.close(lock_fd)
+        with lock:
             try:
                 fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:

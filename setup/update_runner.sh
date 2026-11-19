@@ -566,7 +566,11 @@ acquire_deployment_lock() {
     if ! command -v flock >/dev/null 2>&1; then
         fail "The flock command is required for deployment locking but was not found on PATH; install util-linux"
     fi
-    exec 8>"$DEPLOYMENT_LOCK"
+    local previous_umask
+    previous_umask="$(umask)"
+    umask 0007
+    exec 8>>"$DEPLOYMENT_LOCK"
+    umask "$previous_umask"
     flock 8 || fail "Could not acquire the shared deployment lock $DEPLOYMENT_LOCK"
 }
 
@@ -1419,7 +1423,7 @@ check_disk_budget() {
 
 prune_obsolete_deployment_images() {
     local free_before free_after reclaimed_kib removed=0 failed=0
-    local ref image_id repository current_ref current_repository current_images_file
+    local ref image_id repository current_ref current_repository current_images_file digest current_digest
     local running_containers_file running_images_file image_list_file container_id
     local has_current_repository keep_reference
     local -a current_images=()
@@ -1486,14 +1490,14 @@ PY
         fi
         printf '%s\n' "$image_id" >>"$running_images_file"
     done <"$running_containers_file"
-    if ! docker images --no-trunc --format '{{.ID}} {{.Repository}}:{{.Tag}}' >"$image_list_file"; then
+    if ! docker images --digests --no-trunc --format '{{.ID}} {{.Repository}}:{{.Tag}} {{.Digest}}' >"$image_list_file"; then
         rm -f "$current_images_file" "$running_containers_file" "$running_images_file" "$image_list_file"
         log "WARNING: could not list image IDs; retaining cached image tags"
         return 0
     fi
     rm -f "$running_containers_file"
     free_before="$(read_free_kib)"
-    while read -r image_id ref; do
+    while read -r image_id ref digest; do
         [ -n "$ref" ] || continue
         if grep -Fxq "$image_id" "$running_images_file"; then
             continue
@@ -1504,12 +1508,18 @@ PY
         for current_ref in "${current_images[@]}"; do
             current_repository="${current_ref%%$'\t'*}"
             current_ref="${current_ref#*$'\t'}"
+            current_digest=""
             if [ "$repository" != "$current_repository" ]; then
                 continue
             fi
             has_current_repository=1
             if [ "$ref" = "$current_ref" ]; then
                 keep_reference=1
+            elif [[ "$current_ref" == *@* ]]; then
+                current_digest="${current_ref##*@}"
+                if [ "$digest" = "$current_digest" ]; then
+                    keep_reference=1
+                fi
             fi
         done
         if [ "$has_current_repository" -eq 1 ] && [ "$keep_reference" -eq 0 ]; then

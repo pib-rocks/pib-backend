@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import subprocess
@@ -220,6 +221,70 @@ def test_recovery_falls_back_to_local_build_when_pull_fails(tmp_path: Path) -> N
     for pull, build in zip(calls[::2], calls[1::2]):
         assert "--pull missing" in pull and "--no-build" in pull
         assert "--pull never" in build and "--build" in build
+
+
+def test_recovery_does_not_require_chmod_on_a_shared_deployment_lock(
+    monkeypatch, tmp_path: Path
+) -> None:
+    env, _docker_log = _helper_env(tmp_path)
+    models = []
+    for name, project in (("backend", "pib-backend"), ("cerebra", "cerebra")):
+        model = tmp_path / f"{name}-compose.json"
+        model.write_text(
+            json.dumps(
+                {
+                    "name": project,
+                    "services": {"app": {"image": f"registry.example/{name}:v1"}},
+                }
+            ),
+            encoding="utf-8",
+        )
+        models.append(model)
+    record = subprocess.run(
+        [
+            sys.executable,
+            str(HELPER),
+            "record",
+            "--backend-tag",
+            "v1",
+            "--cerebra-tag",
+            "v1",
+            "--backend-compose-config",
+            str(models[0]),
+            "--cerebra-compose-config",
+            str(models[1]),
+        ],
+        env=env,
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+    assert record.returncode == 0, record.stderr
+
+    monkeypatch.setenv("PIB_UPDATE_DIR", env["PIB_UPDATE_DIR"])
+    monkeypatch.setenv("PIB_BACKEND_DIR", env["PIB_BACKEND_DIR"])
+    monkeypatch.setenv("PIB_CEREBRA_DIR", env["PIB_CEREBRA_DIR"])
+    spec = importlib.util.spec_from_file_location("deployment_recovery_test", HELPER)
+    assert spec is not None and spec.loader is not None
+    recovery = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(recovery)
+
+    lock_path = Path(env["PIB_UPDATE_DIR"]) / "deployment.lock"
+    original_chmod = os.chmod
+
+    def chmod_without_lock_ownership(path, mode):
+        if Path(path) == lock_path:
+            raise PermissionError("shared lock is owned by root")
+        return original_chmod(path, mode)
+
+    monkeypatch.setattr(os, "chmod", chmod_without_lock_ownership)
+    monkeypatch.setattr(
+        recovery.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0),
+    )
+
+    recovery.recover()
 
 
 def test_recovery_reports_missing_state_without_invoking_docker(

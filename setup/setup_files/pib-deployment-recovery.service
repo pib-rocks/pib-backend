@@ -10,7 +10,7 @@ Group=pib
 WorkingDirectory=/home/pib/app/pib-backend
 Environment=PIB_UPDATE_DIR=/home/pib/app/.update
 ExecStart=/usr/bin/python3 /home/pib/app/.update/deployment_recovery.py recover
-UMask=0077
+UMask=0007
 StandardOutput=journal
 StandardError=journal
 

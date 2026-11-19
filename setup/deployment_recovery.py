@@ -8,6 +8,7 @@ import fcntl
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 import tempfile
@@ -93,8 +94,12 @@ def _model_has_tag(model: dict[str, Any], tag: str) -> bool:
         return False
     for service in services.values():
         image = service.get("image") if isinstance(service, dict) else None
-        if isinstance(image, str) and image.rsplit(":", 1)[-1] == tag:
-            return True
+        if isinstance(image, str):
+            image = image.split("@", 1)[0]
+            slash = image.rfind("/")
+            colon = image.rfind(":")
+            if colon > slash and image[colon + 1 :] == tag:
+                return True
     return False
 
 
@@ -293,8 +298,21 @@ def _load_state() -> list[dict[str, Any]]:
 
 def recover() -> None:
     UPDATE_DIR.mkdir(parents=True, exist_ok=True)
-    with LOCK_FILE.open("a", encoding="utf-8") as lock:
-        os.chmod(LOCK_FILE, 0o660)
+    lock_fd = os.open(
+        LOCK_FILE,
+        os.O_CREAT | os.O_RDWR | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0),
+        0o660,
+    )
+    try:
+        lock_info = os.fstat(lock_fd)
+        if not stat.S_ISREG(lock_info.st_mode) or lock_info.st_nlink != 1:
+            raise OSError("deployment lock must be a regular, singly linked file")
+        lock = os.fdopen(lock_fd, "a", encoding="utf-8")
+        lock_fd = -1
+    finally:
+        if lock_fd >= 0:
+            os.close(lock_fd)
+    with lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
         # Read only after acquiring the lock: an updater may have replaced the
         # state while recovery was waiting for it to finish.

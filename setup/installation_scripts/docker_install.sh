@@ -302,7 +302,14 @@ function start_container() {
     local update_dir="${PIB_UPDATE_DIR:-/home/pib/app/.update}"
     sudo install -d -o pib -g pib -m 2770 "$update_dir" || return 1
     local deployment_lock_fd
-    exec {deployment_lock_fd}>>"$update_dir/deployment.lock" || return 1
+    local previous_umask
+    previous_umask="$(umask)"
+    umask 0007
+    if ! exec {deployment_lock_fd}>>"$update_dir/deployment.lock"; then
+        umask "$previous_umask"
+        return 1
+    fi
+    umask "$previous_umask"
     flock "$deployment_lock_fd" || return 1
     echo "TRYB_URL_PREFIX=https://platform.tryb.ai" > "$BACKEND_DIR"/password.env
     local backend_version="" frontend_version="" backend_tag="develop" frontend_tag="develop"

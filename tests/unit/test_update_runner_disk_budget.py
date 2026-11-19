@@ -117,6 +117,9 @@ if [ "${1:-}" = "compose" ] && [[ "$joined" == *" config --format json"* ]]; the
     tag="${PIB_IMAGE_TAG:-develop}"
     if [ "$project" = "pib-backend" ]; then
         image="ghcr.io/pib-rocks/pib-backend-flask-app:$tag"
+        if [ -n "${STUB_BACKEND_IMAGE_DIGEST:-}" ]; then
+            image="ghcr.io/pib-rocks/pib-backend-flask-app:$tag@${STUB_BACKEND_IMAGE_DIGEST}"
+        fi
         if [ -n "${STUB_EXTRA_BACKEND_IMAGE:-}" ]; then
             printf '{"name":"%s","services":{"fixture":{"image":"%s"},"extra":{"image":"%s"}}}\\n' "$project" "$image" "$STUB_EXTRA_BACKEND_IMAGE"
             exit 0
@@ -146,7 +149,11 @@ if [ "${1:-}" = "image" ] && [ "${2:-}" = "prune" ]; then
 fi
 
 if [ "${1:-}" = "images" ]; then
-    cat "${STUB_DOCKER_IMAGES_LIST:?}"
+    if [[ "$joined" == *" --digests "* ]]; then
+        cat "${STUB_DOCKER_IMAGES_LIST:?}"
+    else
+        awk '{print $1, $2}' "${STUB_DOCKER_IMAGES_LIST:?}"
+    fi
     exit 0
 fi
 
@@ -261,6 +268,7 @@ def _run(
     pib_sdk_installed: str = "0.7.4",
     docker_images_list: str | None = None,
     extra_backend_image: str = "",
+    backend_image_digest: str = "",
 ) -> tuple[subprocess.CompletedProcess[str], Path, str, str]:
     update_dir = tmp_path / "update"
     backend = tmp_path / "backend"
@@ -340,6 +348,7 @@ def _run(
         STUB_PROFILE_BUILD_LOG=str(profile_build_log),
         STUB_DOCKER_IMAGES_LIST=str(images_list),
         STUB_EXTRA_BACKEND_IMAGE=extra_backend_image,
+        STUB_BACKEND_IMAGE_DIGEST=backend_image_digest,
         STUB_POST_CHECKOUT_FLAG=str(post_checkout_flag),
     )
     if required_free_kib is not None:
@@ -515,6 +524,34 @@ def test_post_success_cleanup_keeps_running_image_even_when_its_tag_is_obsolete(
     assert "image rm -f ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.3" in docker_log
 
 
+def test_post_success_cleanup_keeps_digest_pinned_image_with_a_tag(
+    tmp_path: Path,
+) -> None:
+    digest = f"sha256:{'a' * 64}"
+    _result, _update_dir, docker_log, _log = _run(
+        tmp_path,
+        free_kib="8388608",
+        required_free_kib="1048576",
+        channel="release",
+        release="v0.7.4",
+        tag_head="v0.7.3",
+        tag_head_after="v0.7.4",
+        backend_image_digest=digest,
+        docker_images_list=(
+            "sha256:old ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.2 "
+            "sha256:old-digest\n"
+            "sha256:cached ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.3 "
+            f"{digest}\n"
+        ),
+    )
+
+    assert "image rm -f ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.2" in docker_log
+    assert (
+        "image rm -f ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.3"
+        not in docker_log
+    )
+
+
 def test_runner_defines_cerebra_registry_stack_helpers() -> None:
     text = RUNNER.read_text(encoding="utf-8")
     assert "recreate_cerebra_from_registry" in text
@@ -530,9 +567,11 @@ def test_runner_defines_cerebra_registry_stack_helpers() -> None:
     )[0]
     assert 'project_names != {"pib-backend", "cerebra"}' in prune
     assert (
-        "docker images --no-trunc --format '{{.ID}} {{.Repository}}:{{.Tag}}'" in prune
+        "docker images --digests --no-trunc --format '{{.ID}} {{.Repository}}:{{.Tag}} {{.Digest}}'"
+        in prune
     )
     assert '"$ref" = "$current_ref"' in prune
+    assert '"$digest" = "$current_digest"' in prune
     assert "has_current_repository=1" in prune
 
 

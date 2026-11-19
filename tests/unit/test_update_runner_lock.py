@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import stat
 import subprocess
 import time
 from pathlib import Path
@@ -286,6 +287,7 @@ def test_runner_acquires_lock_and_completes(tmp_path: Path) -> None:
     status = json.loads((update_dir / "status.json").read_text(encoding="utf-8"))
     assert status["state"] == "done"
     assert (update_dir / "runner.lock").is_file()
+    assert stat.S_IMODE((update_dir / "deployment.lock").stat().st_mode) == 0o660
     deployment = json.loads(
         (update_dir / "deployments.json").read_text(encoding="utf-8")
     )
