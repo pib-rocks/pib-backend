@@ -39,6 +39,7 @@ from pib_motors.perf_trace import (
 from pib_motors.bus_writer import (
     BusPriority,
     all_bus_writers,
+    bus_writer_snapshot_has_anomaly,
     format_bus_writer_summary,
     shutdown_all_bus_writers,
 )
@@ -644,8 +645,18 @@ class MotorControl(Node):
             )
 
     def _log_bus_writer_stats(self) -> None:
+        verbose = os.environ.get("PIB_PERF_TRACE_BUS_WRITER", "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        )
         for writer in all_bus_writers():
-            log_perf_trace(self.get_logger(), format_bus_writer_summary(writer))
+            snap = writer.counters().snapshot()
+            if verbose or bus_writer_snapshot_has_anomaly(snap):
+                log_perf_trace(
+                    self.get_logger(), format_bus_writer_summary(writer, snap)
+                )
 
     def get_all_joint_positions(
         self,

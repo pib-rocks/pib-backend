@@ -502,8 +502,21 @@ def shutdown_all_bus_writers(timeout: float | None = 5.0) -> None:
         writer.stop(timeout=timeout)
 
 
-def format_bus_writer_summary(writer: BusWriter) -> str:
-    snap = writer.counters().snapshot()
+def bus_writer_snapshot_has_anomaly(snap: dict[str, Any]) -> bool:
+    """Return True when a bus-writer snapshot reports queuing, drops, coalescing, or slow tx."""
+    return bool(
+        snap.get("queue_depth", 0) > 0
+        or snap.get("dropped_stream", 0) > 0
+        or snap.get("coalesced_stream", 0) > 0
+        or snap.get("slow_transactions", 0) > 0
+    )
+
+
+def format_bus_writer_summary(
+    writer: BusWriter, snap: dict[str, Any] | None = None
+) -> str:
+    if snap is None:
+        snap = writer.counters().snapshot()
     return (
         f"[PERF_TRACE] BUS_WRITER port={writer.port_key} "
         f"txs_per_s={snap['txs_per_sec']} "
