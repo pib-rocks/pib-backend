@@ -501,6 +501,7 @@ def test_update_fails_when_ros_programs_sdk_is_below_the_floor(tmp_path: Path) -
     assert "pib-sdk mismatch" in log
     assert "0.7.3" in log
     assert "0.7.4" in log
+    assert "installed=0.7.3 is below required>=0.7.4" in log
     assert "rollback attempt also failed" in status["message"]
 
 
@@ -520,6 +521,24 @@ def test_update_fails_when_ros_programs_cannot_report_sdk_version(
     log = (update_dir / "update.log").read_text(encoding="utf-8")
     assert "pib-sdk verification failed" in log
     assert "did not answer" in log
+    assert "ImportError: no module named pib_sdk" in log
+
+
+def test_sdk_warning_is_logged_during_rollback_verification(tmp_path: Path) -> None:
+    result, update_dir, _docker_log = _run(
+        tmp_path,
+        "develop",
+        second_parent_missing=True,
+        pib_sdk_installed="0.7.3",
+        pib_sdk_warning=True,
+    )
+
+    assert result.returncode != 0
+    status = json.loads((update_dir / "status.json").read_text(encoding="utf-8"))
+    assert status["state"] == "failed"
+    assert "rollback attempt also failed" in status["message"]
+    log = (update_dir / "update.log").read_text(encoding="utf-8")
+    assert log.count("WARNING: compose diagnostic on stderr") >= 2
 
 
 def test_update_parses_sdk_version_when_compose_warns_on_stderr(
