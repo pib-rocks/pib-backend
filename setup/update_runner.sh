@@ -976,7 +976,7 @@ verify_pib_sdk() {
     local required installed output
     required="$(read_pib_sdk_version)" || return 1
     if ! installed="$(docker compose -f "$BACKEND_DIR/docker-compose.yaml" exec -T ros-programs \
-        python3 -c "import pib_sdk, sys; sys.stdout.write(pib_sdk.__version__)" 2>&1)"; then
+        python3 -c "import pib_sdk, sys; sys.stdout.write(pib_sdk.__version__)")"; then
         log "pib-sdk verification failed: ros-programs did not answer (${installed})"
         return 1
     fi
