@@ -126,6 +126,8 @@ COMPRESSED_IMAGE_TOPIC = "/oak/rgb/image_raw/compressed"
 COMPRESSED_IMAGE_FRAME_ID = "oak_rgb_camera_optical_frame"
 DEFAULT_QUALITY_FACTOR = 80
 DEFAULT_TIMER_PERIOD_SECONDS = 0.1
+IDLE_CAMERA_FRAME_INTERVAL_SECONDS = 1.0
+CAMERA_SNAPSHOT_GRACE_SECONDS = 5.0
 #: The device hand chain produces its own results at camera rate. Polling it on
 #: the stream timer (10 Hz) capped hand tracking at 10 detections/s whatever the
 #: device managed, so the chain gets its own poll.
@@ -340,6 +342,8 @@ class CameraNode(
         self.video_encoder = None
         self.mjpeg_buffer = MjpegFrameBuffer()
         self.mjpeg_server = None
+        self._last_idle_frame_monotonic = 0.0
+        self._last_camera_service_monotonic = 0.0
         self._load_startup_camera_settings()
         self.queue = None
         self.depth_queue = None
@@ -472,6 +476,7 @@ class CameraNode(
         return base64.b64encode(buffer).decode("utf-8")
 
     def get_camera_image_callback(self, request, response):
+        self._last_camera_service_monotonic = time.monotonic()
         # Prefer the hardware-encoded JPEG bytes from the OAK VideoEncoder.
         jpeg_bytes = getattr(self, "current_jpeg_bytes", b"")
         if jpeg_bytes:
@@ -990,8 +995,57 @@ class CameraNode(
                         f"Dropping invalid IMU report: {type(exc).__name__}: {exc}"
                     )
 
+    def _idle_camera_frame_interval(self) -> float:
+        raw = os.environ.get("PIB_CAMERA_IDLE_INTERVAL_SEC", "").strip()
+        if not raw:
+            return IDLE_CAMERA_FRAME_INTERVAL_SECONDS
+        try:
+            return max(0.0, float(raw))
+        except ValueError:
+            return IDLE_CAMERA_FRAME_INTERVAL_SECONDS
+
+    def _camera_has_active_consumers(self, now: float) -> bool:
+        for pub_name in (
+            "compressed_publisher_",
+            "face_center_publisher_",
+            "depth_publisher_",
+        ):
+            pub = getattr(self, pub_name, None)
+            if pub is not None and pub.get_subscription_count() > 0:
+                return True
+        mjpeg_buf = getattr(self, "mjpeg_buffer", None)
+        if mjpeg_buf is not None and mjpeg_buf.has_active_consumers(
+            snapshot_grace_seconds=CAMERA_SNAPSHOT_GRACE_SECONDS, now=now
+        ):
+            return True
+        last_srv = float(getattr(self, "_last_camera_service_monotonic", 0.0) or 0.0)
+        if last_srv > 0.0 and (now - last_srv) < CAMERA_SNAPSHOT_GRACE_SECONDS:
+            return True
+        if getattr(self, "nn_queues", None):
+            return True
+        for queue_name in (
+            "hand_decoder_queue",
+            "imitation_queue",
+            "hand_palm_queue",
+            "hand_roi_queue",
+            "face_crop_queue",
+        ):
+            if getattr(self, queue_name, None) is not None:
+                return True
+        return False
+
     def timer_callback(self):
         if self._poll_colour_branch_capture():
+            return
+        now = time.monotonic()
+        idle_interval = self._idle_camera_frame_interval()
+        last_idle = float(getattr(self, "_last_idle_frame_monotonic", 0.0) or 0.0)
+        if (
+            idle_interval > 0.0
+            and last_idle > 0.0
+            and not self._camera_has_active_consumers(now)
+            and (now - last_idle) < idle_interval
+        ):
             return
         if self.queue:
             image_rgb = self._pending_color_packet
@@ -999,6 +1053,7 @@ class CameraNode(
             if image_rgb is None:
                 image_rgb = self.queue.tryGet()
             if image_rgb is not None:
+                self._last_idle_frame_monotonic = now
                 self._preview_packet = image_rgb
                 jpeg_bytes = self._extract_packet_jpeg(image_rgb)
                 if jpeg_bytes is not None:

@@ -60,6 +60,8 @@ class MjpegFrameBuffer:
         self._state: str = "starting"
         self._last_error: str = ""
         self._usb_device_present: bool = True
+        self._stream_clients: int = 0
+        self._last_snapshot_monotonic: float = 0.0
 
     @property
     def sequence(self) -> int:
@@ -70,6 +72,43 @@ class MjpegFrameBuffer:
     def latest_jpeg(self) -> bytes:
         with self._condition:
             return self._jpeg_bytes
+
+    @property
+    def active_stream_clients(self) -> int:
+        with self._condition:
+            return self._stream_clients
+
+    def register_stream_client(self) -> int:
+        with self._condition:
+            self._stream_clients += 1
+            return self._stream_clients
+
+    def unregister_stream_client(self) -> int:
+        with self._condition:
+            self._stream_clients = max(0, self._stream_clients - 1)
+            return self._stream_clients
+
+    def note_snapshot_request(self, now: Optional[float] = None) -> None:
+        with self._condition:
+            self._last_snapshot_monotonic = (
+                time.monotonic() if now is None else float(now)
+            )
+
+    def has_active_consumers(
+        self,
+        snapshot_grace_seconds: float = 5.0,
+        now: Optional[float] = None,
+    ) -> bool:
+        current = time.monotonic() if now is None else float(now)
+        with self._condition:
+            if self._stream_clients > 0:
+                return True
+            if (
+                self._last_snapshot_monotonic > 0.0
+                and (current - self._last_snapshot_monotonic) < snapshot_grace_seconds
+            ):
+                return True
+            return False
 
     def publish(self, jpeg_bytes: bytes) -> None:
         if not jpeg_bytes:
@@ -108,6 +147,7 @@ class MjpegFrameBuffer:
                 "state": self._state,
                 "usbDevicePresent": self._usb_device_present,
                 "lastError": self._last_error,
+                "streamClients": self._stream_clients,
             }
 
     def set_available(self, available: bool) -> None:
@@ -174,6 +214,7 @@ class _MjpegRequestHandler(BaseHTTPRequestHandler):
         )
 
     def _handle_snapshot(self) -> None:
+        self.frame_buffer.note_snapshot_request()
         jpeg = self.frame_buffer.latest_jpeg
         if not jpeg:
             self._send_json(
@@ -194,48 +235,52 @@ class _MjpegRequestHandler(BaseHTTPRequestHandler):
 
     def _handle_stream(self) -> None:
         buf = self.frame_buffer
-        # Wait briefly for the first frame if the pipeline just started.
-        jpeg = buf.latest_jpeg
-        seq = buf.sequence
-        if not jpeg:
-            jpeg, seq, available = buf.wait_for_next(0, timeout=2.0)
-            if not available or not jpeg:
-                self._send_json(
-                    HTTPStatus.SERVICE_UNAVAILABLE,
-                    {"error": "Camera stream not available"},
-                )
-                return
-
-        self.send_response(HTTPStatus.OK)
-        self.send_header(
-            "Content-Type",
-            f"multipart/x-mixed-replace; boundary={STREAM_BOUNDARY}",
-        )
-        self.send_header(
-            "Cache-Control",
-            "no-store, no-cache, must-revalidate, pre-check=0, post-check=0, max-age=0",
-        )
-        self.send_header("Pragma", "no-cache")
-        self.send_header("Connection", "close")
-        self.send_header("X-Accel-Buffering", "no")
-        self.end_headers()
-
+        buf.register_stream_client()
         try:
-            self._write_part(jpeg)
-            while True:
-                next_jpeg, seq, available = buf.wait_for_next(seq, timeout=2.0)
-                if not available:
-                    break
-                if next_jpeg is None:
-                    # Keep the connection alive and re-send the latest frame if idle.
-                    latest = buf.latest_jpeg
-                    if not latest:
+            # Wait briefly for the first frame if the pipeline just started.
+            jpeg = buf.latest_jpeg
+            seq = buf.sequence
+            if not jpeg:
+                jpeg, seq, available = buf.wait_for_next(0, timeout=2.0)
+                if not available or not jpeg:
+                    self._send_json(
+                        HTTPStatus.SERVICE_UNAVAILABLE,
+                        {"error": "Camera stream not available"},
+                    )
+                    return
+
+            self.send_response(HTTPStatus.OK)
+            self.send_header(
+                "Content-Type",
+                f"multipart/x-mixed-replace; boundary={STREAM_BOUNDARY}",
+            )
+            self.send_header(
+                "Cache-Control",
+                "no-store, no-cache, must-revalidate, pre-check=0, post-check=0, max-age=0",
+            )
+            self.send_header("Pragma", "no-cache")
+            self.send_header("Connection", "close")
+            self.send_header("X-Accel-Buffering", "no")
+            self.end_headers()
+
+            try:
+                self._write_part(jpeg)
+                while True:
+                    next_jpeg, seq, available = buf.wait_for_next(seq, timeout=2.0)
+                    if not available:
                         break
-                    self._write_part(latest)
-                else:
-                    self._write_part(next_jpeg)
-        except (BrokenPipeError, ConnectionResetError, OSError):
-            return
+                    if next_jpeg is None:
+                        # Keep the connection alive and re-send the latest frame if idle.
+                        latest = buf.latest_jpeg
+                        if not latest:
+                            break
+                        self._write_part(latest)
+                    else:
+                        self._write_part(next_jpeg)
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                return
+        finally:
+            buf.unregister_stream_client()
 
     def _write_part(self, jpeg: bytes) -> None:
         header = (
