@@ -391,7 +391,9 @@ def test_timer_callback_throttles_idle_frames_and_unthrottles_on_consumer(monkey
     assert node.queue.tryGet.call_count == 1
     assert node.mjpeg_buffer.latest_jpeg == fake_jpeg
 
-    # Second tick 0.1s later with zero consumers is throttled.
+    # Second tick 0.1s later is throttled even when passive /face_center
+    # subscribers (e.g. voice_assistant/chat) are connected.
+    node.face_center_publisher_.get_subscription_count.return_value = 2
     clock[0] = 100.1
     node.timer_callback()
     assert node.queue.tryGet.call_count == 1
