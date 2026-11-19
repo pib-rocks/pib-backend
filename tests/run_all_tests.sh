@@ -41,6 +41,11 @@ Environment:
                       Required for those modules; they do not use http://localhost
                       unless this variable is set to it. Example on the robot:
                       PIB_ROBOT_URL=http://localhost ./run_all_tests.sh
+                      On an 8 GB Pi, prefer driving the browser from another host:
+                      PIB_ROBOT_URL=http://<robot-ip> ./run_all_tests.sh
+  PIB_MIN_AVAILABLE_MEM_MB
+                      Minimum MemAvailable (MiB) required before starting live
+                      browser E2E suites (default: 1500, 0 disables the check).
 EOF
 }
 
@@ -241,6 +246,49 @@ PY
     return 0
 }
 
+# Headless Chromium plus the robot stack can exhaust an 8 GB Raspberry Pi and let the
+# kernel OOM-killer terminate PipeWire or a test browser mid-run, turning RAM exhaustion
+# into random UI failures (PR-2179). Refuse to start the live browser suites when free
+# headroom is already below the threshold and name the remedy explicitly.
+check_memory_headroom() {
+    local min_mb="${PIB_MIN_AVAILABLE_MEM_MB:-1500}"
+    local meminfo="${PIB_MEMINFO_FILE:-/proc/meminfo}"
+
+    if [[ ! "${min_mb}" =~ ^[0-9]+$ ]]; then
+        echo -e "${RED}FAILED:${NC} PIB_MIN_AVAILABLE_MEM_MB must be a non-negative integer (got '${min_mb}')" >&2
+        return 1
+    fi
+    if [[ "${min_mb}" -eq 0 ]]; then
+        echo -e "${YELLOW}WARN:${NC} memory preflight disabled (PIB_MIN_AVAILABLE_MEM_MB=0)"
+        return 0
+    fi
+    if [[ ! -r "${meminfo}" ]]; then
+        echo -e "${YELLOW}WARN:${NC} ${meminfo} not readable — skipping memory preflight"
+        return 0
+    fi
+
+    local avail_kb swap_total_kb swap_free_kb avail_mb swap_used_mb swap_total_mb
+    avail_kb="$(awk '/^MemAvailable:/ {print $2; exit}' "${meminfo}")"
+    if [[ -z "${avail_kb}" ]]; then
+        echo -e "${YELLOW}WARN:${NC} MemAvailable missing in ${meminfo} — skipping memory preflight"
+        return 0
+    fi
+    swap_total_kb="$(awk '/^SwapTotal:/ {print $2; exit}' "${meminfo}")"
+    swap_free_kb="$(awk '/^SwapFree:/ {print $2; exit}' "${meminfo}")"
+    avail_mb=$(( avail_kb / 1024 ))
+    swap_total_mb=$(( ${swap_total_kb:-0} / 1024 ))
+    swap_used_mb=$(( (${swap_total_kb:-0} - ${swap_free_kb:-0}) / 1024 ))
+
+    if (( avail_mb < min_mb )); then
+        echo -e "${RED}FAILED:${NC} insufficient memory for live E2E suites: MemAvailable=${avail_mb} MiB < required ${min_mb} MiB (swap used ${swap_used_mb}/${swap_total_mb} MiB)." >&2
+        echo "Running headless Chromium alongside the robot stack risks an OOM kill (PipeWire / browser)." >&2
+        echo "Run live E2E from another host with PIB_ROBOT_URL=http://<robot-ip>, free memory, or override PIB_MIN_AVAILABLE_MEM_MB." >&2
+        return 1
+    fi
+    echo -e "${GREEN}OK:${NC} memory headroom ${avail_mb} MiB available (minimum ${min_mb} MiB; swap used ${swap_used_mb}/${swap_total_mb} MiB)"
+    return 0
+}
+
 run_pytest_integration() {
     cd "${REPO_ROOT}"
     rm -rf /tmp/pytest-of-* /tmp/pytest-* 2>/dev/null || true
@@ -345,6 +393,13 @@ main() {
     ensure_venv
     run_step "Test dependencies" check_test_dependencies
     check_flask
+    if [[ -n "${PIB_ROBOT_URL:-}" || ${INCLUDE_FRONTEND} -eq 1 ]]; then
+        section "Memory preflight"
+        if ! check_memory_headroom; then
+            echo -e "${RED}FAILED:${NC} Memory preflight — aborting before live E2E suites to avoid an OOM kill." >&2
+            exit 1
+        fi
+    fi
     # Only meaningful where the live suites run: they read the robot over rosbridge.
     if [[ ${SKIP_ROBOT} -eq 0 && -n "${PIB_ROBOT_URL:-}" ]]; then
         run_step "ROS bridge preflight" check_ros_bridge

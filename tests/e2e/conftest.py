@@ -8,11 +8,67 @@ from __future__ import annotations
 
 import contextlib
 import importlib.util
+import os
 import sys
 from pathlib import Path
 
 import pytest
 import requests
+
+DEFAULT_MIN_AVAILABLE_MEM_MB = 1500
+
+
+def _read_meminfo_kb(meminfo_path: Path) -> dict[str, int]:
+    values: dict[str, int] = {}
+    for line in meminfo_path.read_text(encoding="utf-8").splitlines():
+        if ":" not in line:
+            continue
+        key, rest = line.split(":", 1)
+        parts = rest.strip().split()
+        if parts and parts[0].isdigit():
+            values[key] = int(parts[0])
+    return values
+
+
+def check_live_memory_headroom(
+    meminfo_path: Path | None = None,
+    min_available_mb: int | None = None,
+) -> str | None:
+    """Return an error message when available memory is too low for live Chromium E2E."""
+    if min_available_mb is None:
+        raw_min = os.environ.get(
+            "PIB_MIN_AVAILABLE_MEM_MB", str(DEFAULT_MIN_AVAILABLE_MEM_MB)
+        ).strip()
+        try:
+            min_available_mb = int(raw_min)
+        except ValueError:
+            return (
+                "PIB_MIN_AVAILABLE_MEM_MB must be a non-negative integer "
+                f"(got {raw_min!r})"
+            )
+    if min_available_mb <= 0:
+        return None
+    path = meminfo_path or Path(os.environ.get("PIB_MEMINFO_FILE", "/proc/meminfo"))
+    if not path.is_file():
+        return None
+    info = _read_meminfo_kb(path)
+    avail_kb = info.get("MemAvailable")
+    if avail_kb is None:
+        return None
+    avail_mb = avail_kb // 1024
+    if avail_mb < min_available_mb:
+        swap_total_mb = info.get("SwapTotal", 0) // 1024
+        swap_used_mb = (
+            max(0, info.get("SwapTotal", 0) - info.get("SwapFree", 0)) // 1024
+        )
+        return (
+            f"Insufficient memory for live E2E browser suites: MemAvailable={avail_mb} MiB "
+            f"< required {min_available_mb} MiB (swap used {swap_used_mb}/{swap_total_mb} MiB). "
+            "Run live E2E from another machine with PIB_ROBOT_URL=http://<robot-ip>, "
+            "free memory, or override PIB_MIN_AVAILABLE_MEM_MB (PR-2179)."
+        )
+    return None
+
 
 _E2E_DIR = Path(__file__).resolve().parent
 if str(_E2E_DIR) not in sys.path:
@@ -126,6 +182,13 @@ def pytest_runtestloop(session):
             pytest.exit(message, returncode=1)
         return None
     _announce(session, resolved)
+    mem_error = check_live_memory_headroom()
+    if mem_error is not None:
+        reporter = session.config.pluginmanager.getplugin("terminalreporter")
+        if reporter is not None:
+            reporter.write_line(mem_error)
+        if len(items) == len(session.items):
+            pytest.exit(mem_error, returncode=1)
     return None
 
 
@@ -136,3 +199,6 @@ def pytest_runtest_setup(item):
         resolve()
     except RobotAddressError as error:
         pytest.fail(str(error), pytrace=False)
+    mem_error = check_live_memory_headroom()
+    if mem_error is not None:
+        pytest.fail(mem_error, pytrace=False)

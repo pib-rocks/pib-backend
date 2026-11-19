@@ -5,6 +5,8 @@ services:
   # The voice container reaches it by service name; see PIB_HERMES_DAEMON_URL.
   hermes-daemon:
     image: ${PIB_IMAGE_PREFIX:-ghcr.io/pib-rocks/pib-backend}-hermes-daemon:${PIB_IMAGE_TAG:-develop}
+    init: true
+    oom_score_adj: -200
     build:
       context: .
       dockerfile: ./public_api_client/Dockerfile
@@ -57,6 +59,7 @@ services:
 
   pib-blockly-server:
     image: ${PIB_IMAGE_PREFIX:-ghcr.io/pib-rocks/pib-backend}-pib-blockly-server:${PIB_IMAGE_TAG:-develop}
+    oom_score_adj: -200
     build:
       context: ./pib_blockly/pib_blockly_server
       dockerfile: ./Dockerfile
@@ -74,6 +77,8 @@ services:
 
   flask-app:
     image: ${PIB_IMAGE_PREFIX:-ghcr.io/pib-rocks/pib-backend}-flask-app:${PIB_IMAGE_TAG:-develop}
+    init: true
+    oom_score_adj: -200
     build:
       context: .
       dockerfile: ./pib_api/flask/Dockerfile
@@ -152,6 +157,8 @@ services:
       - host.docker.internal:host-gateway
   rosbridge-ws:
     image: ${PIB_IMAGE_PREFIX:-ghcr.io/pib-rocks/pib-backend}-rosbridge-ws:${PIB_IMAGE_TAG:-develop}
+    init: true
+    oom_score_adj: -200
     build:
       context: ./ros_packages
       dockerfile: ./rosbridge/Dockerfile
@@ -169,6 +176,8 @@ services:
 
   ros-camera:
     image: ${PIB_IMAGE_PREFIX:-ghcr.io/pib-rocks/pib-backend}-ros-camera:${PIB_IMAGE_TAG:-develop}
+    init: true
+    oom_score_adj: -200
     privileged: true
     build:
       context: ./ros_packages
@@ -200,6 +209,8 @@ services:
 
   ros-motors:
     image: ${PIB_IMAGE_PREFIX:-ghcr.io/pib-rocks/pib-backend}-ros-motors:${PIB_IMAGE_TAG:-develop}
+    init: true
+    oom_score_adj: -200
     build:
       context: .
       dockerfile: ./ros_packages/motors/Dockerfile
@@ -237,6 +248,8 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     image: ${PIB_IMAGE_PREFIX:-ghcr.io/pib-rocks/pib-backend}-ros-voice-assistant:${PIB_IMAGE_TAG:-develop}
+    init: true
+    oom_score_adj: -200
     build:
       context: .
       dockerfile: ./ros_packages/voice_assistant/Dockerfile
@@ -363,6 +376,8 @@ services:
 
   ros-programs:
     image: ${PIB_IMAGE_PREFIX:-ghcr.io/pib-rocks/pib-backend}-ros-programs:${PIB_IMAGE_TAG:-develop}
+    init: true
+    oom_score_adj: -200
     build:
       context: .
       dockerfile: ./ros_packages/programs/Dockerfile
@@ -412,6 +427,8 @@ services:
 
   ros-display:
     image: ${PIB_IMAGE_PREFIX:-ghcr.io/pib-rocks/pib-backend}-ros-display:${PIB_IMAGE_TAG:-develop}
+    init: true
+    oom_score_adj: -200
     privileged: true
     build:
       context: .
@@ -458,6 +475,8 @@ services:
 
   ros-audio-io:
     image: ${PIB_IMAGE_PREFIX:-ghcr.io/pib-rocks/pib-backend}-ros-audio-io:${PIB_IMAGE_TAG:-develop}
+    init: true
+    oom_score_adj: -200
     build:
       context: .
       dockerfile: ./ros_packages/ros_audio_io/Dockerfile
