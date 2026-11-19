@@ -262,8 +262,6 @@ def test_start_container_forwards_release_tag_to_backend_and_frontend_compose(tm
         DOCKER_INSTALL=str(DOCKER_INSTALL),
         PIB_DOCKER_BUILD_LOG=str(tmp_path / "docker-build.log"),
         PIB_UPDATE_DIR=str(tmp_path / "update"),
-        PIB_BACKEND_DIR=str(backend_dir),
-        PIB_CEREBRA_DIR=str(frontend_dir),
     )
     subprocess.run(["bash", "-c", HARNESS], env=env, check=True, capture_output=True)
     recorded = (tmp_path / "update" / "deployments.json").read_text(encoding="utf-8")
@@ -271,6 +269,11 @@ def test_start_container_forwards_release_tag_to_backend_and_frontend_compose(tm
     backend_state = next(
         project for project in state["projects"] if project["name"] == "pib-backend"
     )
+    cerebra_state = next(
+        project for project in state["projects"] if project["name"] == "cerebra"
+    )
+    assert backend_state["projectDirectory"] == str(backend_dir)
+    assert cerebra_state["projectDirectory"] == str(frontend_dir)
     assert backend_state["composeConfig"]["services"]["fixture"]["volumes"][0][
         "source"
     ] == ("/data/voice")

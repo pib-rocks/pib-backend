@@ -1418,8 +1418,9 @@ check_disk_budget() {
 }
 
 prune_obsolete_deployment_images() {
-    local free_before free_after reclaimed_kib removed=0
+    local free_before free_after reclaimed_kib removed=0 failed=0
     local ref repository current_ref current_repository current_images_file
+    local has_current_repository keep_reference
     local -a current_images=()
     current_images_file="$UPDATE_DIR/current-image-refs-$$.txt"
     if ! python3 - "$UPDATE_DIR/deployments.json" >"$current_images_file" <<'PY'
@@ -1446,6 +1447,11 @@ for project in state["projects"]:
         without_digest = image.split("@", 1)[0]
         slash = without_digest.rfind("/")
         colon = without_digest.rfind(":")
+        if "@" not in image and colon <= slash:
+            image += ":latest"
+            without_digest = image
+            slash = without_digest.rfind("/")
+            colon = without_digest.rfind(":")
         repository = without_digest[:colon] if colon > slash else without_digest
         print(f"{repository}\t{image}")
 if project_names != {"pib-backend", "cerebra"} or len(state["projects"]) != 2:
@@ -1466,17 +1472,26 @@ PY
     while IFS= read -r ref; do
         [ -n "$ref" ] || continue
         repository="${ref%:*}"
+        has_current_repository=0
+        keep_reference=0
         for current_ref in "${current_images[@]}"; do
             current_repository="${current_ref%%$'\t'*}"
             current_ref="${current_ref#*$'\t'}"
             if [ "$repository" != "$current_repository" ]; then
                 continue
             fi
-            if [ "$ref" != "$current_ref" ] && docker image rm -f "$ref" >/dev/null 2>&1; then
-                removed=$((removed + 1))
+            has_current_repository=1
+            if [ "$ref" = "$current_ref" ]; then
+                keep_reference=1
             fi
-            break
         done
+        if [ "$has_current_repository" -eq 1 ] && [ "$keep_reference" -eq 0 ]; then
+            if docker image rm -f "$ref" >/dev/null 2>&1; then
+                removed=$((removed + 1))
+            else
+                failed=$((failed + 1))
+            fi
+        fi
     done < <(docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null || true)
     docker image prune -f >/dev/null 2>&1 || true
     free_after="$(read_free_kib)"
@@ -1484,7 +1499,7 @@ PY
     if [ "$reclaimed_kib" -lt 0 ]; then
         reclaimed_kib=0
     fi
-    log "Post-update image cleanup: reclaimed ${reclaimed_kib} KiB ($(kib_to_mib "$reclaimed_kib") MiB); free disk now ${free_after} KiB ($(kib_to_mib "$free_after") MiB). Kept only the images referenced by the current Compose deployment; removed ${removed} obsolete tag(s)."
+    log "Post-update image cleanup: reclaimed ${reclaimed_kib} KiB ($(kib_to_mib "$reclaimed_kib") MiB); free disk now ${free_after} KiB ($(kib_to_mib "$free_after") MiB). Preserved current Compose image references; removed ${removed} obsolete tag(s), ${failed} removal(s) failed."
 }
 
 rollback_once() {

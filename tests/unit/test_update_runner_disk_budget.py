@@ -117,6 +117,10 @@ if [ "${1:-}" = "compose" ] && [[ "$joined" == *" config --format json"* ]]; the
     tag="${PIB_IMAGE_TAG:-develop}"
     if [ "$project" = "pib-backend" ]; then
         image="ghcr.io/pib-rocks/pib-backend-flask-app:$tag"
+        if [ -n "${STUB_EXTRA_BACKEND_IMAGE:-}" ]; then
+            printf '{"name":"%s","services":{"fixture":{"image":"%s"},"extra":{"image":"%s"}}}\\n' "$project" "$image" "$STUB_EXTRA_BACKEND_IMAGE"
+            exit 0
+        fi
     else
         image="ghcr.io/pib-rocks/cerebra:$tag"
     fi
@@ -252,6 +256,7 @@ def _run(
     tag_head_after: str = "",
     pib_sdk_installed: str = "0.7.4",
     docker_images_list: str | None = None,
+    extra_backend_image: str = "",
 ) -> tuple[subprocess.CompletedProcess[str], Path, str, str]:
     update_dir = tmp_path / "update"
     backend = tmp_path / "backend"
@@ -330,6 +335,7 @@ def _run(
         DOCKER_LOG=str(docker_log),
         STUB_PROFILE_BUILD_LOG=str(profile_build_log),
         STUB_DOCKER_IMAGES_LIST=str(images_list),
+        STUB_EXTRA_BACKEND_IMAGE=extra_backend_image,
         STUB_POST_CHECKOUT_FLAG=str(post_checkout_flag),
     )
     if required_free_kib is not None:
@@ -459,6 +465,28 @@ def test_post_success_cleanup_keeps_only_current_deployment_tags(
     assert status["state"] == "done"
 
 
+def test_post_success_cleanup_keeps_all_compose_refs_in_same_repository(
+    tmp_path: Path,
+) -> None:
+    _result, _update_dir, docker_log, _log = _run(
+        tmp_path,
+        free_kib="8388608",
+        required_free_kib="1048576",
+        channel="release",
+        release="v0.7.4",
+        tag_head="v0.7.3",
+        tag_head_after="v0.7.4",
+        extra_backend_image="ghcr.io/pib-rocks/pib-backend-flask-app",
+    )
+
+    assert (
+        "image rm -f ghcr.io/pib-rocks/pib-backend-flask-app:latest" not in docker_log
+    )
+    assert (
+        "image rm -f ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.4" not in docker_log
+    )
+
+
 def test_runner_defines_cerebra_registry_stack_helpers() -> None:
     text = RUNNER.read_text(encoding="utf-8")
     assert "recreate_cerebra_from_registry" in text
@@ -474,7 +502,8 @@ def test_runner_defines_cerebra_registry_stack_helpers() -> None:
     )[0]
     assert 'project_names != {"pib-backend", "cerebra"}' in prune
     assert "docker images --format '{{.Repository}}:{{.Tag}}'" in prune
-    assert '"$ref" != "$current_ref"' in prune
+    assert '"$ref" = "$current_ref"' in prune
+    assert "has_current_repository=1" in prune
 
 
 def test_rollback_prefers_cached_images_with_no_build_and_writes_granular_progress(

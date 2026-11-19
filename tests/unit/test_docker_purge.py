@@ -129,6 +129,64 @@ def test_purge_keeps_current_compose_images_and_prunes_obsolete_tags(
     assert "freed" in body["message"]
 
 
+def test_purge_matches_implicit_latest_and_digest_references(monkeypatch, tmp_path):
+    _write_deployment_state(tmp_path, monkeypatch)
+    update_dir = tmp_path / "update"
+    state_path = update_dir / "deployments.json"
+    document = json.loads(state_path.read_text(encoding="utf-8"))
+    document["projects"][0]["composeConfig"]["services"]["flask"][
+        "image"
+    ] = "registry.example/pib/backend"
+    document["projects"][1]["composeConfig"]["services"]["app"][
+        "image"
+    ] = "registry.example/pib/cerebra@sha256:deadbeef"
+    state_path.write_text(json.dumps(document), encoding="utf-8")
+    responses = {
+        "/images/json": (
+            200,
+            json.dumps(
+                [
+                    {
+                        "RepoTags": [
+                            "registry.example/pib/backend:latest",
+                            "registry.example/pib/backend:v1.9.0",
+                        ],
+                        "RepoDigests": [],
+                    },
+                    {
+                        "RepoTags": [],
+                        "RepoDigests": ["registry.example/pib/cerebra@sha256:deadbeef"],
+                    },
+                    {
+                        "RepoTags": ["old/unused:latest"],
+                        "RepoDigests": [],
+                    },
+                ]
+            ).encode(),
+        ),
+        "/build/prune": (200, b"{}"),
+    }
+    request, calls, _timeouts = _fake_engine(responses)
+    monkeypatch.setattr(docker_admin_service, "_docker_request", request)
+
+    code, body = docker_admin_service.purge_docker()
+
+    deleted = {
+        unquote(path.split("?", 1)[0].removeprefix("/images/"))
+        for path in calls
+        if path.startswith("/images/")
+        and path.split("?", 1)[0] not in {"/images/json"}
+        and not path.startswith("/images/prune")
+    }
+    assert code == 200
+    assert deleted == {
+        "registry.example/pib/backend:v1.9.0",
+        "old/unused:latest",
+    }
+    assert not any(path.startswith("/images/prune") for path in calls)
+    assert body["status"] == "success"
+
+
 def test_purge_reports_a_failing_step_and_still_runs_the_others(monkeypatch, tmp_path):
     _write_deployment_state(tmp_path, monkeypatch)
     responses = {

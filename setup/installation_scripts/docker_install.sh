@@ -408,8 +408,8 @@ function start_container() {
         return 1
     }
 
-    PIB_UPDATE_DIR="$update_dir" PIB_BACKEND_DIR="$BACKEND_DIR" PIB_CEREBRA_DIR="$FRONTEND_DIR" \
     local record_status=0
+    PIB_UPDATE_DIR="$update_dir" PIB_BACKEND_DIR="$BACKEND_DIR" PIB_CEREBRA_DIR="$FRONTEND_DIR" \
     python3 "$BACKEND_DIR/setup/deployment_recovery.py" record \
       --backend-tag "$backend_tag" \
       --cerebra-tag "$frontend_tag" \

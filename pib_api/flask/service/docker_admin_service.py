@@ -358,7 +358,7 @@ def _current_recovery_image_refs() -> set[str]:
                 raise RuntimeError(
                     "deployment recovery state has a service without an image"
                 )
-            references.add(image.strip())
+            references.add(_normalize_image_reference(image))
     if (
         project_names != {"pib-backend", "cerebra"}
         or len(projects) != 2
@@ -368,6 +368,31 @@ def _current_recovery_image_refs() -> set[str]:
             "deployment recovery state does not contain both PIB Compose projects"
         )
     return references
+
+
+def _normalize_image_reference(reference: str) -> str:
+    """Canonicalize Docker's implicit tag and Docker Hub defaults for matching."""
+    reference = reference.strip()
+    name, separator, digest = reference.partition("@")
+    slash = name.rfind("/")
+    colon = name.rfind(":")
+    if not separator and colon <= slash:
+        name += ":latest"
+    slash = name.rfind("/")
+    colon = name.rfind(":")
+    repository, tag = (name[:colon], name[colon:]) if colon > slash else (name, "")
+    if "/" not in repository:
+        repository = f"docker.io/library/{repository}"
+    elif repository.startswith("docker.io/"):
+        if "/" not in repository[len("docker.io/") :]:
+            repository = f"docker.io/library/{repository[len('docker.io/') :]}"
+    elif (
+        "." not in repository.split("/", 1)[0]
+        and ":" not in repository.split("/", 1)[0]
+    ):
+        repository = f"docker.io/{repository}"
+    suffix = f"@{digest}" if separator else ""
+    return f"{repository}{tag}{suffix}"
 
 
 def _prune_obsolete_images() -> Tuple[Dict[str, Any], List[str]]:
@@ -391,15 +416,32 @@ def _prune_obsolete_images() -> Tuple[Dict[str, Any], List[str]]:
 
     removed: List[str] = []
     errors: List[str] = []
+    protect_dangling_prune = False
     for image in images:
         tags = image.get("RepoTags") if isinstance(image, dict) else None
-        if not isinstance(tags, list):
-            continue
+        tags = tags if isinstance(tags, list) else []
+        digests = image.get("RepoDigests") if isinstance(image, dict) else None
+        digests = digests if isinstance(digests, list) else []
+        protected_tags = [
+            reference
+            for reference in tags
+            if isinstance(reference, str)
+            and reference != "<none>:<none>"
+            and _normalize_image_reference(reference) in protected
+        ]
+        protected_digests = [
+            reference
+            for reference in digests
+            if isinstance(reference, str)
+            and _normalize_image_reference(reference) in protected
+        ]
+        if protected_digests and not protected_tags:
+            protect_dangling_prune = True
         for reference in tags:
             if (
                 not isinstance(reference, str)
                 or reference == "<none>:<none>"
-                or reference in protected
+                or _normalize_image_reference(reference) in protected
             ):
                 continue
             delete_path = f"/images/{quote(reference, safe='')}?force=0"
@@ -411,28 +453,37 @@ def _prune_obsolete_images() -> Tuple[Dict[str, Any], List[str]]:
             else:
                 errors.append(f"images: could not remove {reference} ({delete_code})")
 
-    dangling_filter = quote(json.dumps({"dangling": ["true"]}))
-    prune_code, prune_body = _docker_request(
-        "POST",
-        f"/images/prune?filters={dangling_filter}",
-        timeout=PURGE_TIMEOUT_SECONDS,
-    )
     reclaimed = 0
-    if prune_code in (200, 204):
-        try:
-            prune_result = json.loads(prune_body.decode("utf-8"))
-            reclaimed = int(prune_result.get("SpaceReclaimed", 0))
-        except (
-            AttributeError,
-            TypeError,
-            ValueError,
-            UnicodeError,
-            json.JSONDecodeError,
-        ):
-            pass
+    if protect_dangling_prune:
+        dangling_prune = "skipped to preserve a current digest-only recovery image"
     else:
-        errors.append(f"images: dangling-image prune failed with {prune_code}")
-    return {"removed": removed, "SpaceReclaimed": reclaimed}, errors
+        dangling_filter = quote(json.dumps({"dangling": ["true"]}))
+        prune_code, prune_body = _docker_request(
+            "POST",
+            f"/images/prune?filters={dangling_filter}",
+            timeout=PURGE_TIMEOUT_SECONDS,
+        )
+        dangling_prune = "completed"
+        if prune_code in (200, 204):
+            try:
+                prune_result = json.loads(prune_body.decode("utf-8"))
+                reclaimed = int(prune_result.get("SpaceReclaimed", 0))
+            except (
+                AttributeError,
+                TypeError,
+                ValueError,
+                UnicodeError,
+                json.JSONDecodeError,
+            ):
+                pass
+        else:
+            errors.append(f"images: dangling-image prune failed with {prune_code}")
+            dangling_prune = f"failed with {prune_code}"
+    return {
+        "removed": removed,
+        "SpaceReclaimed": reclaimed,
+        "danglingPrune": dangling_prune,
+    }, errors
 
 
 def _purge_docker_locked() -> Tuple[int, Dict[str, Any]]:
