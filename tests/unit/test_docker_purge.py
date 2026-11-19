@@ -29,7 +29,10 @@ def _fake_engine(responses):
     def _request(method, path, payload=None, timeout=10.0):
         calls.append(path)
         timeouts.append(timeout)
-        return responses.get(path.split("?")[0], (200, b"{}"))
+        default = (
+            (200, b"[]") if path.split("?")[0] == "/containers/json" else (200, b"{}")
+        )
+        return responses.get(path.split("?")[0], default)
 
     return _request, calls, timeouts
 
@@ -127,6 +130,53 @@ def test_purge_keeps_current_compose_images_and_prunes_obsolete_tags(
     assert body["reclaimedBytes"] == 11_001_000
     assert body["status"] == "success"
     assert "freed" in body["message"]
+
+
+def test_purge_preserves_running_container_image_by_id_even_without_current_tag(
+    monkeypatch, tmp_path
+):
+    _write_deployment_state(tmp_path, monkeypatch)
+    responses = {
+        "/containers/json": (
+            200,
+            json.dumps([{"ImageID": "sha256:active-image"}]).encode(),
+        ),
+        "/images/json": (
+            200,
+            json.dumps(
+                [
+                    {
+                        "Id": "sha256:active-image",
+                        "RepoTags": ["registry.example/pib/backend:old-alias"],
+                    }
+                ]
+            ).encode(),
+        ),
+        "/images/prune": (200, b"{}"),
+    }
+    request, calls, _timeouts = _fake_engine(responses)
+    monkeypatch.setattr(docker_admin_service, "_docker_request", request)
+
+    code, body = docker_admin_service.purge_docker()
+
+    assert code == 200
+    assert body["status"] == "success"
+    assert not any(path.startswith("/images/registry.example") for path in calls)
+
+
+def test_purge_skips_image_cleanup_when_running_container_list_fails(
+    monkeypatch, tmp_path
+):
+    _write_deployment_state(tmp_path, monkeypatch)
+    request, calls, _timeouts = _fake_engine({"/containers/json": (500, b"")})
+    monkeypatch.setattr(docker_admin_service, "_docker_request", request)
+
+    code, body = docker_admin_service.purge_docker()
+
+    assert code == 200
+    assert body["status"] == "partial"
+    assert any("running containers" in error for error in body["errors"])
+    assert not any(path.startswith("/images/") for path in calls)
 
 
 def test_purge_matches_implicit_latest_and_digest_references(monkeypatch, tmp_path):

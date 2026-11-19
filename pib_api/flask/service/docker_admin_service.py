@@ -396,11 +396,31 @@ def _normalize_image_reference(reference: str) -> str:
 
 
 def _prune_obsolete_images() -> Tuple[Dict[str, Any], List[str]]:
-    """Delete non-current image tags while retaining every saved Compose image."""
+    """Delete obsolete tags while retaining saved and currently running images."""
     try:
         protected = _current_recovery_image_refs()
     except RuntimeError as error:
         return {"skipped": str(error)}, [f"images: {error}"]
+
+    code, body = _docker_request(
+        "GET", "/containers/json?all=false", timeout=PURGE_TIMEOUT_SECONDS
+    )
+    if code != 200:
+        return {}, [f"images: running containers list failed with {code}"]
+    try:
+        containers = json.loads(body.decode("utf-8"))
+        if not isinstance(containers, list) or any(
+            not isinstance(container, dict)
+            or not isinstance(container.get("ImageID"), str)
+            or not container["ImageID"].strip()
+            for container in containers
+        ):
+            raise ValueError(
+                "response must contain a non-empty ImageID for each container"
+            )
+        running_image_ids = {container["ImageID"].strip() for container in containers}
+    except (UnicodeError, json.JSONDecodeError, ValueError) as error:
+        return {}, [f"images: running containers list is invalid: {error}"]
 
     code, body = _docker_request(
         "GET", "/images/json?all=true", timeout=PURGE_TIMEOUT_SECONDS
@@ -418,6 +438,8 @@ def _prune_obsolete_images() -> Tuple[Dict[str, Any], List[str]]:
     errors: List[str] = []
     protect_dangling_prune = False
     for image in images:
+        if isinstance(image, dict) and image.get("Id") in running_image_ids:
+            continue
         tags = image.get("RepoTags") if isinstance(image, dict) else None
         tags = tags if isinstance(tags, list) else []
         digests = image.get("RepoDigests") if isinstance(image, dict) else None

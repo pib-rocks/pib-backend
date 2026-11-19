@@ -33,6 +33,12 @@ if [[ "$joined" == *" config --format json "* ]]; then
       "$project" "$service" "$image"
     exit 0
 fi
+if [[ "$joined" == *" --pull missing "* ]]; then
+    exit "${DOCKER_PULL_UP_STATUS:-${DOCKER_UP_STATUS:-0}}"
+fi
+if [[ "$joined" == *" --pull never "* && "$joined" == *" --build "* ]]; then
+    exit "${DOCKER_BUILD_UP_STATUS:-0}"
+fi
 exit "${DOCKER_UP_STATUS:-0}"
 """
 
@@ -65,7 +71,7 @@ def _helper_env(tmp_path: Path) -> tuple[dict[str, str], Path]:
     return env, docker_log
 
 
-def test_recorded_deployments_recover_with_local_images_without_build_or_pull(
+def test_recorded_deployments_recover_preferring_existing_or_registry_images(
     tmp_path: Path,
 ) -> None:
     env, docker_log = _helper_env(tmp_path)
@@ -152,10 +158,68 @@ def test_recorded_deployments_recover_with_local_images_without_build_or_pull(
     assert len(recovery_calls) == 2
     for call in recovery_calls:
         assert "--no-recreate" in call
+        assert "--pull missing" in call
         assert "--no-build" in call
-        assert "--pull never" in call
         assert " build " not in f" {call} "
-        assert " pull " not in f" {call} "
+
+
+def test_recovery_falls_back_to_local_build_when_pull_fails(tmp_path: Path) -> None:
+    env, docker_log = _helper_env(tmp_path)
+    env["DOCKER_PULL_UP_STATUS"] = "1"
+    env["DOCKER_BUILD_UP_STATUS"] = "0"
+    models = []
+    for name, image in (
+        ("backend", "ghcr.io/custom/backend-flask:v1.2.3"),
+        ("cerebra", "registry.example/robot-ui:v1.2.3"),
+    ):
+        model = tmp_path / f"{name}-compose.json"
+        project_name = "pib-backend" if name == "backend" else "cerebra"
+        model.write_text(
+            json.dumps(
+                {
+                    "name": project_name,
+                    "services": {"app": {"image": image}},
+                }
+            )
+        )
+        models.append(model)
+    record = subprocess.run(
+        [
+            sys.executable,
+            str(HELPER),
+            "record",
+            "--backend-tag",
+            "v1.2.3",
+            "--cerebra-tag",
+            "v1.2.3",
+            "--backend-compose-config",
+            str(models[0]),
+            "--cerebra-compose-config",
+            str(models[1]),
+        ],
+        env=env,
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+    assert record.returncode == 0, record.stderr
+
+    recover = subprocess.run(
+        [sys.executable, str(HELPER), "recover"],
+        env=env,
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+
+    assert recover.returncode == 0, recover.stderr
+    calls = [
+        line for line in docker_log.read_text().splitlines() if " up " in f" {line} "
+    ]
+    assert len(calls) == 4
+    for pull, build in zip(calls[::2], calls[1::2]):
+        assert "--pull missing" in pull and "--no-build" in pull
+        assert "--pull never" in build and "--build" in build
 
 
 def test_recovery_reports_missing_state_without_invoking_docker(

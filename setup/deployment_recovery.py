@@ -321,18 +321,22 @@ def recover() -> None:
                 ]
                 for profile in project["profiles"]:
                     command.extend(("--profile", profile))
-                command.extend(
-                    ("up", "-d", "--no-recreate", "--no-build", "--pull", "never")
-                )
+                command.extend(("up", "-d", "--no-recreate"))
                 print(
                     f"Reconciling {name} from local image tag {project['imageTag']}",
                     flush=True,
                 )
-                result = subprocess.run(
-                    command,
-                    cwd=PROJECTS[name],
-                    check=False,
-                )
+                pull_command = [*command, "--no-build", "--pull", "missing"]
+                result = subprocess.run(pull_command, cwd=PROJECTS[name], check=False)
+                if result.returncode:
+                    print(
+                        f"Pull/start failed for {name}; trying a local Compose build",
+                        flush=True,
+                    )
+                    build_command = [*command, "--pull", "never", "--build"]
+                    result = subprocess.run(
+                        build_command, cwd=PROJECTS[name], check=False
+                    )
             finally:
                 try:
                     os.unlink(compose_path)
@@ -340,7 +344,7 @@ def recover() -> None:
                     pass
             if result.returncode:
                 raise RuntimeError(
-                    f"failed to recover {name} (exit {result.returncode}); recovery did not pull or build images"
+                    f"failed to recover {name} (exit {result.returncode}) after pull and local build"
                 )
     print("PIB Compose recovery completed")
 
@@ -361,7 +365,7 @@ def main() -> int:
     capture.add_argument("--cerebra-compose-config")
     subparsers.add_parser(
         "recover",
-        help="recreate missing or stopped PIB Compose services from local images",
+        help="recreate missing or stopped PIB Compose services using pull then local build",
     )
     args = parser.parse_args()
     try:

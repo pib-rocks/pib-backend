@@ -151,6 +151,10 @@ if [ "${1:-}" = "images" ]; then
 fi
 
 if [ "${1:-}" = "inspect" ]; then
+    if [[ "$joined" == *"{{.Image}}"* ]]; then
+        printf '%s\\n' "${STUB_RUNNING_IMAGE_ID:-sha256:running}"
+        exit 0
+    fi
     printf '%s\\n' running
     exit 0
 fi
@@ -293,14 +297,14 @@ def _run(
         docker_images_list
         or "\n".join(
             [
-                "ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.2",
-                "ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.3",
-                "ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.4",
-                "ghcr.io/pib-rocks/pib-backend-flask-app:latest",
-                "ghcr.io/pib-rocks/cerebra:v0.7.2",
-                "ghcr.io/pib-rocks/cerebra:v0.7.3",
-                "ghcr.io/pib-rocks/cerebra:v0.7.4",
-                "ghcr.io/pib-rocks/cerebra:latest",
+                "sha256:cached ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.2",
+                "sha256:cached ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.3",
+                "sha256:cached ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.4",
+                "sha256:cached ghcr.io/pib-rocks/pib-backend-flask-app:latest",
+                "sha256:cached ghcr.io/pib-rocks/cerebra:v0.7.2",
+                "sha256:cached ghcr.io/pib-rocks/cerebra:v0.7.3",
+                "sha256:cached ghcr.io/pib-rocks/cerebra:v0.7.4",
+                "sha256:cached ghcr.io/pib-rocks/cerebra:latest",
             ]
         )
         + "\n",
@@ -487,6 +491,30 @@ def test_post_success_cleanup_keeps_all_compose_refs_in_same_repository(
     )
 
 
+def test_post_success_cleanup_keeps_running_image_even_when_its_tag_is_obsolete(
+    tmp_path: Path,
+) -> None:
+    _result, _update_dir, docker_log, log = _run(
+        tmp_path,
+        free_kib="8388608",
+        required_free_kib="1048576",
+        channel="release",
+        release="v0.7.4",
+        tag_head="v0.7.3",
+        tag_head_after="v0.7.4",
+        docker_images_list=(
+            "sha256:running ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.2\n"
+            "sha256:cached ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.3\n"
+        ),
+    )
+
+    assert "Post-update image cleanup" in log
+    assert (
+        "image rm -f ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.2" not in docker_log
+    )
+    assert "image rm -f ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.3" in docker_log
+
+
 def test_runner_defines_cerebra_registry_stack_helpers() -> None:
     text = RUNNER.read_text(encoding="utf-8")
     assert "recreate_cerebra_from_registry" in text
@@ -501,7 +529,9 @@ def test_runner_defines_cerebra_registry_stack_helpers() -> None:
         "\nrollback_once()", 1
     )[0]
     assert 'project_names != {"pib-backend", "cerebra"}' in prune
-    assert "docker images --format '{{.Repository}}:{{.Tag}}'" in prune
+    assert (
+        "docker images --no-trunc --format '{{.ID}} {{.Repository}}:{{.Tag}}'" in prune
+    )
     assert '"$ref" = "$current_ref"' in prune
     assert "has_current_repository=1" in prune
 

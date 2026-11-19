@@ -1419,7 +1419,8 @@ check_disk_budget() {
 
 prune_obsolete_deployment_images() {
     local free_before free_after reclaimed_kib removed=0 failed=0
-    local ref repository current_ref current_repository current_images_file
+    local ref image_id repository current_ref current_repository current_images_file
+    local running_containers_file running_images_file image_list_file container_id
     local has_current_repository keep_reference
     local -a current_images=()
     current_images_file="$UPDATE_DIR/current-image-refs-$$.txt"
@@ -1468,9 +1469,35 @@ PY
         log "WARNING: no current deployment image references were found; retaining cached image tags"
         return 0
     fi
+    running_containers_file="$UPDATE_DIR/running-containers-$$.txt"
+    running_images_file="$UPDATE_DIR/running-images-$$.txt"
+    image_list_file="$UPDATE_DIR/image-list-$$.txt"
+    if ! docker ps -q >"$running_containers_file"; then
+        rm -f "$current_images_file" "$running_containers_file" "$running_images_file" "$image_list_file"
+        log "WARNING: could not list running containers; retaining cached image tags"
+        return 0
+    fi
+    while IFS= read -r container_id; do
+        [ -n "$container_id" ] || continue
+        if ! image_id="$(docker inspect --format '{{.Image}}' "$container_id")" || [ -z "$image_id" ]; then
+            rm -f "$current_images_file" "$running_containers_file" "$running_images_file" "$image_list_file"
+            log "WARNING: could not inspect running container images; retaining cached image tags"
+            return 0
+        fi
+        printf '%s\n' "$image_id" >>"$running_images_file"
+    done <"$running_containers_file"
+    if ! docker images --no-trunc --format '{{.ID}} {{.Repository}}:{{.Tag}}' >"$image_list_file"; then
+        rm -f "$current_images_file" "$running_containers_file" "$running_images_file" "$image_list_file"
+        log "WARNING: could not list image IDs; retaining cached image tags"
+        return 0
+    fi
+    rm -f "$running_containers_file"
     free_before="$(read_free_kib)"
-    while IFS= read -r ref; do
+    while read -r image_id ref; do
         [ -n "$ref" ] || continue
+        if grep -Fxq "$image_id" "$running_images_file"; then
+            continue
+        fi
         repository="${ref%:*}"
         has_current_repository=0
         keep_reference=0
@@ -1492,7 +1519,8 @@ PY
                 failed=$((failed + 1))
             fi
         fi
-    done < <(docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null || true)
+    done <"$image_list_file"
+    rm -f "$running_images_file" "$image_list_file"
     docker image prune -f >/dev/null 2>&1 || true
     free_after="$(read_free_kib)"
     reclaimed_kib=$((free_after - free_before))
