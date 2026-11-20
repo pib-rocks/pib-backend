@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import stat
 import subprocess
 import time
 from pathlib import Path
@@ -96,6 +97,22 @@ DOCKER_STUB = """#!/bin/bash
 } >> "${DOCKER_LOG:?}"
 
 joined=" $* "
+if [ "${1:-}" = "compose" ] && [[ "$joined" == *" config --format json"* ]]; then
+    project="default"
+    previous=""
+    for argument in "$@"; do
+        if [ "$previous" = "--project-name" ]; then project="$argument"; break; fi
+        previous="$argument"
+    done
+    tag="${PIB_IMAGE_TAG:-develop}"
+    if [ "$project" = "pib-backend" ]; then
+        image="ghcr.io/pib-rocks/pib-backend-flask:$tag"
+    else
+        image="ghcr.io/pib-rocks/cerebra:$tag"
+    fi
+    printf '{"name":"%s","services":{"fixture":{"image":"%s"}}}\\n' "$project" "$image"
+    exit 0
+fi
 if [[ "$joined" == *" --profile all "* && "$joined" == *" build "* ]]; then
     if [[ "$joined" == *" --pull "* ]] || [[ "$joined" == *" --pull" ]]; then
         printf 'pull\\n' >> "${STUB_PROFILE_BUILD_LOG:?}"
@@ -270,6 +287,17 @@ def test_runner_acquires_lock_and_completes(tmp_path: Path) -> None:
     status = json.loads((update_dir / "status.json").read_text(encoding="utf-8"))
     assert status["state"] == "done"
     assert (update_dir / "runner.lock").is_file()
+    assert stat.S_IMODE((update_dir / "deployment.lock").stat().st_mode) == 0o660
+    deployment = json.loads(
+        (update_dir / "deployments.json").read_text(encoding="utf-8")
+    )
+    assert [project["name"] for project in deployment["projects"]] == [
+        "pib-backend",
+        "cerebra",
+    ]
+    assert all(
+        project["composeConfig"]["services"] for project in deployment["projects"]
+    )
     assert profile_log.read_text(encoding="utf-8").strip() == "pull"
 
 
@@ -295,7 +323,7 @@ def test_second_runner_fails_while_lock_held(tmp_path: Path) -> None:
     status = json.loads((update_dir / "status.json").read_text(encoding="utf-8"))
     assert status["state"] == "failed"
     assert "runner.lock" in status["message"]
-    assert "Another update or deployment holds" in status["message"]
+    assert "Another update job holds" in status["message"]
     assert recreate_log.read_text(encoding="utf-8") == ""
     assert "--force-recreate" not in docker_log.read_text(encoding="utf-8")
 

@@ -107,6 +107,29 @@ DOCKER_STUB = """#!/bin/bash
 } >> "${DOCKER_LOG:?}"
 
 joined=" $* "
+if [ "${1:-}" = "compose" ] && [[ "$joined" == *" config --format json"* ]]; then
+    project="default"
+    previous=""
+    for argument in "$@"; do
+        if [ "$previous" = "--project-name" ]; then project="$argument"; break; fi
+        previous="$argument"
+    done
+    tag="${PIB_IMAGE_TAG:-develop}"
+    if [ "$project" = "pib-backend" ]; then
+        image="ghcr.io/pib-rocks/pib-backend-flask-app:$tag"
+        if [ -n "${STUB_BACKEND_IMAGE_DIGEST:-}" ]; then
+            image="ghcr.io/pib-rocks/pib-backend-flask-app:$tag@${STUB_BACKEND_IMAGE_DIGEST}"
+        fi
+        if [ -n "${STUB_EXTRA_BACKEND_IMAGE:-}" ]; then
+            printf '{"name":"%s","services":{"fixture":{"image":"%s"},"extra":{"image":"%s"}}}\\n' "$project" "$image" "$STUB_EXTRA_BACKEND_IMAGE"
+            exit 0
+        fi
+    else
+        image="ghcr.io/pib-rocks/cerebra:$tag"
+    fi
+    printf '{"name":"%s","services":{"fixture":{"image":"%s"}}}\\n' "$project" "$image"
+    exit 0
+fi
 if [[ "$joined" == *" --profile all "* && "$joined" == *" build "* ]]; then
     if [[ "$joined" == *" --pull "* ]] || [[ "$joined" == *" --pull" ]]; then
         printf 'pull\\n' >> "${STUB_PROFILE_BUILD_LOG:?}"
@@ -126,11 +149,19 @@ if [ "${1:-}" = "image" ] && [ "${2:-}" = "prune" ]; then
 fi
 
 if [ "${1:-}" = "images" ]; then
-    cat "${STUB_DOCKER_IMAGES_LIST:?}"
+    if [[ "$joined" == *" --digests "* ]]; then
+        cat "${STUB_DOCKER_IMAGES_LIST:?}"
+    else
+        awk '{print $1, $2}' "${STUB_DOCKER_IMAGES_LIST:?}"
+    fi
     exit 0
 fi
 
 if [ "${1:-}" = "inspect" ]; then
+    if [[ "$joined" == *"{{.Image}}"* ]]; then
+        printf '%s\\n' "${STUB_RUNNING_IMAGE_ID:-sha256:running}"
+        exit 0
+    fi
     printf '%s\\n' running
     exit 0
 fi
@@ -236,6 +267,8 @@ def _run(
     tag_head_after: str = "",
     pib_sdk_installed: str = "0.7.4",
     docker_images_list: str | None = None,
+    extra_backend_image: str = "",
+    backend_image_digest: str = "",
 ) -> tuple[subprocess.CompletedProcess[str], Path, str, str]:
     update_dir = tmp_path / "update"
     backend = tmp_path / "backend"
@@ -272,12 +305,14 @@ def _run(
         docker_images_list
         or "\n".join(
             [
-                "ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.2",
-                "ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.3",
-                "ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.4",
-                "ghcr.io/pib-rocks/cerebra:v0.7.2",
-                "ghcr.io/pib-rocks/cerebra:v0.7.3",
-                "ghcr.io/pib-rocks/cerebra:v0.7.4",
+                "sha256:cached ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.2",
+                "sha256:cached ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.3",
+                "sha256:cached ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.4",
+                "sha256:cached ghcr.io/pib-rocks/pib-backend-flask-app:latest",
+                "sha256:cached ghcr.io/pib-rocks/cerebra:v0.7.2",
+                "sha256:cached ghcr.io/pib-rocks/cerebra:v0.7.3",
+                "sha256:cached ghcr.io/pib-rocks/cerebra:v0.7.4",
+                "sha256:cached ghcr.io/pib-rocks/cerebra:latest",
             ]
         )
         + "\n",
@@ -312,6 +347,8 @@ def _run(
         DOCKER_LOG=str(docker_log),
         STUB_PROFILE_BUILD_LOG=str(profile_build_log),
         STUB_DOCKER_IMAGES_LIST=str(images_list),
+        STUB_EXTRA_BACKEND_IMAGE=extra_backend_image,
+        STUB_BACKEND_IMAGE_DIGEST=backend_image_digest,
         STUB_POST_CHECKOUT_FLAG=str(post_checkout_flag),
     )
     if required_free_kib is not None:
@@ -411,7 +448,9 @@ def test_rollback_writes_running_status_before_rebuild(tmp_path: Path) -> None:
     assert "rollback attempt also failed" in status["message"]
 
 
-def test_post_success_cleanup_keeps_current_and_previous_tags(tmp_path: Path) -> None:
+def test_post_success_cleanup_keeps_only_current_deployment_tags(
+    tmp_path: Path,
+) -> None:
     _result, update_dir, docker_log, log = _run(
         tmp_path,
         free_kib="8388608",
@@ -425,18 +464,91 @@ def test_post_success_cleanup_keeps_current_and_previous_tags(tmp_path: Path) ->
     assert "Post-update image cleanup" in log
     assert "ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.2" in docker_log
     assert "image rm -f ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.2" in docker_log
+    assert "image rm -f ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.3" in docker_log
     assert (
-        "image rm -f ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.3" not in docker_log
+        "image rm -f ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.4" not in docker_log
+    )
+    assert "image rm -f ghcr.io/pib-rocks/pib-backend-flask-app:latest" in docker_log
+    assert "ghcr.io/pib-rocks/cerebra:v0.7.2" in docker_log
+    assert "image rm -f ghcr.io/pib-rocks/cerebra:v0.7.2" in docker_log
+    assert "image rm -f ghcr.io/pib-rocks/cerebra:v0.7.3" in docker_log
+    assert "image rm -f ghcr.io/pib-rocks/cerebra:v0.7.4" not in docker_log
+    assert "image rm -f ghcr.io/pib-rocks/cerebra:latest" in docker_log
+    status = json.loads((update_dir / "status.json").read_text(encoding="utf-8"))
+    assert status["state"] == "done"
+
+
+def test_post_success_cleanup_keeps_all_compose_refs_in_same_repository(
+    tmp_path: Path,
+) -> None:
+    _result, _update_dir, docker_log, _log = _run(
+        tmp_path,
+        free_kib="8388608",
+        required_free_kib="1048576",
+        channel="release",
+        release="v0.7.4",
+        tag_head="v0.7.3",
+        tag_head_after="v0.7.4",
+        extra_backend_image="ghcr.io/pib-rocks/pib-backend-flask-app",
+    )
+
+    assert (
+        "image rm -f ghcr.io/pib-rocks/pib-backend-flask-app:latest" not in docker_log
     )
     assert (
         "image rm -f ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.4" not in docker_log
     )
-    assert "ghcr.io/pib-rocks/cerebra:v0.7.2" in docker_log
-    assert "image rm -f ghcr.io/pib-rocks/cerebra:v0.7.2" in docker_log
-    assert "image rm -f ghcr.io/pib-rocks/cerebra:v0.7.3" not in docker_log
-    assert "image rm -f ghcr.io/pib-rocks/cerebra:v0.7.4" not in docker_log
-    status = json.loads((update_dir / "status.json").read_text(encoding="utf-8"))
-    assert status["state"] == "done"
+
+
+def test_post_success_cleanup_keeps_running_image_even_when_its_tag_is_obsolete(
+    tmp_path: Path,
+) -> None:
+    _result, _update_dir, docker_log, log = _run(
+        tmp_path,
+        free_kib="8388608",
+        required_free_kib="1048576",
+        channel="release",
+        release="v0.7.4",
+        tag_head="v0.7.3",
+        tag_head_after="v0.7.4",
+        docker_images_list=(
+            "sha256:running ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.2\n"
+            "sha256:cached ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.3\n"
+        ),
+    )
+
+    assert "Post-update image cleanup" in log
+    assert (
+        "image rm -f ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.2" not in docker_log
+    )
+    assert "image rm -f ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.3" in docker_log
+
+
+def test_post_success_cleanup_keeps_digest_pinned_image_with_a_tag(
+    tmp_path: Path,
+) -> None:
+    digest = f"sha256:{'a' * 64}"
+    _result, _update_dir, docker_log, _log = _run(
+        tmp_path,
+        free_kib="8388608",
+        required_free_kib="1048576",
+        channel="release",
+        release="v0.7.4",
+        tag_head="v0.7.3",
+        tag_head_after="v0.7.4",
+        backend_image_digest=digest,
+        docker_images_list=(
+            "sha256:old ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.2 "
+            "sha256:old-digest\n"
+            "sha256:cached ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.3 "
+            f"{digest}\n"
+        ),
+    )
+
+    assert "image rm -f ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.2" in docker_log
+    assert (
+        "image rm -f ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.3" not in docker_log
+    )
 
 
 def test_runner_defines_cerebra_registry_stack_helpers() -> None:
@@ -449,10 +561,17 @@ def test_runner_defines_cerebra_registry_stack_helpers() -> None:
     assert "build_cerebra_stack rollback" in rollback
     main = text.split('write_status "building"', 1)[1].split("check_cancel", 2)[0]
     assert "build_cerebra_stack || fail" in main
-    prune = text.split("prune_obsolete_release_images() {", 1)[1].split(
+    prune = text.split("prune_obsolete_deployment_images() {", 1)[1].split(
         "\nrollback_once()", 1
     )[0]
-    assert r"^ghcr\.io/pib-rocks/(pib-backend-|cerebra:)" in prune
+    assert 'project_names != {"pib-backend", "cerebra"}' in prune
+    assert (
+        "docker images --digests --no-trunc --format '{{.ID}} {{.Repository}}:{{.Tag}} {{.Digest}}'"
+        in prune
+    )
+    assert '"$ref" = "$current_ref"' in prune
+    assert '"$digest" = "$current_digest"' in prune
+    assert "has_current_repository=1" in prune
 
 
 def test_rollback_prefers_cached_images_with_no_build_and_writes_granular_progress(
