@@ -1070,6 +1070,7 @@ class PipelineBuildersMixin:
             source_width,
             source_height,
         )
+        self._sync_hand_fast_timer()
 
     def _hand_fast_chain_is_built(self):
         requested = any(
@@ -1165,6 +1166,7 @@ class PipelineBuildersMixin:
             self.hand_fast_queue = None
             self.hand_fast_source_size = (0, 0)
             self._pending_hand_fast_packet = None
+            self._sync_hand_fast_timer()
             self._colour_branch_capture_queues = {}
             self._pending_colour_branch_packet = None
             self._colour_branch_field = None

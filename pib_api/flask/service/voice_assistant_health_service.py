@@ -175,17 +175,9 @@ def _states_for_probe(
     """
     reason, provider, detail = _parse_probe_output(output)
 
-    if docker_health == STATE_HEALTHY:
-        return (
-            STATE_OK,
-            STATE_HEALTHY,
-            STATE_OK,
-            provider,
-            "",
-            None,
-            None,
-        )
-
+    # Check missing-key output BEFORE docker_health == healthy (PR-2191):
+    # a healthy unconfigured container exits 0 while still emitting reason=no_key
+    # so Docker reports healthy and the UI reports providerKey=missing.
     if reason == REASON_NO_KEY:
         return (
             STATE_ATTENTION,
@@ -195,6 +187,17 @@ def _states_for_probe(
             detail or "No provider key is stored for this route.",
             None,
             REASON_NO_KEY,
+        )
+
+    if docker_health == STATE_HEALTHY:
+        return (
+            STATE_OK,
+            STATE_HEALTHY,
+            STATE_OK,
+            provider,
+            "",
+            None,
+            None,
         )
 
     if reason in (REASON_CHAT_NODE, REASON_CHAT_SERVICE):

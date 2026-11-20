@@ -85,6 +85,48 @@ def test_voice_health_missing_key_is_attention(monkeypatch):
     assert result["containerHealth"] == health.STATE_UNHEALTHY
 
 
+def test_voice_health_healthy_container_with_no_key_output_reports_missing_key(
+    monkeypatch,
+):
+    """PR-2191: healthy container (exit 0) emitting reason=no_key still flags missing key in UI."""
+    probe_line = (
+        "reason=no_key provider=gemini "
+        "detail=No keys are available for provider gemini."
+    )
+    monkeypatch.setattr(
+        health,
+        "_list_containers",
+        lambda: [
+            {
+                "name": "pib-backend-ros-voice-assistant-1",
+                "state": "running",
+                "statusText": "Up 5 minutes (healthy)",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        health,
+        "_inspect_container",
+        lambda _name: {
+            "State": {
+                "Health": {
+                    "Status": "healthy",
+                    "Log": [{"ExitCode": 0, "Output": probe_line + "\n"}],
+                }
+            }
+        },
+    )
+
+    result = health.voice_assistant_status()
+
+    assert result["state"] == health.STATE_ATTENTION
+    assert result["node"]["state"] == health.STATE_HEALTHY
+    assert result["providerKey"]["state"] == health.STATE_MISSING
+    assert result["providerKey"]["reason"] == health.REASON_NO_KEY
+    assert result["provider"] == "gemini"
+    assert result["containerHealth"] == health.STATE_HEALTHY
+
+
 def test_voice_health_without_container_is_unknown(monkeypatch):
     monkeypatch.setattr(health, "_list_containers", lambda: [])
 
@@ -120,6 +162,7 @@ def test_aggregate_state_only_speaks_the_ui_vocabulary(monkeypatch):
     ui_states = {health.STATE_OK, health.STATE_ATTENTION, health.STATE_UNKNOWN}
     probes = [
         ("healthy", ""),
+        ("healthy", "reason=no_key provider=gemini detail=No keys are available."),
         ("unhealthy", "reason=no_key provider=gemini detail=No keys are available."),
         ("unhealthy", "reason=chat_node detail=missing nodes: /chat"),
         ("unhealthy", "reason=key_check detail=boom"),

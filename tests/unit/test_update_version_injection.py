@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -40,6 +41,11 @@ done
 
 command_name="${1:-}"
 case "$command_name" in
+    reset)
+        if [ "${STUB_REMOVE_RECOVERY_HELPER_ON_RESET:-0}" = "1" ] && [ "$directory" = "${STUB_BACKEND_PATH:-}" ]; then
+            rm -f "$directory/setup/deployment_recovery.py"
+        fi
+        ;;
     fetch)
         if [ "${STUB_TAGS_AFTER_FETCH:-0}" = "1" ]; then
             for argument in "$@"; do
@@ -108,13 +114,42 @@ if [ "${1:-}" = "inspect" ]; then
 fi
 
 joined=" $* "
+if [ "${1:-}" = "compose" ] && [[ "$joined" == *" config --format json"* ]]; then
+    project="default"
+    previous=""
+    for argument in "$@"; do
+        if [ "$previous" = "--project-name" ]; then project="$argument"; break; fi
+        previous="$argument"
+    done
+    tag="${PIB_IMAGE_TAG:-develop}"
+    if [ "$project" = "pib-backend" ]; then
+        image="ghcr.io/pib-rocks/pib-backend-flask:$tag"
+    else
+        image="ghcr.io/pib-rocks/cerebra:$tag"
+    fi
+    printf '{"name":"%s","services":{"fixture":{"image":"%s"}}}\\n' "$project" "$image"
+    exit 0
+fi
 if [[ "$joined" == *" exec "* ]]; then
     if [[ "$joined" == *" ros-programs "* ]] && [[ "$joined" == *"pib_sdk"* ]]; then
         if [ "${STUB_PIB_SDK_EXEC_FAIL:-0}" = "1" ]; then
             printf '%s\\n' 'ImportError: no module named pib_sdk' >&2
             exit 1
         fi
-        printf '%s\\n' "${STUB_PIB_SDK_INSTALLED:-0.7.4}"
+        count=0
+        if [ -f "${SDK_CALL_COUNT_FILE:?}" ]; then
+            count="$(cat "$SDK_CALL_COUNT_FILE")"
+        fi
+        count=$((count + 1))
+        printf '%s\\n' "$count" > "$SDK_CALL_COUNT_FILE"
+        if [ "${STUB_PIB_SDK_WARNING:-0}" = "1" ]; then
+            printf '%s\\n' 'WARNING: compose diagnostic on stderr' >&2
+        fi
+        version="${STUB_PIB_SDK_INSTALLED:-0.7.4}"
+        if [ "$count" -eq 1 ] && [ -n "${STUB_PIB_SDK_FIRST:-}" ]; then
+            version="$STUB_PIB_SDK_FIRST"
+        fi
+        printf '%s\\n' "$version"
         exit 0
     fi
     printf '%s\\n' alembichead
@@ -202,6 +237,11 @@ def _run(
     release: str = "",
     pib_sdk_installed: str = "0.7.4",
     pib_sdk_exec_fail: bool = False,
+    pib_sdk_warning: bool = False,
+    pib_sdk_first: str = "",
+    remove_recovery_helper_on_reset: bool = False,
+    smart_chats: str | None = None,
+    smart_chats_file: str = "",
 ) -> tuple[subprocess.CompletedProcess[str], Path, str]:
     update_dir = tmp_path / "update"
     backend = tmp_path / "backend"
@@ -211,7 +251,14 @@ def _run(
     cerebra.mkdir()
     (backend / ".git").mkdir()
     (cerebra / ".git").mkdir()
-    (backend / "setup").symlink_to(REPO_ROOT / "setup")
+    setup_dir = backend / "setup"
+    setup_dir.mkdir()
+    for source in (REPO_ROOT / "setup").iterdir():
+        destination = setup_dir / source.name
+        if source.name == "deployment_recovery.py":
+            shutil.copy2(source, destination)
+        else:
+            destination.symlink_to(source, target_is_directory=source.is_dir())
     (backend / "pib_sdk_version.txt").write_text("0.7.4\n", encoding="utf-8")
     model_store = tmp_path / "model-store"
     _matching_model_fixture(backend, model_store)
@@ -238,6 +285,10 @@ def _run(
 
     docker_log = tmp_path / "docker.log"
     docker_log.touch()
+    sdk_call_count = tmp_path / "sdk-call-count"
+    smart_chats_path = tmp_path / "pib_smart_chats"
+    if smart_chats_file:
+        smart_chats_path.write_text(smart_chats_file, encoding="utf-8")
 
     env = os.environ.copy()
     env.update(
@@ -265,7 +316,18 @@ def _run(
         STUB_HEAD2_MISSING="1" if second_parent_missing else "0",
         STUB_PIB_SDK_INSTALLED=pib_sdk_installed,
         STUB_PIB_SDK_EXEC_FAIL="1" if pib_sdk_exec_fail else "0",
+        STUB_PIB_SDK_WARNING="1" if pib_sdk_warning else "0",
+        STUB_PIB_SDK_FIRST=pib_sdk_first,
+        STUB_REMOVE_RECOVERY_HELPER_ON_RESET=(
+            "1" if remove_recovery_helper_on_reset else "0"
+        ),
+        STUB_BACKEND_PATH=str(backend),
+        SDK_CALL_COUNT_FILE=str(sdk_call_count),
+        PIB_SMART_CHATS_FILE=str(smart_chats_path),
     )
+    env.pop("PIB_SMART_CHATS", None)
+    if smart_chats is not None:
+        env["PIB_SMART_CHATS"] = smart_chats
     if targets is not None:
         env["GIT_ARGV_LOG"] = str(tmp_path / "git-argv.log")
     if tags_answered_only_after_tag_fetch:
@@ -404,6 +466,48 @@ def test_develop_channel_writes_the_marker(tmp_path: Path) -> None:
     _assert_revisions(update_dir, "develop")
 
 
+def test_rollback_records_state_after_backend_checkout_loses_new_helper(
+    tmp_path: Path,
+) -> None:
+    result, update_dir, _docker_log = _run(
+        tmp_path,
+        "develop",
+        second_parent_missing=True,
+        pib_sdk_first="0.7.3",
+        remove_recovery_helper_on_reset=True,
+    )
+
+    assert result.returncode == 1
+    status = json.loads((update_dir / "status.json").read_text(encoding="utf-8"))
+    assert status["state"] == "rolled_back", _failure_text(result, update_dir)
+    assert (update_dir / "deployments.json").is_file()
+    assert (update_dir / "deployment_recovery.py").is_file()
+    assert not (tmp_path / "backend" / "setup" / "deployment_recovery.py").exists()
+
+
+def test_recorded_smart_chats_matches_the_update_profile_override(
+    tmp_path: Path,
+) -> None:
+    result, update_dir, docker_log = _run(
+        tmp_path,
+        "develop",
+        second_parent_missing=True,
+        smart_chats="0",
+        smart_chats_file="1\n",
+    )
+
+    _assert_succeeded(result, update_dir)
+    backend = next(
+        project
+        for project in json.loads(
+            (update_dir / "deployments.json").read_text(encoding="utf-8")
+        )["projects"]
+        if project["name"] == "pib-backend"
+    )
+    assert backend["profiles"] == ["all"]
+    assert "--profile hermes" not in docker_log
+
+
 def test_release_without_a_tag_refuses_the_compose_fallback(tmp_path: Path) -> None:
     result, update_dir, docker_log = _run(
         tmp_path,
@@ -515,3 +619,39 @@ def test_update_fails_when_ros_programs_cannot_report_sdk_version(
     log = (update_dir / "update.log").read_text(encoding="utf-8")
     assert "pib-sdk verification failed" in log
     assert "did not answer" in log
+    assert "ImportError: no module named pib_sdk" in log
+
+
+def test_sdk_warning_is_logged_during_rollback_verification(tmp_path: Path) -> None:
+    result, update_dir, _docker_log = _run(
+        tmp_path,
+        "develop",
+        second_parent_missing=True,
+        pib_sdk_installed="0.7.3",
+        pib_sdk_warning=True,
+    )
+
+    assert result.returncode != 0
+    status = json.loads((update_dir / "status.json").read_text(encoding="utf-8"))
+    assert status["state"] == "failed"
+    assert "rollback attempt also failed" in status["message"]
+    log = (update_dir / "update.log").read_text(encoding="utf-8")
+    assert log.count("WARNING: compose diagnostic on stderr") >= 2
+
+
+def test_update_parses_sdk_version_when_compose_warns_on_stderr(
+    tmp_path: Path,
+) -> None:
+    result, update_dir, docker_log = _run(
+        tmp_path,
+        "develop",
+        second_parent_missing=True,
+        pib_sdk_warning=True,
+    )
+
+    _assert_succeeded(result, update_dir)
+    _assert_version_passed(docker_log, "develop")
+    log = (update_dir / "update.log").read_text(encoding="utf-8")
+    assert "pib-sdk verification passed" in log
+    assert "pib-sdk mismatch" not in log
+    assert "WARNING: compose diagnostic on stderr" in log

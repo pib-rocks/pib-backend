@@ -33,7 +33,7 @@ Type=Application
 SUDO_STUB = """#!/bin/bash
 printf '%s\\n' "$*" >> "$STUB_LOG"
 case "$1" in
-    sed|tee|cp) exec "$@" ;;
+    sed|tee|cp|mkdir) exec "$@" ;;
 esac
 exit 0
 """
@@ -73,6 +73,7 @@ def _run(tmp_path: Path, script: str, **env_overrides):
         PATH=f"{stub_bin}{os.pathsep}{env['PATH']}",
         STUB_LOG=str(log),
         PIB_SYSTEM_SETTINGS_DEFINE_ONLY="1",
+        PIB_SYSTEMD_ROOT=str(tmp_path / "systemd"),
         SYSTEM_SETTINGS=str(SYSTEM_SETTINGS),
     )
     env.update({key: str(value) for key, value in env_overrides.items()})

@@ -243,6 +243,9 @@ export function play_pose_sequence(
 
     addPoseSdkDefinitions(generator);
     addDefinitions(generator, {
+        IMPORT_SYS,
+        IMPORT_LOGGING,
+        CONFIGURE_LOGGING,
         IMPORT_PIB_SDK,
         IMPORT_PIB_SDK_PLAY_POSE_SEQUENCE_TIMED,
         IMPORT_PIB_SDK_TELEMETRY,

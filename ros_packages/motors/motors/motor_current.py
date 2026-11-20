@@ -130,6 +130,17 @@ class MotorCurrent(Node):
 
         return callback
 
+    def _has_ros_subscribers(self) -> bool:
+        sub_count = getattr(
+            self.motor_current_publisher, "get_subscription_count", None
+        )
+        if not callable(sub_count):
+            return True
+        try:
+            return int(sub_count()) > 0
+        except Exception:  # noqa: BLE001
+            return True
+
     def publish_motor_current(self):
         if self._motor_power_is_off():
             # No power on the bus: each read would burn its serial timeout.
@@ -143,18 +154,31 @@ class MotorCurrent(Node):
         self._skips_since_log = 0
         self._poll_tick += 1
         read_slow = self._poll_tick % 2 == 0
+        has_subscribers = self._has_ros_subscribers()
+        if not read_slow and not has_subscribers:
+            # Fast 2 Hz tick is only needed for live ROS /motor_current subscribers;
+            # the Flask hardware-diagnostics batch runs on the 1 Hz slow tick.
+            return
         telemetry_batch: list[dict] = []
         probed_ports: dict[str, bool] = {}
         for motor in motors:
-            try:
-                current = motor.get_current()
-            except Exception as error:  # noqa: BLE001 - a bus timeout
-                self._note_read_failure(motor.name, error)
-                continue
-            if current != Motor.NO_CURRENT:
-                extra = self._actuator_feedback(motor, read_slow=read_slow)
-                self.publish_diagnostic_status(motor.name, current, extra)
-            for actuator in getattr(motor, "actuators", None) or []:
+            actuators = getattr(motor, "actuators", None) or []
+            single_actuator = actuators[0] if len(actuators) == 1 else None
+            cached_current: int | None = None
+            cached_voltage: float | None = None
+            if has_subscribers:
+                try:
+                    current = motor.get_current()
+                except Exception as error:  # noqa: BLE001 - a bus timeout
+                    self._note_read_failure(motor.name, error)
+                    continue
+                if current != Motor.NO_CURRENT:
+                    cached_current = current
+                    extra, cached_voltage = self._actuator_feedback_with_voltage(
+                        motor, read_slow=read_slow
+                    )
+                    self.publish_diagnostic_status(motor.name, current, extra)
+            for actuator in actuators:
                 if not read_slow:
                     # The diagnostics batch reads voltage per actuator, which is a bus
                     # transaction of its own on the serial buses. It feeds the hardware page
@@ -173,19 +197,25 @@ class MotorCurrent(Node):
                 get_voltage = getattr(actuator, "get_voltage", None)
                 if not uid or not callable(get_voltage):
                     continue
-                try:
-                    act_current = actuator.get_current()
-                except Exception as error:  # noqa: BLE001 - skip actuator
-                    self._note_read_failure(motor.name, error)
-                    continue
+                if actuator is single_actuator and cached_current is not None:
+                    act_current = cached_current
+                else:
+                    try:
+                        act_current = actuator.get_current()
+                    except Exception as error:  # noqa: BLE001 - skip actuator
+                        self._note_read_failure(motor.name, error)
+                        continue
                 no_current = getattr(actuator, "NO_CURRENT", Motor.NO_CURRENT)
                 if act_current == no_current:
                     continue
-                try:
-                    voltage = get_voltage()
-                except Exception as error:  # noqa: BLE001 - skip actuator
-                    self._note_read_failure(motor.name, error)
-                    continue
+                if actuator is single_actuator and cached_voltage is not None:
+                    voltage = cached_voltage
+                else:
+                    try:
+                        voltage = get_voltage()
+                    except Exception as error:  # noqa: BLE001 - skip actuator
+                        self._note_read_failure(motor.name, error)
+                        continue
                 telemetry_batch.append(
                     {
                         "uid": str(uid),
@@ -201,14 +231,23 @@ class MotorCurrent(Node):
                 pass
 
     def _actuator_feedback(self, motor, *, read_slow: bool) -> dict[str, str]:
+        extra, _voltage = self._actuator_feedback_with_voltage(
+            motor, read_slow=read_slow
+        )
+        return extra
+
+    def _actuator_feedback_with_voltage(
+        self, motor, *, read_slow: bool
+    ) -> tuple[dict[str, str], float | None]:
         actuators = getattr(motor, "actuators", None) or []
         if not actuators:
-            return {}
+            return {}, None
         actuator = actuators[0]
         get_temp = getattr(actuator, "get_temperature", None)
         if not callable(get_temp):
-            return {}
+            return {}, None
         extra: dict[str, str] = {}
+        raw_voltage: float | None = None
         try:
             temp = get_temp()
             if temp is not None:
@@ -227,13 +266,14 @@ class MotorCurrent(Node):
                 try:
                     voltage = get_voltage()
                     if voltage is not None:
-                        slow["voltage"] = f"{voltage:.1f} V"
+                        raw_voltage = float(voltage)
+                        slow["voltage"] = f"{raw_voltage:.1f} V"
                 except Exception:
                     pass
             if slow:
                 self._slow_feedback_cache[motor.name] = slow
         extra.update(self._slow_feedback_cache.get(motor.name, {}))
-        return extra
+        return extra, raw_voltage
 
     def publish_diagnostic_status(
         self,

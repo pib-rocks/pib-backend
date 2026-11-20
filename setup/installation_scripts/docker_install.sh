@@ -113,6 +113,12 @@ function setup_update_service() {
     # group; together with 0660 in the backend's atomic write this is what lets
     # the runner (User=pib) read request.json at all.
     sudo install -d -o pib -g pib -m 2770 /home/pib/app/.update
+    # Keep recovery code outside the checkouts: rollback may reset backend to a
+    # revision that predates deployment_recovery.py, while systemd still needs
+    # the helper after reboot.
+    sudo install -o pib -g pib -m 0750 \
+      "$BACKEND_DIR/setup/deployment_recovery.py" \
+      /home/pib/app/.update/deployment_recovery.py || return 1
     sudo install -o root -g root -m 0644 \
       "$BACKEND_DIR/setup/setup_files/pib-update.service" \
       /etc/systemd/system/pib-update.service
@@ -122,6 +128,9 @@ function setup_update_service() {
     sudo install -o root -g root -m 0644 \
       "$BACKEND_DIR/setup/setup_files/pib-update-check.service" \
       /etc/systemd/system/pib-update-check.service
+    sudo install -o root -g root -m 0644 \
+      "$BACKEND_DIR/setup/setup_files/pib-deployment-recovery.service" \
+      /etc/systemd/system/pib-deployment-recovery.service
     sudo install -o root -g root -m 0644 \
       "$BACKEND_DIR/setup/setup_files/pib-update-check.path" \
       /etc/systemd/system/pib-update-check.path
@@ -139,6 +148,10 @@ function setup_update_service() {
     fi
     if ! enable_output=$(sudo systemctl enable pib-update-check.path 2>&1); then
         print ERROR "failed to enable pib-update-check.path: ${enable_output}"
+        return 1
+    fi
+    if ! enable_output=$(sudo systemctl enable pib-deployment-recovery.service 2>&1); then
+        print ERROR "failed to enable pib-deployment-recovery.service: ${enable_output}"
         return 1
     fi
     local start_output
@@ -286,6 +299,18 @@ function release_tag_at() {
 
 function start_container() {
     print INFO "Starting container"
+    local update_dir="${PIB_UPDATE_DIR:-/home/pib/app/.update}"
+    sudo install -d -o pib -g pib -m 2770 "$update_dir" || return 1
+    local deployment_lock_fd
+    local previous_umask
+    previous_umask="$(umask)"
+    umask 0007
+    if ! exec {deployment_lock_fd}>>"$update_dir/deployment.lock"; then
+        umask "$previous_umask"
+        return 1
+    fi
+    umask "$previous_umask"
+    flock "$deployment_lock_fd" || return 1
     echo "TRYB_URL_PREFIX=https://platform.tryb.ai" > "$BACKEND_DIR"/password.env
     local backend_version="" frontend_version="" backend_tag="develop" frontend_tag="develop"
     local use_registry=1
@@ -366,6 +391,43 @@ function start_container() {
           docker compose -f "$FRONTEND_DIR/docker-compose.yaml" up -d --build || return 1
     fi
     print SUCCESS "Started cerebra container"
+
+    # Capture the exact resolved Compose models under the same sudo allowlist and
+    # profiles used above. Recomputing them in the caller's environment can record
+    # different bind mounts or images than the running containers actually use.
+    local backend_compose_config="${update_dir}/.pib-deployment-backend-$$.json"
+    local frontend_compose_config="${update_dir}/.pib-deployment-cerebra-$$.json"
+    local compose_status=0
+    sudo "${backend_env[@]}" docker compose --project-name pib-backend -f "$BACKEND_DIR/docker-compose.yaml" \
+      "${compose_profiles[@]}" config --format json >"$backend_compose_config" 2>>"$DOCKER_BUILD_LOG" || compose_status=$?
+    if [ "$compose_status" -eq 0 ]; then
+        sudo "${frontend_env[@]}" docker compose --project-name cerebra -f "$FRONTEND_DIR/docker-compose.yaml" \
+          config --format json >"$frontend_compose_config" 2>>"$DOCKER_BUILD_LOG" || compose_status=$?
+    fi
+    if [ "$compose_status" -ne 0 ]; then
+        print ERROR "Could not capture the installed Docker Compose configuration (rc=${compose_status})"
+        tail -n 40 "$DOCKER_BUILD_LOG"
+        rm -f "$backend_compose_config" "$frontend_compose_config"
+        return 1
+    fi
+    chmod 600 "$backend_compose_config" "$frontend_compose_config" || {
+        rm -f "$backend_compose_config" "$frontend_compose_config"
+        return 1
+    }
+
+    local record_status=0
+    PIB_UPDATE_DIR="$update_dir" PIB_BACKEND_DIR="$BACKEND_DIR" PIB_CEREBRA_DIR="$FRONTEND_DIR" \
+    python3 "$BACKEND_DIR/setup/deployment_recovery.py" record \
+      --backend-tag "$backend_tag" \
+      --cerebra-tag "$frontend_tag" \
+      --backend-version "$backend_version" \
+      --cerebra-version "$frontend_version" \
+      --hardware-variant "$PIB_HARDWARE_VARIANT" \
+      --smart-chats "${PIB_SMART_CHATS:-1}" \
+      --backend-compose-config "$backend_compose_config" \
+      --cerebra-compose-config "$frontend_compose_config" || record_status=$?
+    rm -f "$backend_compose_config" "$frontend_compose_config"
+    [ "$record_status" -eq 0 ] || return "$record_status"
 }
 
 function add_pib_to_docker_group() {

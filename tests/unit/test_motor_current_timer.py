@@ -449,9 +449,9 @@ def test_diagnostics_batch_runs_on_the_slow_tick_only():
 
     node.publish_motor_current()
     assert module.motor_client.report_diagnostics_telemetry.call_count == 1
-    # One read for the row extras and one for the diagnostics batch, both only on the
-    # slow tick - the same two reads per second the 1 Hz build made.
-    assert voltage_reads == 2
+    # Single-actuator motors reuse the voltage read from row extras for the
+    # diagnostics batch on the slow tick instead of issuing a duplicate bus read.
+    assert voltage_reads == 1
 
 
 def test_bus_timeout_of_one_motor_does_not_stop_the_tick():
@@ -519,3 +519,70 @@ def test_bus_timeout_of_a_serial_actuator_skips_only_that_actuator():
     # the healthy actuator was still read on the slow tick
     assert healthy_actuator.get_current.call_count >= 1
     assert healthy_actuator.get_voltage.call_count >= 1
+
+
+def test_single_actuator_reuses_current_and_voltage_without_duplicate_bus_reads():
+    actuator = types.SimpleNamespace(
+        is_connected=lambda: True,
+        bricklet=None,
+        pin=1,
+        uid="FEET1",
+        get_current=MagicMock(return_value=140),
+        get_voltage=MagicMock(return_value=11.8),
+        get_temperature=MagicMock(return_value=36),
+    )
+    motor = types.SimpleNamespace(
+        name="turn_head_motor",
+        actuators=[actuator],
+        get_current=MagicMock(side_effect=actuator.get_current),
+        get_current_position=MagicMock(return_value=0),
+    )
+    module = _load_motor_current([motor])
+    node = module.MotorCurrent()
+    node.motor_current_publisher.get_subscription_count = MagicMock(return_value=1)
+
+    with patch.object(module.motor_client, "report_diagnostics_telemetry") as report:
+        node.publish_motor_current()  # fast tick
+        node.publish_motor_current()  # slow tick
+
+    # Slow tick must NOT call get_current/get_voltage a second time for the same actuator.
+    assert actuator.get_current.call_count == 2  # once per tick, not 3
+    assert actuator.get_voltage.call_count == 1  # once on slow tick, not 2
+    report.assert_called_once()
+    batch = report.call_args.args[0]
+    assert batch == [{"uid": "FEET1", "pin": 1, "voltage": 11.8, "current": 140.0}]
+
+
+def test_fast_tick_skipped_when_no_ros_subscribers_while_slow_telemetry_still_runs():
+    actuator = types.SimpleNamespace(
+        is_connected=lambda: True,
+        bricklet=None,
+        pin=3,
+        uid="FEET2",
+        get_current=MagicMock(return_value=110),
+        get_voltage=MagicMock(return_value=11.7),
+        get_temperature=MagicMock(return_value=35),
+    )
+    motor = types.SimpleNamespace(
+        name="elbow_left",
+        actuators=[actuator],
+        get_current=MagicMock(side_effect=actuator.get_current),
+        get_current_position=MagicMock(return_value=0),
+    )
+    module = _load_motor_current([motor])
+    node = module.MotorCurrent()
+    node.motor_current_publisher.get_subscription_count = MagicMock(return_value=0)
+
+    with patch.object(module.motor_client, "report_diagnostics_telemetry") as report:
+        node.publish_motor_current()  # fast tick -> skipped (0 subscribers)
+        assert actuator.get_current.call_count == 0
+        assert actuator.get_voltage.call_count == 0
+        assert actuator.get_temperature.call_count == 0
+        report.assert_not_called()
+
+        node.publish_motor_current()  # slow tick -> still sends Flask diagnostics batch
+        assert actuator.get_current.call_count == 1
+        assert actuator.get_voltage.call_count == 1
+        assert actuator.get_temperature.call_count == 0
+        report.assert_called_once()
+    node.motor_current_publisher.publish.assert_not_called()

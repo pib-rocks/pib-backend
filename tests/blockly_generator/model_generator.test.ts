@@ -252,7 +252,7 @@ assert rest_by_name["shoulder_horizontal_left"] == 9000.0, rest_by_name
 assert rest_by_name["shoulder_horizontal_right"] == 7500.0, rest_by_name
 assert rest_by_name["lower_arm_right_rotation"] == -1100.0, rest_by_name
 
-# Person left hand (handedness < 0.5) mirrors to robot right arm with lower_arm_right_rotation=-7400.0
+# Person left hand (handedness < 0.5) mirrors to robot right arm with lower_arm_right_rotation=7400.0
 calls.clear()
 kps_left = [(640.0 + i * 5.0, 360.0 + i * 2.0, 0.0) for i in range(21)]
 _imitate_hands_state["msg"] = Msg([Det(0.1, kps_left)])
@@ -260,7 +260,7 @@ _imitate_hands_state["seq"] = 4
 imitate_hands("both", "all")
 assert len(calls) == 1, calls
 right_by_name = dict(zip(calls[0][0], calls[0][1]))
-assert right_by_name["lower_arm_right_rotation"] == -7400.0, right_by_name
+assert right_by_name["lower_arm_right_rotation"] == 7400.0, right_by_name
 `;
 
     execFileSync("python3", ["-c", harness], {

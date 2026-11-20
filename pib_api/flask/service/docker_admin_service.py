@@ -3,7 +3,10 @@ import re
 import socket
 import json
 import logging
+import fcntl
+import stat
 from urllib.parse import quote
+from pathlib import Path
 from typing import Dict, Any, List, Tuple, Optional
 
 DOCKER_SOCK = "/var/run/docker.sock"
@@ -326,23 +329,199 @@ def _human_bytes(value: int) -> str:
     return f"{size:.1f} TB"
 
 
-def purge_docker() -> Tuple[int, Dict[str, Any]]:
-    """Prune everything the device no longer needs, and report what that freed.
+def _current_recovery_image_refs() -> set[str]:
+    update_dir = Path(os.environ.get("PIB_UPDATE_DIR", "/app/.update"))
+    state_path = update_dir / "deployments.json"
+    try:
+        document = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise RuntimeError(f"cannot read deployment recovery state: {error}") from error
+    if not isinstance(document, dict) or document.get("schemaVersion") != 1:
+        raise RuntimeError("deployment recovery state has an unsupported schema")
+    projects = document.get("projects")
+    if not isinstance(projects, list) or not projects:
+        raise RuntimeError("deployment recovery state has no Compose projects")
 
-    Two Engine defaults made the old purge a no-op on an installed robot (PR-2099):
-    ``POST /images/prune`` without a filter removes only *untagged* images, so the
-    tagged leftovers of test runs stayed, and ``POST /build/prune`` prunes the
-    legacy builder, not the BuildKit cache this installation actually fills.
+    references: set[str] = set()
+    project_names: set[str] = set()
+    for project in projects:
+        name = project.get("name") if isinstance(project, dict) else None
+        if not isinstance(name, str) or not name.strip():
+            raise RuntimeError("deployment recovery state has a project without a name")
+        project_names.add(name.strip())
+        model = project.get("composeConfig") if isinstance(project, dict) else None
+        services = model.get("services") if isinstance(model, dict) else None
+        if not isinstance(services, dict) or not services:
+            raise RuntimeError("deployment recovery state has an invalid Compose model")
+        for service in services.values():
+            image = service.get("image") if isinstance(service, dict) else None
+            if not isinstance(image, str) or not image.strip():
+                raise RuntimeError(
+                    "deployment recovery state has a service without an image"
+                )
+            references.add(_normalize_image_reference(image))
+    if (
+        project_names != {"pib-backend", "cerebra"}
+        or len(projects) != 2
+        or not references
+    ):
+        raise RuntimeError(
+            "deployment recovery state does not contain both PIB Compose projects"
+        )
+    return references
+
+
+def _normalize_image_reference(reference: str) -> str:
+    """Canonicalize Docker's implicit tag and Docker Hub defaults for matching."""
+    reference = reference.strip()
+    name, separator, digest = reference.partition("@")
+    slash = name.rfind("/")
+    colon = name.rfind(":")
+    if not separator and colon <= slash:
+        name += ":latest"
+    slash = name.rfind("/")
+    colon = name.rfind(":")
+    repository, tag = (name[:colon], name[colon:]) if colon > slash else (name, "")
+    if "/" not in repository:
+        repository = f"docker.io/library/{repository}"
+    elif repository.startswith("docker.io/"):
+        if "/" not in repository[len("docker.io/") :]:
+            repository = f"docker.io/library/{repository[len('docker.io/') :]}"
+    elif (
+        "." not in repository.split("/", 1)[0]
+        and ":" not in repository.split("/", 1)[0]
+    ):
+        repository = f"docker.io/{repository}"
+    suffix = f"@{digest}" if separator else ""
+    return f"{repository}{tag}{suffix}"
+
+
+def _prune_obsolete_images() -> Tuple[Dict[str, Any], List[str]]:
+    """Delete obsolete tags while retaining saved and currently running images."""
+    try:
+        protected = _current_recovery_image_refs()
+    except RuntimeError as error:
+        return {"skipped": str(error)}, [f"images: {error}"]
+
+    code, body = _docker_request(
+        "GET", "/containers/json?all=false", timeout=PURGE_TIMEOUT_SECONDS
+    )
+    if code != 200:
+        return {}, [f"images: running containers list failed with {code}"]
+    try:
+        containers = json.loads(body.decode("utf-8"))
+        if not isinstance(containers, list) or any(
+            not isinstance(container, dict)
+            or not isinstance(container.get("ImageID"), str)
+            or not container["ImageID"].strip()
+            for container in containers
+        ):
+            raise ValueError(
+                "response must contain a non-empty ImageID for each container"
+            )
+        running_image_ids = {container["ImageID"].strip() for container in containers}
+    except (UnicodeError, json.JSONDecodeError, ValueError) as error:
+        return {}, [f"images: running containers list is invalid: {error}"]
+
+    code, body = _docker_request(
+        "GET", "/images/json?all=true", timeout=PURGE_TIMEOUT_SECONDS
+    )
+    if code != 200:
+        return {}, [f"images: list failed with {code}"]
+    try:
+        images = json.loads(body.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError) as error:
+        return {}, [f"images: list response is invalid: {error}"]
+    if not isinstance(images, list):
+        return {}, ["images: list response is not an array"]
+
+    removed: List[str] = []
+    errors: List[str] = []
+    protect_dangling_prune = False
+    for image in images:
+        if isinstance(image, dict) and image.get("Id") in running_image_ids:
+            continue
+        tags = image.get("RepoTags") if isinstance(image, dict) else None
+        tags = tags if isinstance(tags, list) else []
+        digests = image.get("RepoDigests") if isinstance(image, dict) else None
+        digests = digests if isinstance(digests, list) else []
+        protected_tags = [
+            reference
+            for reference in tags
+            if isinstance(reference, str)
+            and reference != "<none>:<none>"
+            and _normalize_image_reference(reference) in protected
+        ]
+        protected_digests = [
+            reference
+            for reference in digests
+            if isinstance(reference, str)
+            and _normalize_image_reference(reference) in protected
+        ]
+        if protected_digests and not protected_tags:
+            protect_dangling_prune = True
+            continue
+        for reference in tags:
+            if (
+                not isinstance(reference, str)
+                or reference == "<none>:<none>"
+                or _normalize_image_reference(reference) in protected
+            ):
+                continue
+            delete_path = f"/images/{quote(reference, safe='')}?force=0"
+            delete_code, _ = _docker_request(
+                "DELETE", delete_path, timeout=PURGE_TIMEOUT_SECONDS
+            )
+            if delete_code in (200, 204, 404):
+                removed.append(reference)
+            else:
+                errors.append(f"images: could not remove {reference} ({delete_code})")
+
+    reclaimed = 0
+    if protect_dangling_prune:
+        dangling_prune = "skipped to preserve a current digest-only recovery image"
+    else:
+        dangling_filter = quote(json.dumps({"dangling": ["true"]}))
+        prune_code, prune_body = _docker_request(
+            "POST",
+            f"/images/prune?filters={dangling_filter}",
+            timeout=PURGE_TIMEOUT_SECONDS,
+        )
+        dangling_prune = "completed"
+        if prune_code in (200, 204):
+            try:
+                prune_result = json.loads(prune_body.decode("utf-8"))
+                reclaimed = int(prune_result.get("SpaceReclaimed", 0))
+            except (
+                AttributeError,
+                TypeError,
+                ValueError,
+                UnicodeError,
+                json.JSONDecodeError,
+            ):
+                pass
+        else:
+            errors.append(f"images: dangling-image prune failed with {prune_code}")
+            dangling_prune = f"failed with {prune_code}"
+    return {
+        "removed": removed,
+        "SpaceReclaimed": reclaimed,
+        "danglingPrune": dangling_prune,
+    }, errors
+
+
+def _purge_docker_locked() -> Tuple[int, Dict[str, Any]]:
+    """Prune unused objects while retaining the images needed by saved recovery.
+
+    All other tagged images are removed. Saved Compose image references remain
+    available for boot-time recovery after stopped containers are purged.
     """
     results: Dict[str, Any] = {}
     errors: List[str] = []
     reclaimed = 0
 
-    # filters must be the URL-encoded JSON the Engine expects.
-    image_filters = quote(json.dumps({"dangling": ["false"]}))
     endpoints = [
         ("containers", "/containers/prune"),
-        ("images", f"/images/prune?filters={image_filters}"),
         ("volumes", "/volumes/prune"),
         ("networks", "/networks/prune"),
         ("build", "/build/prune?all=true"),
@@ -366,7 +545,19 @@ def purge_docker() -> Tuple[int, Dict[str, Any]]:
         except Exception as e:
             errors.append(f"{key}: {str(e)}")
 
-    message = f"Docker purge completed: {_human_bytes(reclaimed)} freed."
+    try:
+        image_result, image_errors = _prune_obsolete_images()
+    except OSError as error:
+        image_result = {"skipped": f"image cleanup transport failed: {error}"}
+        image_errors = [f"images: cleanup transport failed: {error}"]
+    results["images"] = image_result
+    reclaimed += image_result.get("SpaceReclaimed", 0)
+    errors.extend(image_errors)
+
+    message = (
+        f"Docker purge completed: {_human_bytes(reclaimed)} reported reclaimed by "
+        "Docker prune operations; tagged image deletions are not included."
+    )
     if errors:
         message += f" {len(errors)} step(s) failed."
     return 200, {
@@ -374,6 +565,50 @@ def purge_docker() -> Tuple[int, Dict[str, Any]]:
         "message": message,
         "reclaimedBytes": reclaimed,
         "reclaimedHuman": _human_bytes(reclaimed),
+        "reclaimedBytesScope": "Docker-reported prune space; excludes tagged image deletions",
         "details": results,
         "errors": errors if errors else None,
     }
+
+
+def purge_docker() -> Tuple[int, Dict[str, Any]]:
+    update_dir = Path(os.environ.get("PIB_UPDATE_DIR", "/app/.update"))
+    try:
+        update_dir.mkdir(parents=True, exist_ok=True)
+        lock_path = update_dir / "deployment.lock"
+        lock_fd = os.open(
+            lock_path,
+            os.O_CREAT | os.O_RDWR | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0),
+            0o660,
+        )
+        try:
+            lock_info = os.fstat(lock_fd)
+            if not stat.S_ISREG(lock_info.st_mode) or lock_info.st_nlink != 1:
+                raise OSError("deployment lock must be a regular, singly linked file")
+            directory_info = update_dir.stat()
+            os.fchown(lock_fd, directory_info.st_uid, directory_info.st_gid)
+            os.fchmod(lock_fd, 0o660)
+            lock = os.fdopen(lock_fd, "a", encoding="utf-8")
+            lock_fd = -1
+        finally:
+            if lock_fd >= 0:
+                os.close(lock_fd)
+        with lock:
+            try:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return 409, {
+                    "status": "error",
+                    "message": "Docker purge cannot run while an update or recovery is in progress.",
+                    "errors": ["deployment lock is held"],
+                }
+            try:
+                return _purge_docker_locked()
+            finally:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+    except OSError as error:
+        return 500, {
+            "status": "error",
+            "message": f"Docker purge could not acquire deployment lock: {error}",
+            "errors": [str(error)],
+        }

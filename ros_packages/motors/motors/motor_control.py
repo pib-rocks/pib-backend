@@ -39,6 +39,7 @@ from pib_motors.perf_trace import (
 from pib_motors.bus_writer import (
     BusPriority,
     all_bus_writers,
+    bus_writer_snapshot_has_anomaly,
     format_bus_writer_summary,
     shutdown_all_bus_writers,
 )
@@ -147,12 +148,11 @@ def _rad_to_centideg_for_joint(
     motor = name_to_motors[joint_name][0]
     min_pos = motor.rotation_range_min
     max_pos = motor.rotation_range_max
-    if centideg < min_pos or centideg > max_pos:
-        raise ValueError(
-            f"joint '{joint_name}' position {radians} rad ({centideg} centideg) "
-            f"is outside allowed range [{min_pos}, {max_pos}] centidegrees"
-        )
-    return float(centideg)
+    # A servo reports its position with its own tolerance, so live feedback can land a few
+    # centidegrees beyond the configured range (measured: shoulder_vertical_left -9018).
+    # Rejecting the whole trajectory for that makes the robot un-drivable, so the value is
+    # clamped to the boundary instead - the same clamping Motor.set_position already applies.
+    return float(min(max(centideg, min_pos), max_pos))
 
 
 class MotorControl(Node):
@@ -645,8 +645,18 @@ class MotorControl(Node):
             )
 
     def _log_bus_writer_stats(self) -> None:
+        verbose = os.environ.get("PIB_PERF_TRACE_BUS_WRITER", "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        )
         for writer in all_bus_writers():
-            log_perf_trace(self.get_logger(), format_bus_writer_summary(writer))
+            snap = writer.counters().snapshot()
+            if verbose or bus_writer_snapshot_has_anomaly(snap):
+                log_perf_trace(
+                    self.get_logger(), format_bus_writer_summary(writer, snap)
+                )
 
     def get_all_joint_positions(
         self,

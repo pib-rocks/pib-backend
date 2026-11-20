@@ -126,6 +126,8 @@ COMPRESSED_IMAGE_TOPIC = "/oak/rgb/image_raw/compressed"
 COMPRESSED_IMAGE_FRAME_ID = "oak_rgb_camera_optical_frame"
 DEFAULT_QUALITY_FACTOR = 80
 DEFAULT_TIMER_PERIOD_SECONDS = 0.1
+IDLE_CAMERA_FRAME_INTERVAL_SECONDS = 1.0
+CAMERA_SNAPSHOT_GRACE_SECONDS = 5.0
 #: The device hand chain produces its own results at camera rate. Polling it on
 #: the stream timer (10 Hz) capped hand tracking at 10 detections/s whatever the
 #: device managed, so the chain gets its own poll.
@@ -223,6 +225,7 @@ IMU_RATE_WINDOW = 100
 # for throughput, but the report would then wait in the queue, and polling
 # faster than the publication period only adds empty wake-ups.
 IMU_POLL_PERIOD_SECONDS = 1.0 / IMU_PUBLISH_RATE_HZ
+IMU_IDLE_POLL_PERIOD_SECONDS = 0.2  # 5 Hz liveness drain when /imu has 0 subscribers
 # Expressed as missed publications rather than as a bare second: at 100 Hz a
 # one-second silence is a hundred lost samples, far too late to call the stream
 # healthy. 50 periods (0.5 s) still tolerates one long colour-frame encode
@@ -340,6 +343,8 @@ class CameraNode(
         self.video_encoder = None
         self.mjpeg_buffer = MjpegFrameBuffer()
         self.mjpeg_server = None
+        self._last_idle_frame_monotonic = 0.0
+        self._last_camera_service_monotonic = 0.0
         self._load_startup_camera_settings()
         self.queue = None
         self.depth_queue = None
@@ -445,10 +450,9 @@ class CameraNode(
         )
         self._start_mjpeg_server()
         self.timer = self.create_timer(self.timer_period, self.timer_callback)
-        self.hand_fast_timer = self.create_timer(
-            HAND_FAST_POLL_PERIOD_SECONDS, self._poll_hand_tracking_fast
-        )
-        self.imu_timer = self.create_timer(IMU_POLL_PERIOD_SECONDS, self._process_imu)
+        self.hand_fast_timer = self.imu_timer = self._imu_timer_period = None
+        self._sync_hand_fast_timer()
+        self._sync_imu_timer_period(active=self._imu_has_subscribers())
         self.models_status_timer = self.create_timer(1.0, self.publish_model_statuses)
         self._hotplug_timer = self.create_timer(5.0, self._check_camera_hotplug)
 
@@ -472,6 +476,7 @@ class CameraNode(
         return base64.b64encode(buffer).decode("utf-8")
 
     def get_camera_image_callback(self, request, response):
+        self._last_camera_service_monotonic = time.monotonic()
         # Prefer the hardware-encoded JPEG bytes from the OAK VideoEncoder.
         jpeg_bytes = getattr(self, "current_jpeg_bytes", b"")
         if jpeg_bytes:
@@ -937,6 +942,11 @@ class CameraNode(
 
         if self.imu_queue is None:
             return
+        has_subscribers = self._imu_has_subscribers()
+        self._sync_imu_timer_period(active=has_subscribers)
+        if not has_subscribers:
+            self._drain_imu_idle()
+            return
         for _ in range(IMU_DRAIN_LIMIT):
             batch = self.imu_queue.tryGet()
             if batch is None:
@@ -993,12 +1003,16 @@ class CameraNode(
     def timer_callback(self):
         if self._poll_colour_branch_capture():
             return
+        now = time.monotonic()
+        if self._should_skip_idle_frame_tick(now):
+            return
         if self.queue:
             image_rgb = self._pending_color_packet
             self._pending_color_packet = None
             if image_rgb is None:
                 image_rgb = self.queue.tryGet()
             if image_rgb is not None:
+                self._last_idle_frame_monotonic = now
                 self._preview_packet = image_rgb
                 jpeg_bytes = self._extract_packet_jpeg(image_rgb)
                 if jpeg_bytes is not None:

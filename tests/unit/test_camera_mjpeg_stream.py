@@ -341,3 +341,82 @@ def test_publish_face_center_throttles_and_uses_reduced_grayscale_jpeg_decode(
     # Immediate second call within 0.5s window is throttled
     node.publish_face_center(None)
     assert node.face_cascade.detectMultiScale.call_count == 1
+
+
+def test_mjpeg_buffer_tracks_stream_clients_and_snapshot_grace():
+    buf = MjpegFrameBuffer()
+    assert buf.active_stream_clients == 0
+    assert buf.has_active_consumers(snapshot_grace_seconds=5.0, now=100.0) is False
+
+    buf.register_stream_client()
+    assert buf.active_stream_clients == 1
+    assert buf.status_snapshot()["streamClients"] == 1
+    assert buf.has_active_consumers(snapshot_grace_seconds=5.0, now=100.0) is True
+
+    buf.unregister_stream_client()
+    assert buf.active_stream_clients == 0
+    assert buf.has_active_consumers(snapshot_grace_seconds=5.0, now=100.0) is False
+
+    buf.note_snapshot_request(now=100.0)
+    assert buf.has_active_consumers(snapshot_grace_seconds=5.0, now=102.0) is True
+    assert buf.has_active_consumers(snapshot_grace_seconds=5.0, now=106.0) is False
+
+
+def test_timer_callback_throttles_idle_frames_and_unthrottles_on_consumer(monkeypatch):
+    node = _bare_node()
+    node.compressed_publisher_.get_subscription_count.return_value = 0
+    node.face_center_publisher_.get_subscription_count.return_value = 0
+    node.depth_publisher_ = MagicMock()
+    node.depth_publisher_.get_subscription_count.return_value = 0
+    node.nn_queues = {}
+    node.hand_decoder_queue = None
+    node.imitation_queue = None
+    node.hand_palm_queue = None
+    node.hand_roi_queue = None
+    node.face_crop_queue = None
+    node._last_idle_frame_monotonic = 0.0
+    node._last_camera_service_monotonic = 0.0
+
+    fake_jpeg = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\xff\xd9"
+    packet = MagicMock()
+    packet.getData.return_value = fake_jpeg
+    node.queue = MagicMock()
+    node.queue.tryGet.return_value = packet
+
+    clock = [100.0]
+    monkeypatch.setattr(camera_stereo.time, "monotonic", lambda: clock[0])
+
+    # First frame always runs immediately so /snapshot has a warm frame.
+    node.timer_callback()
+    assert node.queue.tryGet.call_count == 1
+    assert node.mjpeg_buffer.latest_jpeg == fake_jpeg
+
+    # Second tick 0.1s later is throttled even when passive /face_center
+    # subscribers (e.g. voice_assistant/chat) are connected.
+    node.face_center_publisher_.get_subscription_count.return_value = 2
+    clock[0] = 100.1
+    node.timer_callback()
+    assert node.queue.tryGet.call_count == 1
+
+    # After 1.0s idle interval elapses, 1 Hz keep-warm frame runs.
+    clock[0] = 101.05
+    node.timer_callback()
+    assert node.queue.tryGet.call_count == 2
+
+    # When an HTTP MJPEG client connects, throttling lifts immediately (0.1s later).
+    node.mjpeg_buffer.register_stream_client()
+    clock[0] = 101.15
+    node.timer_callback()
+    assert node.queue.tryGet.call_count == 3
+
+    # Disconnect stream client -> throttled again.
+    node.mjpeg_buffer.unregister_stream_client()
+    clock[0] = 101.25
+    node.timer_callback()
+    assert node.queue.tryGet.call_count == 3
+
+    # ROS subscriber unthrottles immediately.
+    node.compressed_publisher_.get_subscription_count.return_value = 1
+    clock[0] = 101.35
+    node.timer_callback()
+    assert node.queue.tryGet.call_count == 4
