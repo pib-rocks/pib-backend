@@ -308,21 +308,6 @@ def test_a_blank_update_resets_to_the_default_of_the_chosen_model(client, ids):
     assert reset.get_json()["sttEngine"] == LOCAL_STT_ID
 
 
-LOCAL_MODEL_TAGS = {
-    "models": [{"name": "qwen-fast:latest", "model": "qwen-fast:latest"}]
-}
-
-
-def test_default_policy_on_the_local_model_stays_local(client, monkeypatch):
-    from service import local_model_service
-
-    monkeypatch.setattr(local_model_service, "fetch_tags", lambda: LOCAL_MODEL_TAGS)
-    client.get("/assistant-model")
-    created = _create(client, channel="direct")
-    assert created.status_code == 201
-    assert created.get_json()["sttEngine"] == LOCAL_STT_ID
-
-
 # --- AC4: an existing personality keeps its stored engine ----------------------
 
 

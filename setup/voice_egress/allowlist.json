@@ -31,20 +31,6 @@
       "evidence": "Measured on .172 on 2026-10-18 (PC-75): GET https://api.pib.rocks/health 200, GET /ready 200 {ready:true, model:openai/gpt-oss-120b, provider:groq, upstream:warm}, GET /v1/models 401 with the same error contract as the retired LAN port, and POST /v1/voice-assistant/speech-to-text 400 (same multipart contract). The container resolves api.pib.rocks to 178.105.138.93 through Docker DNS, so resolve:dns has an address at apply time."
     },
     {
-      "id": "ollama",
-      "enabled": true,
-      "modes": [
-        "common"
-      ],
-      "destination": "host.docker.internal",
-      "port": 11434,
-      "protocol": "tcp",
-      "resolve": "bridge-gateway",
-      "hook": "input",
-      "purpose": "On-device model endpoint. Resolve host.docker.internal inside the container: Docker host-gateway need not equal the attached bridge gateway.",
-      "evidence": "Measured on .172 on 2026-10-15: host.docker.internal resolves to 172.17.0.1 while the attached bridge gateway is 172.18.0.1. TCP 11434 remains reachable with the corrected bridge-family policy applied."
-    },
-    {
       "id": "pib-network",
       "enabled": true,
       "modes": [

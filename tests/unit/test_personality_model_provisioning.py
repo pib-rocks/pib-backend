@@ -78,23 +78,6 @@ def test_create_on_the_default_route_sends_pib_cloud(app_ctx, provision):
     assert provision[0]["provider"] == "pib.Cloud"
 
 
-def test_create_sends_the_local_endpoint_base(app_ctx, provision, monkeypatch):
-    from pib_hermes_config.local_model import openai_base_url
-    from service import local_model_service
-
-    tags = {"models": [{"name": "qwen-fast:latest", "model": "qwen-fast:latest"}]}
-    monkeypatch.setattr(local_model_service, "fetch_tags", lambda: tags)
-    local = local_model_service.ensure_row()
-
-    personality_service.create_personality(
-        {"name": "Lokal", "model_ref": f"model:{local.id}"}
-    )
-
-    assert provision[0]["model"] == "qwen-fast"
-    assert provision[0]["provider"] == "Local"
-    assert provision[0]["endpoint_base"] == openai_base_url()
-
-
 def test_update_reprovisions_only_when_the_model_changed(app_ctx, provision):
     gemini = _model("gemini-3.8-flash")
     gpt = _model("gpt-6")

@@ -88,11 +88,11 @@ DEFAULT_PERSONALITY_REASONING_EFFORT = "none"
 #
 # Source of every value below:
 #   * provider names and model ids: the Flask registry/catalogue
-#     (``pib_api/flask/provider_registry.py``) and ``local_model.PROVIDER_NAME``.
+#     (``pib_api/flask/provider_registry.py``).
 #   * Hermes provider identifiers and the env var each built-in provider reads:
 #     the provider plugins shipped with Hermes
 #     (https://hermes-agent.nousresearch.com/docs/integrations/providers).
-#   * a user-defined route (pib.Cloud, Local): Hermes declares it under
+#   * a user-defined route (pib.Cloud): Hermes declares it under
 #     ``providers:`` in config.yaml with a ``base_url`` and an optional
 #     ``key_env`` (``hermes_cli/config_providers.py``). The base URL comes from
 #     the registry's ``Provider.endpoint_base``.
@@ -100,14 +100,12 @@ PIB_PROVIDER_GOOGLE = "Google"
 PIB_PROVIDER_OPENAI = "OpenAI"
 PIB_PROVIDER_ANTHROPIC = "Anthropic"
 PIB_PROVIDER_PIB_CLOUD = "pib.Cloud"
-PIB_PROVIDER_LOCAL = "Local"
 
 HERMES_PROVIDER_GEMINI = "gemini"
 HERMES_PROVIDER_OPENAI = "openai"
 HERMES_PROVIDER_ANTHROPIC = "anthropic"
-#: Slug of a user-defined ``providers:`` entry for pib.Cloud / Local.
+#: Slug of a user-defined ``providers:`` entry for pib.Cloud.
 HERMES_PROVIDER_PIB_CLOUD = "pib-cloud"
-HERMES_PROVIDER_LOCAL = "local"
 
 GEMINI_KEY_ENV_VARS = ("GOOGLE_API_KEY", "GEMINI_API_KEY")
 OPENAI_KEY_ENV_VARS = ("OPENAI_API_KEY",)
@@ -178,13 +176,6 @@ def provider_for_profile(
                 os.environ.get("PIB_CLOUD_BASE_URL") or "https://api.pib.rocks/v1"
             )
         return ProviderMapping(HERMES_PROVIDER_PIB_CLOUD, PIB_CLOUD_KEY_ENV_VARS, base)
-    if name == PIB_PROVIDER_LOCAL:
-        if base is None:
-            # No registry endpoint: the on-device OpenAI-compatible root.
-            from pib_hermes_config.local_model import openai_base_url
-
-            base = _clean_base_url(openai_base_url())
-        return ProviderMapping(HERMES_PROVIDER_LOCAL, (), base)
 
     slug = _provider_slug(name)
     if slug and base:

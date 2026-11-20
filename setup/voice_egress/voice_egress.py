@@ -36,7 +36,7 @@ IPV6_NOTE = (
     "an alternate route."
 )
 ALWAYS_MODES = frozenset({"common"})
-REQUIRED_IDS = ("pib-cloud", "ollama", "pib-network", "gemini")
+REQUIRED_IDS = ("pib-cloud", "pib-network", "gemini")
 CLOUD_ADDRESS = "api.pib.rocks"
 CLOUD_PORT = 443
 #: How the cloud destination reaches the ruleset: a name is resolved at apply
@@ -239,9 +239,6 @@ def preflight_static(allowlist: Allowlist) -> None:
     network = by_id["pib-network"]
     if network.resolve != "bridge-subnet" or network.hook != "forward":
         raise PolicyError("pib-network peers must stay allowed on the bridge")
-    ollama = by_id["ollama"]
-    if ollama.port != 11434 or ollama.hook != "input" or ollama.protocol != "tcp":
-        raise PolicyError("ollama must stay allowed on the bridge gateway port 11434")
     gemini = by_id["gemini"]
     if (
         gemini.resolve != "dns"

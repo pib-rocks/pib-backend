@@ -33,11 +33,6 @@ from rclpy.service import Service
 logger = logging.getLogger(__name__)
 from std_msgs.msg import String
 
-from pib_hermes_config.local_model import (
-    API_NAME as LOCAL_MODEL_API_NAME,
-    iter_reply,
-    openai_base_url,
-)
 from pib_hermes_config import provider_for_profile
 from pib_hermes_config.turn_taking import next_speech_delta, speech_result_tail
 from pib_hermes_config.channel import (
@@ -142,13 +137,7 @@ def prepare_tool_image(
 
 
 def _model_provider_name(api_name: Optional[str]) -> Optional[str]:
-    """The registry provider name for a model's api_name (PR-1930b).
-
-    The on-device model has no catalogue line, so it is named directly; every
-    other model resolves to its provider through the catalogue.
-    """
-    if api_name == LOCAL_MODEL_API_NAME:
-        return "Local"
+    """The registry provider name for a model's api_name (PR-1930b)."""
     if not api_name:
         return None
     return provider_name_for(api_name)
@@ -167,12 +156,9 @@ def _model_needs_provider_key(api_name: Optional[str]) -> bool:
 def _model_base_url(api_name: Optional[str]) -> Optional[str]:
     """The OpenAI-compatible base URL a custom route needs, or None.
 
-    The on-device model points at the Ollama endpoint; pib.Cloud points at the
-    configured pib.Cloud endpoint; the backend writes the same URL into the
-    profile at provision time.
+    pib.Cloud points at the configured pib.Cloud endpoint; the backend writes
+    the same URL into the profile at provision time.
     """
-    if api_name == LOCAL_MODEL_API_NAME:
-        return openai_base_url()
     if api_name == PIB_CLOUD_API_NAME:
         return pib_cloud_stream.pib_cloud_base_url()
     return None

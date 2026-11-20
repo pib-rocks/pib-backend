@@ -8,7 +8,6 @@ from concurrent.futures import TimeoutError as FutureTimeoutError
 from queue import Empty, Queue
 from typing import Any, Optional
 
-from pib_hermes_config.local_model import iter_reply
 from pib_hermes_config.channel import direct_system_prompt
 from pib_hermes_config.turn_taking import next_speech_delta, speech_result_tail
 
@@ -623,27 +622,6 @@ class ChatHermesMixin:
         except Exception:
             return ""
 
-    def _iter_local_tokens(self, chat_id: str, content: str, system_prompt: str):
-        """Tokens from the on-device model. No provider key is read."""
-        history: list[tuple[str, bool]] = []
-        try:
-            with self.voice_assistant_client_lock:
-                (
-                    successful,
-                    chat_messages,
-                ) = _chat().voice_assistant_client.get_chat_history(
-                    chat_id, self.history_length
-                )
-            if successful:
-                history = [
-                    (message.content, message.is_user) for message in chat_messages
-                ]
-        except Exception as exc:
-            self.get_logger().error(
-                f"local model history could not be read for chat {chat_id}: {exc}"
-            )
-        return iter_reply(system_prompt, history, content)
-
     def _get_turn_lock(self) -> Lock:
         """Return the per-node turn serialization lock (created lazily for test doubles)."""
         lock = getattr(self, "_turn_lock", None)
@@ -716,9 +694,7 @@ class ChatHermesMixin:
             on_tool_call=getattr(self, "_record_tool_finished", None),
             on_tool_start=getattr(self, "_record_tool_started", None),
             on_tool_image=getattr(self, "_record_tool_image", None),
-            local_fallback=lambda: self._iter_local_tokens(
-                chat_id, content, system_prompt
-            ),
+            local_fallback=None,
             is_cancelled=lambda: bool(
                 goal_handle is not None and goal_handle.is_cancel_requested
             ),
@@ -794,7 +770,6 @@ class ChatHermesMixin:
         api_name = getattr(
             getattr(personality, "assistant_model", None), "api_name", None
         )
-        local_model = api_name == _chat().LOCAL_MODEL_API_NAME
         pib_cloud_model = api_name == _chat().PIB_CLOUD_API_NAME
         model_provider_name = _chat()._model_provider_name(api_name)
         tool_calling = _chat().direct_tool_loop.tool_calling_enabled(personality)
@@ -873,19 +848,6 @@ class ChatHermesMixin:
                     tool_calling=tool_calling,
                     goal_handle=goal_handle,
                 )
-            elif local_model:
-                turn_path = "the on-device model"
-                system_prompt = direct_system_prompt(
-                    personality.description,
-                    images_shown=True,
-                    robot_context=self._robot_context(),
-                    code_generation=generate_code,
-                )
-                system_prompt = plan.for_direct(system_prompt)
-                self.get_logger().info(
-                    f"local model chat={chat_id} model={_chat().LOCAL_MODEL_API_NAME}"
-                )
-                tokens = self._iter_local_tokens(chat_id, content, system_prompt)
             else:
                 turn_path = "the direct tool loop"
                 # Pull recent message history for context

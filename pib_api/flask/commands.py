@@ -17,7 +17,6 @@ from sqlalchemy.engine import URL, make_url
 from app.app import db, app
 from model.assistant_model import AssistantModel
 from model.provider_model import Provider, RegistryModel
-from pib_hermes_config.local_model import API_NAME as LOCAL_MODEL_API_NAME
 from provider_registry import (
     DEFAULT_PROVIDER_API_NAME,
     active_api_names,
@@ -382,12 +381,8 @@ def _reconcile_model_catalogue() -> None:
     a new model; only the foreign key is cleared. Nothing is rewritten onto a
     different model. Catalogue models without a row are added, and the
     catalogue default becomes the only default model.
-
-    The on-device qwen-fast row is not a cloud catalogue line. It is kept so
-    a personality that selected it keeps the same id. A request creates it
-    only when Ollama's tags list it.
     """
-    kept = active_api_names() | {LOCAL_MODEL_API_NAME}
+    kept = active_api_names()
     removed_models = AssistantModel.query.filter(
         ~AssistantModel.api_name.in_(kept)
     ).all()

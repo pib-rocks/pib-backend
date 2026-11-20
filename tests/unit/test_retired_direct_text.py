@@ -9,7 +9,6 @@ from pib_hermes_config.retired_direct_text import (
     RETIRED_DIRECT_TEXT_SENTENCE,
     legacy_direct_text_selected,
 )
-from pib_hermes_config.local_model import API_NAME as LOCAL_API_NAME
 
 
 @pytest.mark.parametrize(
@@ -22,7 +21,6 @@ from pib_hermes_config.local_model import API_NAME as LOCAL_API_NAME
         ("direct", "claude-sonnet-5-5", None, True),
         ("smart", "gemini-3.8-flash", None, False),
         ("direct", "pib-cloud", None, False),
-        ("direct", LOCAL_API_NAME, None, False),
         ("direct", "gemini-3.8-live", "live", False),
         ("direct", None, None, True),
     ],
@@ -87,7 +85,6 @@ def _create(client, api_name="gemini-3.8-flash", **extra):
     "api_name,channel",
     [
         ("pib-cloud", "direct"),
-        (LOCAL_API_NAME, "direct"),
         ("gemini-3.8-live", "direct"),
         ("gemini-3.8-flash", "smart"),
         # PC-58: the supported Direct model answers with tools off as a plain
@@ -100,15 +97,6 @@ def test_supported_no_tool_selections_are_not_retired(
 ):
     monkeypatch.setenv("PIB_HERMES_ENABLED", "true")
     client = app.test_client()
-    if api_name == LOCAL_API_NAME:
-        from service import local_model_service
-
-        monkeypatch.setattr(
-            local_model_service,
-            "fetch_tags",
-            lambda: {"models": [{"name": "qwen-fast:latest"}]},
-        )
-        assert client.get("/assistant-model").status_code == 200
     response = _create(client, api_name, channel=channel, toolCalling=False)
     assert response.status_code == 201, response.get_json()
     assert response.get_json()["toolCalling"] is False
