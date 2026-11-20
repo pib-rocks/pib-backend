@@ -3,16 +3,21 @@
 # Run the same functional probe the voice container's Docker healthcheck uses.
 # Used after fresh setup and after an update to catch misconfiguration (e.g. wrong API key route).
 #
-# Overrides: PIB_VOICE_CONTAINER, PIB_VOICE_HEALTH_ATTEMPTS, PIB_VOICE_HEALTH_INTERVAL_SECONDS
+# Overrides: PIB_VOICE_CONTAINER, PIB_VOICE_HEALTH_ATTEMPTS, PIB_VOICE_HEALTH_INTERVAL_SECONDS, PIB_VOICE_REQUIRE_KEY
 
 set -uo pipefail
 
 CONTAINER="${PIB_VOICE_CONTAINER:-pib-backend-ros-voice-assistant-1}"
 ATTEMPTS="${PIB_VOICE_HEALTH_ATTEMPTS:-8}"
 INTERVAL="${PIB_VOICE_HEALTH_INTERVAL_SECONDS:-15}"
+REQUIRE_KEY="${PIB_VOICE_REQUIRE_KEY:-0}"
 LOG_PREFIX="${LOG_PREFIX:-voice-health}"
 
-PROBE_CMD='source /opt/ros/jazzy/setup.bash && source /app/ros2_ws/install/setup.bash && python3 -m voice_assistant.voice_healthcheck'
+PROBE_FLAGS=""
+if [ "$REQUIRE_KEY" = "1" ] || [ "$REQUIRE_KEY" = "true" ]; then
+    PROBE_FLAGS=" --require-key"
+fi
+PROBE_CMD="source /opt/ros/jazzy/setup.bash && source /app/ros2_ws/install/setup.bash && python3 -m voice_assistant.voice_healthcheck${PROBE_FLAGS}"
 
 log() { echo "[${LOG_PREFIX}] $*"; }
 
@@ -39,7 +44,13 @@ attempt=1
 last_output=""
 while [ "$attempt" -le "$ATTEMPTS" ]; do
     if last_output="$(docker_cmd exec "$CONTAINER" bash -lc "$PROBE_CMD" 2>&1)"; then
-        log "ok"
+        reason_line="$(printf '%s\n' "$last_output" | grep 'reason=no_key' | tail -1 || true)"
+        if [ -n "$reason_line" ]; then
+            printf '%s\n' "$reason_line"
+            log "ok (voice nodes healthy; provider key not yet configured)"
+        else
+            log "ok"
+        fi
         exit 0
     fi
     if [ "$attempt" -eq "$ATTEMPTS" ]; then

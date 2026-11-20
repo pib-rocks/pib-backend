@@ -49,6 +49,12 @@ def test_update_runner_snapshots_voice_health_and_gates_in_verify_result():
     assert "unhealthy before and after the update (D12)" in body
     # Bounded inside verify_result: wait_for_stacks already waited for the stack.
     assert "PIB_VOICE_HEALTH_ATTEMPTS=3" in body
+    assert "VOICE_KEY_READY_BEFORE" in text
+    assert "PIB_VOICE_REQUIRE_KEY" in body
+    voice_script = VOICE_HEALTH.read_text(encoding="utf-8")
+    assert "PIB_VOICE_REQUIRE_KEY" in voice_script
+    assert "--require-key" in voice_script
+    assert "provider key not yet configured" in voice_script
 
 
 def test_voice_health_exits_zero_when_container_missing():

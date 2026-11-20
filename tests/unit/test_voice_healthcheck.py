@@ -50,6 +50,24 @@ def test_healthcheck_exits_nonzero_only_for_real_failures():
                 "gemini",
             ),
         ):
+            # PR-2191: missing key on a healthy ROS stack exits 0 by default so Docker
+            # does not paint an unconfigured install unhealthy; --require-key enforces rc=1.
+            assert voice_healthcheck.main([]) == 0
+            assert voice_healthcheck.main(["voice_healthcheck", "--require-key"]) == 1
+
+    with patch.object(
+        voice_healthcheck, "check_ros_stack", return_value=(True, "", "")
+    ):
+        with patch.object(
+            voice_healthcheck,
+            "check_provider_key",
+            return_value=(
+                False,
+                voice_healthcheck.REASON_KEY_CHECK,
+                "unexpected store error",
+                "gemini",
+            ),
+        ):
             assert voice_healthcheck.main([]) == 1
 
 
@@ -137,8 +155,12 @@ def test_healthcheck_provider_key_surfaces_no_key_reason(monkeypatch):
 
                 err.write = _write
                 code = voice_healthcheck.main([])
+                strict_code = voice_healthcheck.main(
+                    ["voice_healthcheck", "--require-key"]
+                )
 
-    assert code == 1
+    assert code == 0
+    assert strict_code == 1
     joined = "".join(captured)
     assert "reason=no_key" in joined
     assert "provider=gemini" in joined
