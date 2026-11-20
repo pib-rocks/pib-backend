@@ -86,13 +86,6 @@ def test_local_maps_to_a_keyless_openai_route():
     assert provider_needs_key(mapping.provider) is False
 
 
-def test_local_without_a_registry_endpoint_falls_back_to_ollama():
-    with patch.dict(os.environ, {"PIB_OLLAMA_BASE_URL": "http://127.0.0.1:11434"}):
-        mapping = provider_for_profile("Local")
-    assert mapping.provider == "local"
-    assert mapping.base_url == "http://127.0.0.1:11434/v1"
-
-
 def test_unknown_provider_without_a_route_falls_back_to_gemini():
     mapping = provider_for_profile("Mystery")
     assert mapping.provider == DEFAULT_HERMES_PROVIDER
@@ -301,9 +294,9 @@ def test_profile_settings_default_when_no_config(tmp_path):
 
 def test_config_module_exposes_the_mapping_table():
     """The helper lives in pib_hermes_config, the two-process shared module."""
-    assert cfg.HERMES_PROVIDER_LOCAL == "local"
-    assert cfg.PIB_PROVIDER_LOCAL == "Local"
-    assert cfg.provider_for_profile("Local").provider == "local"
+    assert cfg.HERMES_PROVIDER_PIB_CLOUD == "pib-cloud"
+    assert cfg.PIB_PROVIDER_PIB_CLOUD == "pib.Cloud"
+    assert cfg.provider_for_profile("pib.Cloud").provider == "pib-cloud"
 
 
 # --- PC-114: pib-cloud key resolution on the Smart / Hermes path -------------

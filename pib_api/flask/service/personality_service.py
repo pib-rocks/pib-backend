@@ -30,7 +30,6 @@ from pib_hermes_config.retired_direct_text import (
     RETIRED_DIRECT_TEXT_VALIDATION,
     legacy_direct_text_selected,
 )
-from pib_hermes_config.local_model import OFFLINE_CAPABILITY
 from pib_hermes_config.live_interaction import personality_requests_actuation
 from pib_hermes_config.live_session import (
     DEFAULT_LIVE_IDLE_TIMEOUT_SECONDS,
@@ -336,43 +335,7 @@ def _apply_channel(
         raise ValidationError(
             {"channel": ["Smart chats are not available on this robot."]}
         )
-    # An omitted channel on create still stores the default. Only a channel
-    # the client sent is refused for a model with the offline capability.
-    if (
-        channel_sent
-        and requested == CHANNEL_SMART
-        and _model_has_offline_capability(personality)
-    ):
-        raise ValidationError(
-            {
-                "channel": [
-                    "Smart chats are not available for the on-device model "
-                    "because it does not provide the context window the agent "
-                    "requires."
-                ]
-            }
-        )
     personality.channel = requested
-
-
-def _model_has_offline_capability(personality: Personality) -> bool:
-    """True when the stored model row carries the offline capability.
-
-    The row is the one ``_apply_provider_choice`` already stored. ``default``
-    is a policy rather than a row, so this read does not resolve it and does
-    not probe the device.
-    """
-    ref = getattr(personality, "provider_ref", None)
-    if ref is None or str(ref) == DEFAULT_PROVIDER_REF:
-        return False
-    try:
-        model_id = int(str(ref))
-    except (TypeError, ValueError):
-        return False
-    row = RegistryModel.query.filter_by(id=model_id).first()
-    if row is None:
-        return False
-    return has_capability(row.capabilities, OFFLINE_CAPABILITY)
 
 
 def _provider_has(capability: str):

@@ -103,7 +103,6 @@ def test_rendered_tcp_allows_match_the_enabled_allowlist_exactly():
         ("203.0.113.11", "443"),
         ("203.0.113.20", "443"),
         ("203.0.113.21", "443"),
-        ("172.18.0.1", "11434"),
     }
     assert "platform.tryb.ai" not in text
     assert "198.51.100.20" not in text
@@ -178,15 +177,6 @@ def test_bridge_hooks_enforce_without_br_netfilter():
     assert "ct direction" not in voice
     assert "224.0.0.0/4" in voice
     assert "counter drop" in voice
-
-
-def test_ollama_uses_actual_host_gateway_not_assumed_network_gateway():
-    import dataclasses
-
-    binding = dataclasses.replace(_binding(), host_address="172.17.0.1")
-    text = mod.render_ruleset(mod.load_allowlist(str(ALLOWLIST_PATH)), binding)
-    assert ("172.17.0.1", "11434") in _tcp_tokens(text)
-    assert ("172.18.0.1", "11434") not in _tcp_tokens(text)
 
 
 def test_multicast_rule_follows_the_allowlist_entry():
@@ -478,7 +468,7 @@ def test_voice_compose_drops_privilege_and_the_raw_hermes_mount(compose_dict):
     assert any("116:" in rule for rule in voice["device_cgroup_rules"])
     env = "\n".join(voice["environment"])
     assert "PIB_CLOUD_BASE_URL=" in env
-    assert "PIB_OLLAMA_BASE_URL=" in env
+    assert "PIB_OLLAMA_BASE_URL=" not in env
     assert compose_dict["services"]["ros-audio-io"]["privileged"] is True
 
 

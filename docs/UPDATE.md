@@ -96,7 +96,6 @@ python -m pytest \
   tests/unit/test_update_healthcheck.py \
   tests/unit/test_update_version_injection.py \
   tests/unit/test_update_watchdog.py \
-  tests/unit/test_update_ollama_listen.py \
   tests/integration/test_update_api.py \
   tests/integration/test_update_operator_contract.py \
   -q --tb=short

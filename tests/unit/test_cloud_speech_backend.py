@@ -13,7 +13,6 @@ from click.testing import CliRunner
 from commands import seed_db
 from model.personality_model import Personality
 from model.provider_model import Provider, RegistryModel
-from pib_hermes_config.local_model import model_capabilities
 from pib_hermes_config.voice_backends import (
     CLOUD_STT_ID,
     CLOUD_TTS_ID,
@@ -82,11 +81,6 @@ def test_the_other_cloud_chat_models_own_their_reasoning_effort():
     # A live model and the unconfirmed lines carry no reasoning flag.
     assert by_name["gemini-3.8-live"].reasoning is False
     assert by_name["gpt-realtime"].reasoning is False
-
-
-def test_the_on_device_row_carries_no_reasoning_flag():
-    assert model_capabilities()["reasoning"] is False
-    assert capabilities_for("qwen-fast", False)["reasoning"] is False
 
 
 # --- engine id round-trip ------------------------------------------------------

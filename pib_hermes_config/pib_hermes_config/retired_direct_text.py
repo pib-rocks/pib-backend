@@ -18,7 +18,6 @@ from __future__ import annotations
 
 from pib_hermes_config.channel import CHANNEL_SMART
 from pib_hermes_config.live_session import VOICE_MODE_LIVE
-from pib_hermes_config.local_model import API_NAME as LOCAL_MODEL_API_NAME
 
 #: Catalogue api_name of pib.Cloud. Same value as
 #: ``provider_registry.PIB_CLOUD_API_NAME``; this package does not import Flask.
@@ -32,7 +31,7 @@ DIRECT_TEXT_MODEL_API_NAME = "gemini-3.8-flash"
 
 #: Spoken on a turn that would have used the retired text endpoint.
 RETIRED_DIRECT_TEXT_SENTENCE = (
-    "Bitte wähle Smart, pib.Cloud, das lokale Modell oder Direct mit dem "
+    "Bitte wähle Smart, pib.Cloud oder Direct mit dem "
     "unterstützten Modell, denn der Direct-Textweg ist nicht mehr verfügbar."
 )
 
@@ -40,8 +39,7 @@ RETIRED_DIRECT_TEXT_SENTENCE = (
 #: combination: channel or the model reference.
 RETIRED_DIRECT_TEXT_VALIDATION = (
     "Direct text chat is retired for this model. "
-    "Choose Smart, pib.Cloud, the on-device model, or Direct with a supported "
-    "model."
+    "Choose Smart, pib.Cloud, or Direct with a supported model."
 )
 
 
@@ -53,15 +51,14 @@ def legacy_direct_text_selected(
 ) -> bool:
     """True when a turn would have called the retired tryb text endpoint.
 
-    ``channel`` is the channel the turn would actually use. pib.Cloud, the
-    on-device model and the Direct model with a live transport are routed
-    before that endpoint, and Smart uses Hermes. What remains - Direct on a
-    model without a transport of its own - has no answer any more. The
-    tool-calling flag deliberately does not appear here: Direct without tools
-    is a plain chat on the supported model.
+    ``channel`` is the channel the turn would actually use. pib.Cloud and the
+    Direct model with a live transport are routed before that endpoint, and
+    Smart uses Hermes. What remains - Direct on a model without a transport of
+    its own - has no answer any more. The tool-calling flag deliberately does
+    not appear here: Direct without tools is a plain chat on the supported
+    model.
     """
     if api_name in (
-        LOCAL_MODEL_API_NAME,
         PIB_CLOUD_MODEL_API_NAME,
         DIRECT_TEXT_MODEL_API_NAME,
     ):

@@ -106,7 +106,6 @@ services:
       - PIB_HARDWARE_VARIANT=${PIB_HARDWARE_VARIANT:-}
       - PIB_UPDATE_DIR=/app/.update
       - PIB_KEY_STORE_PATH=/home/pib/app/secrets/provider_key_store.json
-      - PIB_OLLAMA_BASE_URL=http://host.docker.internal:11434
       # Pictures a tool captured are stored here, not in the source bind mount
       # above: a chat message keeps a reference, the bytes live in this volume.
       - PIB_CHAT_IMAGE_DIR=/app/chat_images
@@ -298,7 +297,6 @@ services:
       - PIB_MIC_CHANNELS=${PIB_MIC_CHANNELS:-1}
       - VOICE_ASSISTANT_DIR=/app/ros2_ws/voice_assistant
       - PIB_MCP_ROSBRIDGE_URL=ws://rosbridge-ws:9090
-      - PIB_OLLAMA_BASE_URL=http://host.docker.internal:11434
       # Pictures a tool captured are stored here, not in the source bind mount
       # above: a chat message keeps a reference, the bytes live in this volume.
       # Server-side gate for hardware-changing MCP calls. Open by default, so

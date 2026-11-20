@@ -19,11 +19,12 @@ from typing import Any, Callable, Iterable, Iterator, Mapping, Optional, Sequenc
 
 import requests
 
-from pib_hermes_config.local_model import API_NAME as LOCAL_FALLBACK_MODEL_NAME
 from pib_hermes_config.visible_state import (
     ANSWER_GESTURE_TOOLS,
     issue_answer_gesture,
 )
+
+LOCAL_FALLBACK_MODEL_NAME = "none"
 
 from voice_assistant import direct_tool_loop
 from voice_assistant.cloud_token import CloudTokenError, resolve_cloud_token
