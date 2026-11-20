@@ -55,7 +55,6 @@ CHAT_HERMES_METHODS = {
     "_run_hermes_turn",
     "_stream_hermes_turn",
     "_robot_context",
-    "_iter_local_tokens",
     "_stream_pib_cloud_turn",
     "_execute_chat_turn",
 }
