@@ -1,13 +1,17 @@
-"""In-container liveness probe for the voice stack (PR-2122).
+"""In-container liveness probe for the voice stack (PR-2122, PR-2191).
 
-Two facts must hold before Docker marks the container healthy:
+Two facts are checked on every run:
 
-* The chat and assistant ROS nodes are up and ``send_chat_message`` is listed.
-* A provider key is resolvable for the active personality's Hermes profile route
-  (same store read a turn uses via ``resolve_hermes_provider_key``).
-
-Failures print ``reason=…`` (and ``provider=…`` when relevant) on stderr so
-``docker inspect`` and the Flask status reader can tell the modes apart.
+* Liveness: the chat, assistant, and audio_recorder ROS nodes are up and
+  ``send_chat_message`` is listed. A failure here exits 1 so Docker marks the
+  container ``unhealthy``.
+* Configuration: a provider key is resolvable for the active personality's
+  Hermes profile route (same store read a turn uses via
+  ``resolve_hermes_provider_key``). When only the provider key is missing
+  (``reason=no_key``), the probe still prints ``reason=no_key provider=…
+  detail=…`` on stderr so ``docker inspect`` and the Flask status API surface
+  the missing key, but exits 0 by default so a healthy unconfigured container
+  is not painted ``unhealthy`` (pass ``--require-key`` to exit 1 on ``no_key``).
 """
 
 from __future__ import annotations
@@ -199,12 +203,15 @@ def _emit_failure(reason: str, detail: str, provider: Optional[str] = None) -> N
 
 def main(argv: Optional[list[str]] = None) -> int:
     _argv = argv if argv is not None else sys.argv
-    if len(_argv) > 1 and _argv[1] in ("-h", "--help"):
+    args = _argv[1:] if len(_argv) > 1 else []
+    if any(flag in ("-h", "--help") for flag in args):
         print(
-            "voice_healthcheck: verify ROS chat stack and Hermes provider key",
+            "voice_healthcheck: verify ROS chat stack and Hermes provider key "
+            "[--require-key]",
             file=sys.stderr,
         )
         return 0
+    require_key = "--require-key" in args
 
     ok, reason, detail = check_ros_stack()
     if not ok:
@@ -214,6 +221,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     ok, reason, detail, provider = check_provider_key()
     if not ok:
         _emit_failure(reason, detail, provider)
+        if reason == REASON_NO_KEY and not require_key:
+            return 0
         return 1
     return 0
 

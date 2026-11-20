@@ -75,6 +75,7 @@ BACKEND_SERVICES_BEFORE=""
 CEREBRA_SERVICES_BEFORE=""
 VOICE_CONTAINER="${PIB_VOICE_CONTAINER:-pib-backend-ros-voice-assistant-1}"
 VOICE_HEALTH_BEFORE=""
+VOICE_KEY_READY_BEFORE="0"
 REGRESSIONS=""
 UNHEALTHY_SERVICES=""
 ATTEMPT=1
@@ -1158,14 +1159,23 @@ verify_result() {
     if [ -n "$(printf '%s' "$UNHEALTHY_SERVICES" | tr -d ' ')" ]; then
         log "Tolerated pre-existing unhealthy services (decision D12): $(printf '%s' "$UNHEALTHY_SERVICES" | tr -s ' ')"
     fi
-    local voice_check_output voice_reason
+    local voice_check_output voice_reason voice_require_key
     voice_check_output=""
     voice_reason=""
+    voice_require_key="0"
+    if [ "$VOICE_KEY_READY_BEFORE" = "1" ]; then
+        voice_require_key="1"
+    fi
     # wait_for_stacks already waited for the stack; keep this bounded so a failing probe cannot
     # stretch every verify_result attempt by the probe's full start-period retry.
-    if voice_check_output="$(PIB_VOICE_HEALTH_ATTEMPTS=3 PIB_VOICE_HEALTH_INTERVAL_SECONDS=10 \
+    if voice_check_output="$(PIB_VOICE_HEALTH_ATTEMPTS=3 PIB_VOICE_HEALTH_INTERVAL_SECONDS=10 PIB_VOICE_REQUIRE_KEY="$voice_require_key" \
         bash "$BACKEND_DIR/setup/installation_scripts/voice_healthcheck.sh" 2>&1)"; then
-        log "voice assistant healthy"
+        voice_reason="$(printf '%s\n' "$voice_check_output" | grep 'reason=no_key' | tail -1 || true)"
+        if [ -n "$voice_reason" ]; then
+            log "voice assistant nodes healthy (provider key not yet configured: ${voice_reason})"
+        else
+            log "voice assistant healthy"
+        fi
     else
         voice_reason="$(printf '%s\n' "$voice_check_output" | grep 'reason=' | tail -1 || true)"
         if [ "$VOICE_HEALTH_BEFORE" = "healthy" ]; then
@@ -1615,6 +1625,12 @@ readarray -t INITIAL_EXTRA_PROFILES < <(backend_extra_profile_flags)
 BACKEND_SERVICES_BEFORE="$(snapshot_running_services "$BACKEND_DIR/docker-compose.yaml" --profile all "${INITIAL_EXTRA_PROFILES[@]}")"
 CEREBRA_SERVICES_BEFORE="$(snapshot_running_services "$CEREBRA_DIR/docker-compose.yaml")"
 VOICE_HEALTH_BEFORE="$(docker inspect "$VOICE_CONTAINER" --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' 2>/dev/null || true)"
+VOICE_HEALTH_LOG_BEFORE="$(docker inspect "$VOICE_CONTAINER" --format '{{if .State.Health}}{{range .State.Health.Log}}{{.Output}}{{end}}{{end}}' 2>/dev/null | tail -n 10 || true)"
+if [ "$VOICE_HEALTH_BEFORE" = "healthy" ] && ! printf '%s\n' "$VOICE_HEALTH_LOG_BEFORE" | grep -q 'reason=no_key'; then
+    VOICE_KEY_READY_BEFORE="1"
+else
+    VOICE_KEY_READY_BEFORE="0"
+fi
 log "Services running before the update: pib-backend=[$(printf '%s' "$BACKEND_SERVICES_BEFORE" | tr '\n' ' ')] cerebra=[$(printf '%s' "$CEREBRA_SERVICES_BEFORE" | tr '\n' ' ')]"
 validate_repository "pib-backend" "$BACKEND_DIR"
 validate_repository "cerebra" "$CEREBRA_DIR"
