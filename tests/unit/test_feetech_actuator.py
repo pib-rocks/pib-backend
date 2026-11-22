@@ -436,6 +436,26 @@ def test_feetech_drive_sign_matches_legacy_invert(
     assert actuator._pk.writes[-1][1] == expected_ticks
 
 
+@pytest.mark.parametrize("upper_endpoint", ["max", "min"])
+@pytest.mark.parametrize("position", [3000, -3000])
+def test_feetech_has_reached_target_after_move(monkeypatch, upper_endpoint, position):
+    ft_mod, act_mod = _load_modules()
+
+    def fake_sts(ph):
+        return FakeStsPacketHandler(ph)
+
+    monkeypatch.setattr(ft_mod, "PortHandler", FakePortHandler)
+    monkeypatch.setattr(ft_mod, "sts", fake_sts)
+    ft_mod._port_cache.clear()
+
+    actuator = act_mod.create_actuator(
+        "feetech_st_serial", 18, "WS-ARM", upper_endpoint
+    )
+    assert actuator.set_position(position) is True
+    assert abs(actuator.get_current_position() - position) <= 20
+    assert actuator.has_reached_target() is True
+
+
 def test_feetech_actuator_custom_velocity_and_acceleration_in_write_pos_ex(
     monkeypatch,
 ):
