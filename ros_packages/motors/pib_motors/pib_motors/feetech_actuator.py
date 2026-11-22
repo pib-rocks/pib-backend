@@ -617,8 +617,13 @@ class FeetechStSerialActuator:
         target = self._target_position
         if target is None:
             return True
+        # _target_position is stored after the direction flip, get_current_position()
+        # is in the joint frame, so compare both in the joint frame.
         current_position = self.get_current_position()
-        return abs(current_position - target) <= self.POSITION_TOLERANCE
+        return (
+            abs(current_position - target * self.direction_sign)
+            <= self.POSITION_TOLERANCE
+        )
 
     def get_target_position(self) -> int | None:
         if self._target_position is None:
